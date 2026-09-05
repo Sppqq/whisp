@@ -107,6 +107,9 @@ struct KeychainStore: Sendable {
         var item = query(for: key)
         item[kSecReturnData as String] = true
         item[kSecMatchLimit as String] = kSecMatchLimitOne
+        // A release built with a different ad-hoc signature can otherwise wait
+        // on a Keychain authorization dialog hidden behind the app window.
+        item[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
         var result: CFTypeRef?
         let status = SecItemCopyMatching(item as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }

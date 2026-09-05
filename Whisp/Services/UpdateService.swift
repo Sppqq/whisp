@@ -109,9 +109,16 @@ final class UpdateService {
         return nil
     }
 
-    init(defaults: UserDefaults = .standard, session: URLSession = .shared) {
+    init(defaults: UserDefaults = .standard, session: URLSession? = nil) {
         self.defaults = defaults
-        self.session = session
+        if let session {
+            self.session = session
+        } else {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 10
+            configuration.timeoutIntervalForResource = 20
+            self.session = URLSession(configuration: configuration)
+        }
         if defaults.object(forKey: "automaticallyChecksForUpdates") == nil {
             automaticallyChecksForUpdates = true
         } else {

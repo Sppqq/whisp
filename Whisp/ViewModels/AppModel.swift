@@ -193,9 +193,6 @@ final class AppModel {
 
     func launch() async {
         guard !isRunningTests else { return }
-        if updateService.automaticallyChecksForUpdates {
-            Task { await updateService.checkForUpdates(silent: true) }
-        }
         showSettings = settingsStore.geminiAPIKey.isEmpty
         refreshInputDevices()
         do {
@@ -215,6 +212,13 @@ final class AppModel {
             }
             try await store.removeExpiredSessions(retentionDays: settingsStore.settings.localRetentionDays)
         } catch { lastError = error.localizedDescription }
+        if updateService.automaticallyChecksForUpdates {
+            Task { [updateService] in
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                await updateService.checkForUpdates(silent: true)
+            }
+        }
     }
 
     func startRecording(captureSystemAudio: Bool = true) async {
