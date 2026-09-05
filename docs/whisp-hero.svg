@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="520" viewBox="0 0 1440 520" role="img" aria-labelledby="title desc">
+  <title id="title">Whisp</title><desc id="desc">Лекции превращаются в понятные конспекты</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#17191d"/><stop offset="1" stop-color="#242126"/></linearGradient>
+    <radialGradient id="glow"><stop offset="0" stop-color="#ec6b5d" stop-opacity=".22"/><stop offset="1" stop-color="#ec6b5d" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#07080a" flood-opacity=".45"/></filter>
+  </defs>
+  <rect width="1440" height="520" rx="32" fill="url(#bg)"/><circle cx="1080" cy="195" r="330" fill="url(#glow)"/>
+  <g opacity=".08" stroke="#f7f3ef"><path d="M0 104h1440M0 208h1440M0 312h1440M0 416h1440"/><path d="M144 0v520M288 0v520M432 0v520M576 0v520M720 0v520M864 0v520M1008 0v520M1152 0v520M1296 0v520"/></g>
+  <g transform="translate(104 105)">
+    <rect width="82" height="82" rx="22" fill="#ec6b5d" filter="url(#shadow)"/><g transform="translate(18 20)" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"><path d="M2 18v8M12 9v26M23 2v40M34 10v24M45 17v10"/></g>
+    <text x="0" y="176" fill="#f8f5f2" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="76" font-weight="700" letter-spacing="-3">Whisp</text>
+    <text x="2" y="228" fill="#c4c0bd" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="25">Слушайте лекцию. К важному вернётесь.</text>
+    <g transform="translate(0 270)" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="600">
+      <rect width="154" height="42" rx="12" fill="#f8f5f2" fill-opacity=".08" stroke="#f8f5f2" stroke-opacity=".1"/><text x="20" y="27" fill="#e6e1de">GEMINI LIVE</text>
+      <rect x="166" width="150" height="42" rx="12" fill="#f8f5f2" fill-opacity=".08" stroke="#f8f5f2" stroke-opacity=".1"/><text x="186" y="27" fill="#e6e1de">WHISPERKIT</text>
+      <rect x="328" width="140" height="42" rx="12" fill="#f8f5f2" fill-opacity=".08" stroke="#f8f5f2" stroke-opacity=".1"/><text x="348" y="27" fill="#e6e1de">OBSIDIAN</text>
+    </g>
+  </g>
+  <g transform="translate(860 105)" filter="url(#shadow)">
+    <rect width="460" height="310" rx="22" fill="#292a2f" stroke="#fff" stroke-opacity=".1"/><rect x="24" y="23" width="128" height="18" rx="9" fill="#ec6b5d"/><rect x="24" y="63" width="310" height="12" rx="6" fill="#f8f5f2" fill-opacity=".72"/><rect x="24" y="87" width="390" height="9" rx="4.5" fill="#f8f5f2" fill-opacity=".17"/><rect x="24" y="104" width="352" height="9" rx="4.5" fill="#f8f5f2" fill-opacity=".17"/>
+    <g transform="translate(24 139)"><rect width="412" height="58" rx="12" fill="#ec6b5d" fill-opacity=".08"/><rect x="15" y="14" width="4" height="30" rx="2" fill="#ec6b5d"/><rect x="32" y="15" width="176" height="9" rx="4.5" fill="#f8f5f2" fill-opacity=".7"/><rect x="32" y="33" width="340" height="8" rx="4" fill="#f8f5f2" fill-opacity=".18"/></g>
+    <g transform="translate(24 213)"><rect width="196" height="73" rx="12" fill="#fff" fill-opacity=".055"/><rect x="16" y="17" width="102" height="9" rx="4.5" fill="#f8f5f2" fill-opacity=".62"/><rect x="16" y="39" width="156" height="7" rx="3.5" fill="#f8f5f2" fill-opacity=".16"/><rect x="16" y="53" width="126" height="7" rx="3.5" fill="#f8f5f2" fill-opacity=".16"/><rect x="216" width="196" height="73" rx="12" fill="#fff" fill-opacity=".055"/><rect x="232" y="17" width="118" height="9" rx="4.5" fill="#f8f5f2" fill-opacity=".62"/><rect x="232" y="39" width="152" height="7" rx="3.5" fill="#f8f5f2" fill-opacity=".16"/><rect x="232" y="53" width="110" height="7" rx="3.5" fill="#f8f5f2" fill-opacity=".16"/></g>
+  </g>
+</svg>
