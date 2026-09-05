@@ -73,6 +73,22 @@ struct MainView: View {
         } message: {
             Text("Включите Whisp в «Конфиденциальность и безопасность → Микрофон», затем полностью перезапустите приложение. После отказа macOS больше не показывает запрос.")
         }
+        .alert("Доступно обновление Whisp", isPresented: Binding(
+            get: { model.updateService.availableRelease != nil },
+            set: { if !$0 { model.updateService.dismissAvailableUpdate() } }
+        )) {
+            if let release = model.updateService.availableRelease {
+                Button("Скачать \(release.version)") {
+                    Task { await model.updateService.downloadAndOpen(release) }
+                }
+                Button("Страница релиза") { model.updateService.openReleasePage(release) }
+            }
+            Button("Позже", role: .cancel) { model.updateService.dismissAvailableUpdate() }
+        } message: {
+            if let release = model.updateService.availableRelease {
+                Text(release.isPrerelease ? "Доступна предварительная версия \(release.version)." : "Доступна версия \(release.version).")
+            }
+        }
         .sheet(isPresented: $model.showBackfillComparison) {
             BackfillComparisonView(model: model).frame(minWidth: 1_000, minHeight: 650)
         }

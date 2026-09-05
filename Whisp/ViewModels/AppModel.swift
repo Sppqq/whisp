@@ -22,6 +22,7 @@ final class AppModel {
     let settingsStore = SettingsStore()
     let audioCapture = AudioCaptureService()
     let player = AudioPlayerController()
+    let updateService = UpdateService()
 
     var sessions: [LectureSession] = []
     var currentSession: LectureSession?
@@ -192,6 +193,9 @@ final class AppModel {
 
     func launch() async {
         guard !isRunningTests else { return }
+        if updateService.automaticallyChecksForUpdates {
+            Task { await updateService.checkForUpdates(silent: true) }
+        }
         showSettings = settingsStore.geminiAPIKey.isEmpty
         refreshInputDevices()
         do {

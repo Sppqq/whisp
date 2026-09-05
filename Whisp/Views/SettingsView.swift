@@ -6,6 +6,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
     case storage = "Хранилище"
     case subjects = "Предметы"
     case hotkeys = "Клавиши"
+    case updates = "Обновления"
     var id: Self { self }
     var icon: String {
         switch self {
@@ -14,6 +15,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .storage: "externaldrive"
         case .subjects: "books.vertical"
         case .hotkeys: "keyboard"
+        case .updates: "arrow.triangle.2.circlepath"
         }
     }
 }
@@ -106,6 +108,7 @@ struct SettingsView: View {
         case .storage: storagePage
         case .subjects: subjectsPage
         case .hotkeys: hotkeysPage
+        case .updates: updatesPage
         }
     }
 
@@ -435,6 +438,93 @@ struct SettingsView: View {
         }
     }
 
+    private var updatesPage: some View {
+        VStack(spacing: 16) {
+            SettingsCard(
+                title: "Обновления Whisp",
+                caption: "Проверка GitHub Releases и загрузка нового DMG.",
+                icon: "arrow.triangle.2.circlepath"
+            ) {
+                Toggle("Автоматически проверять при запуске", isOn: Binding(
+                    get: { model.updateService.automaticallyChecksForUpdates },
+                    set: { model.updateService.automaticallyChecksForUpdates = $0 }
+                ))
+                    .toggleStyle(.switch)
+
+                LabeledContent("Установленная версия") {
+                    Text(model.updateService.currentVersion).monospacedDigit()
+                }
+
+                updateStatus
+
+                HStack {
+                    Button {
+                        Task { await model.updateService.checkForUpdates() }
+                    } label: {
+                        Label("Проверить обновления", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isUpdateCheckRunning)
+
+                    if case .available(let release) = model.updateService.state {
+                        Button {
+                            Task { await model.updateService.downloadAndOpen(release) }
+                        } label: {
+                            Label("Скачать \(release.version)", systemImage: "arrow.down.circle.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+            }
+
+            SettingsCard(
+                title: "Как устанавливается обновление",
+                caption: "Whisp скачивает и открывает новый образ приложения.",
+                icon: "shippingbox"
+            ) {
+                Text("После открытия DMG перетащите новую версию Whisp в Applications с заменой. Записи и настройки находятся отдельно от приложения и сохранятся.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder private var updateStatus: some View {
+        switch model.updateService.state {
+        case .idle:
+            Label("Обновления ещё не проверялись", systemImage: "minus.circle").foregroundStyle(.secondary)
+        case .checking:
+            HStack { ProgressView().controlSize(.small); Text("Проверяем GitHub Releases…") }
+        case .upToDate:
+            Label("Установлена актуальная версия", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+        case .available(let release):
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Доступна версия \(release.version)", systemImage: "sparkles").foregroundStyle(WhispPalette.accent)
+                if release.isPrerelease {
+                    Text("Предварительная версия").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                }
+                if !release.notes.isEmpty {
+                    Text(release.notes).font(.caption).foregroundStyle(.secondary).lineLimit(8)
+                }
+                Button("Открыть страницу релиза") { model.updateService.openReleasePage(release) }
+                    .buttonStyle(.link)
+            }
+        case .downloading(let release):
+            HStack { ProgressView().controlSize(.small); Text("Скачиваем Whisp \(release.version)…") }
+        case .downloaded(let release, _):
+            Label("DMG версии \(release.version) скачан и открыт", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+        }
+    }
+
+    private var isUpdateCheckRunning: Bool {
+        switch model.updateService.state {
+        case .checking, .downloading: true
+        default: false
+        }
+    }
+
     private var pageSubtitle: String {
         switch page {
         case .gemini: "Модели, ключ и сетевое подключение"
@@ -442,6 +532,7 @@ struct SettingsView: View {
         case .storage: "Obsidian и локальные файлы"
         case .subjects: "Список дисциплин для классификации"
         case .hotkeys: "Управление без переключения окон"
+        case .updates: "Версия приложения и новые выпуски"
         }
     }
 
