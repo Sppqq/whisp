@@ -514,7 +514,11 @@ struct SettingsView: View {
         case .downloaded(let release, _):
             Label("DMG версии \(release.version) скачан и открыт", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
         case .failed(let message):
-            Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+            VStack(alignment: .leading, spacing: 8) {
+                Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                Button("Открыть GitHub Releases") { model.updateService.openReleasesPage() }
+                    .buttonStyle(.link)
+            }
         }
     }
 

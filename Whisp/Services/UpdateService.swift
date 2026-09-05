@@ -91,6 +91,7 @@ final class UpdateService {
     }
 
     private static let releasesURL = URL(string: "https://api.github.com/repos/Sppqq/whisp/releases?per_page=20")!
+    private static let releasesPageURL = URL(string: "https://github.com/Sppqq/whisp/releases")!
     private let defaults: UserDefaults
     private let session: URLSession
 
@@ -125,8 +126,12 @@ final class UpdateService {
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             request.setValue("Whisp/\(currentVersion)", forHTTPHeaderField: "User-Agent")
             let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                throw UpdateError.unavailable
+            guard let http = response as? HTTPURLResponse else { throw UpdateError.unavailable }
+            switch http.statusCode {
+            case 200: break
+            case 404: throw UpdateError.privateRepository
+            case 403: throw UpdateError.rateLimited
+            default: throw UpdateError.unavailable
             }
             let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
             if let release = Self.newestRelease(from: releases, newerThan: currentVersion) {
@@ -167,6 +172,10 @@ final class UpdateService {
         NSWorkspace.shared.open(release.pageURL)
     }
 
+    func openReleasesPage() {
+        NSWorkspace.shared.open(Self.releasesPageURL)
+    }
+
     func dismissAvailableUpdate() {
         if case .available = state { state = .idle }
     }
@@ -195,11 +204,15 @@ final class UpdateService {
 
 private enum UpdateError: LocalizedError {
     case unavailable
+    case privateRepository
+    case rateLimited
     case downloadFailed
 
     var errorDescription: String? {
         switch self {
         case .unavailable: "Не удалось получить список релизов GitHub"
+        case .privateRepository: "Репозиторий Whisp пока приватный. Автообновление заработает после открытия репозитория."
+        case .rateLimited: "GitHub временно ограничил проверку обновлений. Попробуйте позже."
         case .downloadFailed: "Не удалось скачать DMG обновления"
         }
     }
