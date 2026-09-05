@@ -78,7 +78,7 @@ Whisp фиксирует границы fallback-интервалов и поз�
 3. Откройте образ и перетащите Whisp в папку Applications.
 4. Запустите Whisp из папки «Программы».
 
-Релизный DMG подписывается сертификатом Developer ID, проходит notarization Apple и содержит SHA-256 checksum. Поэтому установленное приложение проходит стандартную проверку Gatekeeper без ручного снятия quarantine.
+Каждый релиз содержит SHA-256 checksum. Сборки с настроенным сертификатом Developer ID проходят notarization Apple. Пока сертификат не настроен, workflow публикует ad-hoc сборку как prerelease; при первом запуске macOS может потребовать нажать приложение правой кнопкой и выбрать **«Открыть»**.
 
 ### Требования
 
@@ -154,7 +154,7 @@ open Whisp.xcodeproj
 bash scripts/build_dmg.sh
 ```
 
-Без переменных подписи этот скрипт создаёт локальную ad-hoc сборку. Официальный GitHub Release публикуется только после подписи и notarization.
+Без переменных подписи этот скрипт создаёт локальную ad-hoc сборку.
 
 Проверки установщика:
 
@@ -167,7 +167,7 @@ python3 scripts/test_reinstall.py
 
 ## Выпуск новой версии
 
-GitHub Actions собирает релиз на Apple Silicon runner, запускает XCTest, подписывает приложение и DMG, отправляет образ на notarization Apple и прикрепляет готовый файл вместе с checksum к GitHub Release.
+GitHub Actions собирает релиз на Apple Silicon runner, запускает XCTest и прикрепляет готовый DMG вместе с checksum к GitHub Release. Если настроены Apple Developer secrets, приложение и DMG подписываются, а образ проходит notarization Apple. Без них создаётся отмеченный prerelease ad-hoc билд.
 
 Перед первым релизом добавьте в **Settings → Secrets and variables → Actions**:
 

@@ -56,7 +56,7 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
 
-      - name: Check signing secrets
+      - name: Determine signing mode
         shell: bash
         run: |
           required=(
@@ -64,12 +64,25 @@ jobs:
             APPLE_SIGNING_IDENTITY APPLE_TEAM_ID
             APPLE_ID APPLE_APP_SPECIFIC_PASSWORD
           )
+          SIGNED_RELEASE=true
           for name in "${required[@]}"; do
-            if [[ -z "${!name}" ]]; then
-              echo "Не настроен GitHub Actions secret: $name" >&2
-              exit 1
-            fi
+            if [[ -z "${!name}" ]]; then SIGNED_RELEASE=false; fi
           done
+          echo "SIGNED_RELEASE=$SIGNED_RELEASE" >> "$GITHUB_ENV"
+          if [[ "$SIGNED_RELEASE" == true ]]; then
+            echo "WHISP_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+            echo "WHISP_DEVELOPMENT_TEAM=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
+          else
+            echo "WHISP_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "WHISP_DEVELOPMENT_TEAM=" >> "$GITHUB_ENV"
+            {
+              echo "> [!WARNING]"
+              echo "> Это ad-hoc beta-сборка без notarization Apple. При первом запуске macOS может потребовать открыть приложение через контекстное меню «Открыть»."
+              echo
+              cat dist/release-notes.md
+            } > dist/release-notes.tmp
+            mv dist/release-notes.tmp dist/release-notes.md
+          fi
 
       - name: Select Xcode and install XcodeGen
         shell: bash
@@ -80,6 +93,7 @@ jobs:
           xcodegen --version
 
       - name: Import Developer ID certificate
+        if: env.SIGNED_RELEASE == 'true'
         shell: bash
         run: |
           CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
@@ -115,12 +129,13 @@ jobs:
         env:
           WHISP_VERSION: ${{ env.VERSION }}
           WHISP_BUILD_NUMBER: ${{ github.run_number }}
-          WHISP_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          WHISP_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          WHISP_SIGNING_IDENTITY: ${{ env.WHISP_SIGNING_IDENTITY }}
+          WHISP_DEVELOPMENT_TEAM: ${{ env.WHISP_DEVELOPMENT_TEAM }}
           WHISP_DERIVED_DATA: ${{ runner.temp }}/WhispRelease
         run: bash scripts/build_dmg.sh
 
       - name: Notarize and staple DMG
+        if: env.SIGNED_RELEASE == 'true'
         shell: bash
         run: |
           DMG="dist/Whisp-${VERSION}.dmg"
@@ -137,12 +152,15 @@ jobs:
       - name: Publish GitHub Release
         shell: bash
         run: |
+          RELEASE_FLAGS=()
+          if [[ "$SIGNED_RELEASE" != true ]]; then RELEASE_FLAGS+=(--prerelease); fi
           gh release create "$TAG" \
             "dist/Whisp-${VERSION}.dmg" \
             "dist/Whisp-${VERSION}.dmg.sha256" \
             --target "$GITHUB_SHA" \
             --title "Whisp $VERSION" \
-            --notes-file dist/release-notes.md
+            --notes-file dist/release-notes.md \
+            "${RELEASE_FLAGS[@]}"
 
       - name: Delete temporary keychain
         if: always()

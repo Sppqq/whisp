@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Исправлено
+
+- Релизный workflow теперь публикует ad-hoc prerelease, если Apple Developer secrets ещё не настроены.
+
 ## [1.0.0] - 2026-09-06
 
 ### Добавлено
