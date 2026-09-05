@@ -307,6 +307,40 @@ struct SettingsView: View {
 
     private var storagePage: some View {
         VStack(spacing: 16) {
+            SettingsCard(
+                title: "Хранение ключей и паролей",
+                caption: "Способ хранения Gemini API key, пароля прокси и пароля WebDAV на этом Mac.",
+                icon: "lock.shield"
+            ) {
+                Picker("Хранилище секретов", selection: Binding(
+                    get: { store.secretStorageMode },
+                    set: { newMode in
+                        do {
+                            try store.saveSecrets(
+                                geminiKeys: geminiKeys,
+                                proxyPassword: proxyPassword,
+                                webDAVPassword: webDAVPassword
+                            )
+                            try store.setSecretStorageMode(newMode)
+                            testResult = "Секреты перенесены в «\(newMode.title)»"
+                        } catch {
+                            testResult = error.localizedDescription
+                        }
+                    }
+                )) {
+                    ForEach(SecretStorageMode.allCases) { mode in
+                        Label(mode.title, systemImage: mode.icon).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                Label(store.secretStorageMode.description, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             SettingsCard(title: "WebDAV", caption: "Папка Obsidian или другое совместимое хранилище.", icon: "icloud") {
                 TextField("URL WebDAV", text: $store.webDAV.baseURL).textFieldStyle(.roundedBorder)
                 HStack {

@@ -14,10 +14,14 @@ final class SettingsStore {
     private let decoder = JSONDecoder()
     private var cachedGeminiAPIKey = ""
     private var cachedGeminiAPIKeys: [String] = []
+    private(set) var secretStorageMode: SecretStorageMode
     var keyStatuses: [String: GeminiKeyStatus] = [:]
 
     init(defaults: UserDefaults = .standard, keychain: KeychainStore = KeychainStore()) {
         let decoder = JSONDecoder()
+        let loadedStorageMode = SecretStorageMode(
+            rawValue: defaults.string(forKey: "secretStorageMode") ?? ""
+        ) ?? .localPreferences
         var loadedSettings = defaults.data(forKey: "settings")
             .flatMap { try? decoder.decode(WhispSettings.self, from: $0) } ?? WhispSettings()
         if loadedSettings.analysisModel == "gemini-3.7-flash" {
@@ -26,10 +30,11 @@ final class SettingsStore {
 
         self.defaults = defaults
         self.keychain = keychain
+        secretStorageMode = loadedStorageMode
         settings = loadedSettings
 
         var loadedProxy = ProxyConfiguration()
-        if let configString = try? keychain.get(.proxyConfiguration),
+        if let configString = try? keychain.get(.proxyConfiguration, mode: loadedStorageMode),
            let data = configString.data(using: .utf8),
            let decoded = try? decoder.decode(ProxyConfiguration.self, from: data) {
             loadedProxy = decoded
@@ -43,7 +48,7 @@ final class SettingsStore {
         var loadedWebDAV = WebDAVConfiguration()
         if let data = defaults.data(forKey: "webdav"),
            var decoded = try? decoder.decode(WebDAVConfiguration.self, from: data) {
-            if let pass = try? keychain.get(.webDAVPassword) {
+            if let pass = try? keychain.get(.webDAVPassword, mode: loadedStorageMode) {
                 decoded.password = pass
             }
             loadedWebDAV = decoded
@@ -55,7 +60,8 @@ final class SettingsStore {
             keyStatuses = decoded
         }
 
-        let storedKeysRaw = (try? keychain.get(.geminiAPIKeys)) ?? (try? keychain.get(.geminiAPIKey))
+        let storedKeysRaw = (try? keychain.get(.geminiAPIKeys, mode: loadedStorageMode))
+            ?? (try? keychain.get(.geminiAPIKey, mode: loadedStorageMode))
         var initialKeys: [String] = []
         if let storedKeysRaw, !storedKeysRaw.isEmpty {
             if let data = storedKeysRaw.data(using: .utf8),
@@ -78,9 +84,9 @@ final class SettingsStore {
             cachedGeminiAPIKeys = cleaned
             cachedGeminiAPIKey = cachedGeminiAPIKeys.first ?? ""
             if let data = try? encoder.encode(cachedGeminiAPIKeys), let string = String(data: data, encoding: .utf8) {
-                try? keychain.set(string, for: .geminiAPIKeys)
+                try? keychain.set(string, for: .geminiAPIKeys, mode: secretStorageMode)
             }
-            try? keychain.set(cachedGeminiAPIKey, for: .geminiAPIKey)
+            try? keychain.set(cachedGeminiAPIKey, for: .geminiAPIKey, mode: secretStorageMode)
         }
     }
 
@@ -112,11 +118,46 @@ final class SettingsStore {
 
     func saveSecrets(geminiKeys: [String], proxyPassword: String, webDAVPassword: String) throws {
         geminiAPIKeys = geminiKeys
-        try keychain.set(proxyPassword, for: .proxyPassword)
-        try keychain.set(webDAVPassword, for: .webDAVPassword)
+        try keychain.set(proxyPassword, for: .proxyPassword, mode: secretStorageMode)
+        try keychain.set(webDAVPassword, for: .webDAVPassword, mode: secretStorageMode)
         proxy.password = proxyPassword
         webDAV.password = webDAVPassword
         persist()
+    }
+
+    func setSecretStorageMode(_ newMode: SecretStorageMode) throws {
+        let previousMode = secretStorageMode
+        guard newMode != previousMode else { return }
+
+        let keysJSON = try encoder.encode(cachedGeminiAPIKeys)
+        let proxyJSON = try encoder.encode(proxy)
+        let values: [SecretKey: String] = [
+            .geminiAPIKeys: String(data: keysJSON, encoding: .utf8) ?? "[]",
+            .geminiAPIKey: cachedGeminiAPIKey,
+            .proxyPassword: proxy.password,
+            .proxyConfiguration: String(data: proxyJSON, encoding: .utf8) ?? "{}",
+            .webDAVPassword: webDAV.password
+        ]
+
+        do {
+            for (key, value) in values where !value.isEmpty {
+                try keychain.set(value, for: key, mode: newMode)
+                guard try keychain.get(key, mode: newMode) == value else {
+                    throw KeychainError.verificationFailed
+                }
+            }
+        } catch {
+            for key in SecretKey.allCases {
+                try? keychain.remove(key, mode: newMode)
+            }
+            throw error
+        }
+
+        for key in SecretKey.allCases {
+            try keychain.remove(key, mode: previousMode)
+        }
+        secretStorageMode = newMode
+        defaults.set(newMode.rawValue, forKey: "secretStorageMode")
     }
 
     func saveSecrets(geminiKey: String, proxyPassword: String, webDAVPassword: String) throws {
@@ -128,7 +169,7 @@ final class SettingsStore {
         publicWebDAV.password = ""
         defaults.set(try? encoder.encode(settings), forKey: "settings")
         if let data = try? encoder.encode(proxy), let value = String(data: data, encoding: .utf8) {
-            try? keychain.set(value, for: .proxyConfiguration)
+            try? keychain.set(value, for: .proxyConfiguration, mode: secretStorageMode)
         }
         defaults.removeObject(forKey: "proxy")
         defaults.set(try? encoder.encode(publicWebDAV), forKey: "webdav")
