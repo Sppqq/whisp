@@ -1,0 +1,153 @@
+name: Release Whisp
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия без префикса v, например 1.0.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, notarize and publish
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate version and changelog
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Некорректная версия: $VERSION" >&2
+            exit 1
+          fi
+          TAG="v$VERSION"
+          mkdir -p dist
+          python3 scripts/release_notes.py "$VERSION" --output dist/release-notes.md
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Check signing secrets
+        shell: bash
+        run: |
+          required=(
+            APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD
+            APPLE_SIGNING_IDENTITY APPLE_TEAM_ID
+            APPLE_ID APPLE_APP_SPECIFIC_PASSWORD
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "Не настроен GitHub Actions secret: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Select Xcode and install XcodeGen
+        shell: bash
+        run: |
+          sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+          brew install xcodegen
+          xcodebuild -version
+          xcodegen --version
+
+      - name: Import Developer ID certificate
+        shell: bash
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/whisp-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          python3 -c 'import base64, os, pathlib; pathlib.Path(os.environ["CERTIFICATE_PATH"]).write_bytes(base64.b64decode(os.environ["APPLE_CERTIFICATE_BASE64"]))'
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+        env:
+          CERTIFICATE_PATH: ${{ runner.temp }}/developer-id.p12
+
+      - name: Run tests
+        shell: bash
+        run: |
+          xcodegen generate
+          xcodebuild \
+            -project Whisp.xcodeproj \
+            -scheme Whisp \
+            -configuration Debug \
+            -destination "platform=macOS,arch=arm64" \
+            -derivedDataPath "$RUNNER_TEMP/WhispTests" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+            test
+
+      - name: Build signed DMG
+        shell: bash
+        env:
+          WHISP_VERSION: ${{ env.VERSION }}
+          WHISP_BUILD_NUMBER: ${{ github.run_number }}
+          WHISP_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          WHISP_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          WHISP_DERIVED_DATA: ${{ runner.temp }}/WhispRelease
+        run: bash scripts/build_dmg.sh
+
+      - name: Notarize and staple DMG
+        shell: bash
+        run: |
+          DMG="dist/Whisp-${VERSION}.dmg"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          codesign --verify --verbose "$DMG"
+          shasum -a 256 "$DMG" > "$DMG.sha256"
+
+      - name: Publish GitHub Release
+        shell: bash
+        run: |
+          gh release create "$TAG" \
+            "dist/Whisp-${VERSION}.dmg" \
+            "dist/Whisp-${VERSION}.dmg.sha256" \
+            --target "$GITHUB_SHA" \
+            --title "Whisp $VERSION" \
+            --notes-file dist/release-notes.md
+
+      - name: Delete temporary keychain
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${KEYCHAIN_PATH:-}" && -f "$KEYCHAIN_PATH" ]]; then
+            security delete-keychain "$KEYCHAIN_PATH"
+          fi

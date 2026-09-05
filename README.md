@@ -12,6 +12,7 @@
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple_Silicon-native-202225?style=flat-square">
   <img alt="Swift 5" src="https://img.shields.io/badge/Swift-5-F25F4B?style=flat-square&logo=swift&logoColor=white">
   <img alt="Public beta" src="https://img.shields.io/badge/status-public_beta-E66B5B?style=flat-square">
+  <a href="https://github.com/Sppqq/whisp/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Sppqq/whisp?style=flat-square&label=download"></a>
 </div>
 
 ## О проекте
@@ -70,14 +71,23 @@ Whisp фиксирует границы fallback-интервалов и поз�
 
 ## Быстрый старт
 
+### Установка готовой версии
+
+1. Откройте страницу [последнего релиза](https://github.com/Sppqq/whisp/releases/latest).
+2. Скачайте файл `Whisp-<версия>.dmg`.
+3. Откройте образ и перетащите Whisp в папку Applications.
+4. Запустите Whisp из папки «Программы».
+
+Релизный DMG подписывается сертификатом Developer ID, проходит notarization Apple и содержит SHA-256 checksum. Поэтому установленное приложение проходит стандартную проверку Gatekeeper без ручного снятия quarantine.
+
 ### Требования
 
 - Mac с Apple Silicon;
 - macOS 15 или новее;
-- полный Xcode 16 или новее;
-- [Homebrew](https://brew.sh/).
+- для готового DMG: только macOS 15 или новее;
+- для самостоятельной сборки: полный Xcode 16 или новее и [Homebrew](https://brew.sh/).
 
-### Сборка и установка
+### Самостоятельная сборка
 
 ```bash
 git clone https://github.com/Sppqq/whisp.git
@@ -124,7 +134,6 @@ DEVELOPER_DIR="/Applications/Xcode-beta.app/Contents/Developer" bash scripts/rei
 
 - поддерживаются только Mac с Apple Silicon;
 - интерфейс приложения пока доступен на русском языке;
-- готовая подписанная и notarized-сборка пока не публикуется;
 - для облачной расшифровки пользователь предоставляет собственный Gemini API key;
 - качество конспекта зависит от качества записи и выбранной модели;
 - WebDAV проверен прежде всего со структурой хранилища Obsidian.
@@ -145,6 +154,8 @@ open Whisp.xcodeproj
 bash scripts/build_dmg.sh
 ```
 
+Без переменных подписи этот скрипт создаёт локальную ad-hoc сборку. Официальный GitHub Release публикуется только после подписи и notarization.
+
 Проверки установщика:
 
 ```bash
@@ -153,6 +164,34 @@ python3 scripts/test_reinstall.py
 ```
 
 Для локального интеграционного теста можно положить `ex.m4a` в корень проекта. Файл игнорируется Git, а `AudioImportTests` использует его без обращения к Gemini.
+
+## Выпуск новой версии
+
+GitHub Actions собирает релиз на Apple Silicon runner, запускает XCTest, подписывает приложение и DMG, отправляет образ на notarization Apple и прикрепляет готовый файл вместе с checksum к GitHub Release.
+
+Перед первым релизом добавьте в **Settings → Secrets and variables → Actions**:
+
+| Secret | Значение |
+| --- | --- |
+| `APPLE_CERTIFICATE_BASE64` | Developer ID Application certificate в формате `.p12`, закодированный в Base64 |
+| `APPLE_CERTIFICATE_PASSWORD` | Пароль файла `.p12` |
+| `APPLE_SIGNING_IDENTITY` | Полное имя сертификата Developer ID Application |
+| `APPLE_TEAM_ID` | Team ID аккаунта Apple Developer |
+| `APPLE_ID` | Apple ID для notarization |
+| `APPLE_APP_SPECIFIC_PASSWORD` | Пароль приложения для notarization |
+
+Для каждого релиза:
+
+1. Перенесите готовые пункты из секции `Unreleased` в новую секцию `## [X.Y.Z] - YYYY-MM-DD` файла `CHANGELOG.md`.
+2. Обновите `MARKETING_VERSION` в `project.yml`.
+3. Создайте и отправьте тег:
+
+```bash
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+Workflow не публикует автоматическую сводку коммитов. Он извлекает только секцию `X.Y.Z` из `CHANGELOG.md` и останавливает релиз, если такой секции нет или она пуста. Релиз также можно запустить вручную на вкладке Actions, указав версию без `v`.
 
 ## Структура проекта
 
