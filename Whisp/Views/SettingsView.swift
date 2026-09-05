@@ -1,0 +1,539 @@
+import SwiftUI
+
+private enum SettingsPage: String, CaseIterable, Identifiable {
+    case gemini = "Gemini"
+    case audio = "Звук"
+    case storage = "Хранилище"
+    case subjects = "Предметы"
+    case hotkeys = "Клавиши"
+    var id: Self { self }
+    var icon: String {
+        switch self {
+        case .gemini: "sparkles"
+        case .audio: "waveform.badge.mic"
+        case .storage: "externaldrive"
+        case .subjects: "books.vertical"
+        case .hotkeys: "keyboard"
+        }
+    }
+}
+
+struct SettingsView: View {
+    @Bindable var model: AppModel
+    @Bindable var store: SettingsStore
+    @State private var page: SettingsPage = .gemini
+    @State private var geminiKey = ""
+    @State private var geminiKeys: [String] = []
+    @State private var newKey = ""
+    @State private var showBatchPaste = false
+    @State private var batchKeysText = ""
+    @State private var proxyPassword = ""
+    @State private var webDAVPassword = ""
+    @State private var testResult = ""
+    @State private var isTestingAll = false
+
+    init(model: AppModel) {
+        self._model = Bindable(wrappedValue: model)
+        self._store = Bindable(wrappedValue: model.settingsStore)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Настройки Whisp").font(.title2.weight(.semibold))
+                    Text(pageSubtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if !testResult.isEmpty {
+                    Text(testResult)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(testResult.contains("доступен") || testResult.contains("Сохранено") || testResult.contains("работают") ? Color.green : Color.red)
+                        .lineLimit(2).frame(maxWidth: 260, alignment: .trailing)
+                }
+            }.padding(.horizontal, 26).padding(.top, 22).padding(.bottom, 17)
+
+            HStack(spacing: 4) {
+                ForEach(SettingsPage.allCases) { item in
+                    Button {
+                        withAnimation(.easeOut(duration: 0.18)) { page = item; testResult = "" }
+                    } label: {
+                        Label(item.rawValue, systemImage: item.icon)
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 11).padding(.vertical, 7)
+                            .background(page == item ? Color.primary.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                    }.buttonStyle(.plain)
+                }
+                Spacer()
+            }.padding(.horizontal, 22).padding(.bottom, 14)
+
+            Divider()
+            ScrollView {
+                pageContent.padding(26).frame(maxWidth: 660)
+            }
+        }
+        .background(WhispPalette.canvas)
+        .tint(WhispPalette.accent)
+        .onAppear {
+            geminiKeys = store.geminiAPIKeys
+            geminiKey = store.geminiAPIKey
+            proxyPassword = store.proxy.password
+            webDAVPassword = store.webDAV.password
+            model.refreshInputDevices()
+        }
+        .onChange(of: geminiKeys) { invalidateGeminiStatus() }
+        .onChange(of: proxyPassword) { invalidateGeminiStatus() }
+        .onChange(of: store.proxy) { invalidateGeminiStatus() }
+        .onChange(of: store.webDAV) { model.webDAVState = .unchecked }
+    }
+
+    @ViewBuilder private var pageContent: some View {
+        switch page {
+        case .gemini: geminiPage
+        case .audio: audioPage
+        case .storage: storagePage
+        case .subjects: subjectsPage
+        case .hotkeys: hotkeysPage
+        }
+    }
+
+    private var geminiPage: some View {
+        VStack(spacing: 16) {
+            SettingsCard(
+                title: "Google Gemini API",
+                caption: "Ключи хранятся локально. При исчерпании квоты одного ключа Whisp автоматически переключится на следующий.",
+                icon: "key.horizontal"
+            ) {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(geminiKeys.enumerated()), id: \.offset) { index, key in
+                        let status = store.status(for: key)
+                        HStack(spacing: 8) {
+                            Text("#\(index + 1)")
+                                .font(.caption.monospacedDigit().weight(.bold))
+                                .foregroundStyle(WhispPalette.accent)
+                                .frame(width: 28, alignment: .leading)
+
+                            Text(maskKey(key))
+                                .font(.system(.body, design: .monospaced))
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(WhispPalette.canvas, in: RoundedRectangle(cornerRadius: 6))
+
+                            // Status badge
+                            KeyStatusBadge(status: status)
+
+                            // Small individual test button
+                            Button {
+                                Task {
+                                    _ = await model.testSingleGeminiKey(key)
+                                }
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.caption2)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .help("Проверить этот ключ")
+
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(key, forType: .string)
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.caption2)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .help("Скопировать ключ")
+
+                            Button(role: .destructive) {
+                                if geminiKeys.indices.contains(index) {
+                                    geminiKeys.remove(at: index)
+                                    saveSecrets()
+                                }
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.caption2)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .disabled(geminiKeys.count <= 1)
+                            .help(geminiKeys.count <= 1 ? "Должен остаться хотя бы один ключ" : "Удалить этот ключ")
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        SecureField("Добавить ещё один Gemini API Key...", text: $newKey)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button {
+                            let trimmed = newKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !trimmed.isEmpty else { return }
+                            if !geminiKeys.contains(trimmed) {
+                                geminiKeys.append(trimmed)
+                                newKey = ""
+                                saveSecrets()
+                            }
+                        } label: {
+                            Label("Добавить", systemImage: "plus")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(newKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        Button("Вставить списком") {
+                            batchKeysText = geminiKeys.joined(separator: "\n")
+                            showBatchPaste = true
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                    }
+
+                    if showBatchPaste {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Вставьте ключи (по одному на строку или через запятую):")
+                                .font(.caption2).foregroundStyle(.secondary)
+                            TextEditor(text: $batchKeysText)
+                                .font(.system(.caption, design: .monospaced))
+                                .frame(height: 80)
+                                .padding(4)
+                                .background(WhispPalette.canvas, in: RoundedRectangle(cornerRadius: 6))
+                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(WhispPalette.hairline))
+                            HStack {
+                                Button("Применить список") {
+                                    let parsed = batchKeysText.components(separatedBy: CharacterSet.newlines)
+                                        .flatMap { $0.components(separatedBy: ",") }
+                                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                        .filter { !$0.isEmpty }
+                                    if !parsed.isEmpty {
+                                        geminiKeys = parsed
+                                        saveSecrets()
+                                    }
+                                    showBatchPaste = false
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+
+                                Button("Отмена") { showBatchPaste = false }
+                                    .buttonStyle(.borderless)
+                                    .controlSize(.small)
+                            }
+                        }
+                        .padding(10)
+                        .background(WhispPalette.canvas.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+
+                Divider()
+
+                HStack {
+                    Button("Сохранить") { saveSecrets() }.buttonStyle(.borderedProminent)
+
+                    Button {
+                        saveSecrets()
+                        Task {
+                            isTestingAll = true
+                            testResult = await model.testAllGeminiKeys()
+                            isTestingAll = false
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if isTestingAll {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.clockwise.badge.checkmark")
+                            }
+                            Text("Проверить все ключи (\(geminiKeys.count))")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isTestingAll)
+
+                    Spacer()
+                    ConnectionMark(state: model.geminiState)
+                }
+            }
+
+            SettingsCard(title: "Прокси", caption: "Используется только для запросов Gemini. WebDAV идёт напрямую.", icon: "network") {
+                Toggle("Использовать прокси", isOn: $store.proxy.isEnabled)
+                    .toggleStyle(.switch)
+                    .onChange(of: store.proxy.isEnabled) { _, _ in
+                        UserDefaults.standard.set(true, forKey: "proxy_explicitly_configured")
+                    }
+                HStack {
+                    Picker("Тип", selection: $store.proxy.kind) {
+                        Text("SOCKS5").tag(ProxyConfiguration.Kind.socks5)
+                        Text("HTTP").tag(ProxyConfiguration.Kind.http)
+                    }.frame(width: 150)
+                    TextField("Хост", text: $store.proxy.host)
+                    TextField("Порт", value: $store.proxy.port, format: .number.grouping(.never)).frame(width: 92)
+                }
+                HStack {
+                    TextField("Логин", text: $store.proxy.username)
+                    SecureField("Пароль", text: $proxyPassword)
+                }
+            }
+        }
+    }
+
+    private var audioPage: some View {
+        VStack(spacing: 16) {
+            SettingsCard(title: "Входной микрофон", caption: "Выбранное устройство используется для новых записей.", icon: "mic") {
+                HStack {
+                    Picker("Микрофон", selection: Binding(
+                        get: { model.selectedMicrophoneID },
+                        set: { model.selectedMicrophoneID = $0 }
+                    )) {
+                        Text("Системный по умолчанию").tag(UInt32?.none)
+                        ForEach(model.inputDevices) { device in
+                            Text(device.name + (device.isDefault ? " · по умолчанию" : "")).tag(Optional(device.id))
+                        }
+                    }.labelsHidden().frame(maxWidth: .infinity)
+                    Button { model.refreshInputDevices() } label: { Image(systemName: "arrow.clockwise") }
+                        .help("Обновить устройства")
+                }
+                if model.inputDevices.isEmpty {
+                    Label("Микрофоны не найдены или доступ ещё не выдан", systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
+            SettingsCard(title: "Две дорожки", caption: "Микрофон и звук приложений записываются раздельно.", icon: "square.stack.3d.up") {
+                Label("Системный звук можно включать перед каждой новой лекцией.", systemImage: "checkmark.circle")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var storagePage: some View {
+        VStack(spacing: 16) {
+            SettingsCard(title: "WebDAV", caption: "Папка Obsidian или другое совместимое хранилище.", icon: "icloud") {
+                TextField("URL WebDAV", text: $store.webDAV.baseURL).textFieldStyle(.roundedBorder)
+                HStack {
+                    TextField("Корневая папка", text: $store.webDAV.rootFolder)
+                    TextField("Логин", text: $store.webDAV.username)
+                }
+                SecureField("Пароль", text: $webDAVPassword).textFieldStyle(.roundedBorder)
+                HStack {
+                    Button("Сохранить") { saveSecrets() }.buttonStyle(.borderedProminent)
+                    Button("Проверить WebDAV") {
+                        saveSecrets()
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(180))
+                            testResult = await model.testWebDAV()
+                        }
+                    }
+                    Spacer()
+                    ConnectionMark(state: model.webDAVState)
+                }
+                Divider().padding(.vertical, 4)
+                HStack(spacing: 12) {
+                    Button {
+                        Task { await model.restoreFromWebDAV() }
+                    } label: {
+                        Label(model.isRestoringFromWebDAV ? "Загрузка лекций..." : "Загрузить / Восстановить лекции из WebDAV", systemImage: "icloud.and.arrow.down")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy || store.webDAV.baseURL.isEmpty)
+
+                    if model.isRestoringFromWebDAV {
+                        ProgressView().controlSize(.small)
+                        Text(model.statusMessage).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            SettingsCard(title: "Локальные копии", caption: "Несинхронизированные лекции автоматически не удаляются.", icon: "internaldrive") {
+                Stepper("Хранить после синхронизации: \(store.settings.localRetentionDays) дней", value: $store.settings.localRetentionDays, in: 1...365)
+            }
+            SettingsCard(title: "Управление конспектами", caption: "Массовая перегенерация конспектов через нейросеть.", icon: "sparkles.rectangle.stack") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Если вы изменили модель AI или правила оформления, вы можете заново сгенерировать конспекты для всех сохранённых лекций.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        Button {
+                            model.showBatchRegenerateSheet = true
+                        } label: {
+                            Label("Перегенерировать все конспекты...", systemImage: "sparkles")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(model.isBusy)
+
+                        Button {
+                            model.revealInFinder()
+                        } label: {
+                            Label("Открыть папку в Finder", systemImage: "folder")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+        }
+    }
+
+    private var subjectsPage: some View {
+        SettingsCard(title: "Предметы", caption: "Gemini выбирает только из включённых дисциплин.", icon: "books.vertical") {
+            SubjectsSettingsContent(store: store)
+        }
+    }
+
+    private var hotkeysPage: some View {
+        SettingsCard(title: "Глобальные клавиши", caption: "Работают, даже когда Whisp находится в фоне.", icon: "keyboard") {
+            LabeledContent("Старт, пауза, продолжение") { TextField("⌥⌘R", text: $store.settings.hotkeyRecord).frame(width: 150) }
+            LabeledContent("Завершение") { TextField("⌥⌘.", text: $store.settings.hotkeyFinish).frame(width: 150) }
+            HStack {
+                Text("Используйте символы ⌘, ⌥, ⌃, ⇧ и одну клавишу.").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Применить") { model.applyHotkeys() }.buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private var pageSubtitle: String {
+        switch page {
+        case .gemini: "Модели, ключ и сетевое подключение"
+        case .audio: "Источники записи"
+        case .storage: "Obsidian и локальные файлы"
+        case .subjects: "Список дисциплин для классификации"
+        case .hotkeys: "Управление без переключения окон"
+        }
+    }
+
+    private func maskKey(_ key: String) -> String {
+        guard key.count > 12 else { return "••••••••" }
+        let prefix = key.prefix(6)
+        let suffix = key.suffix(4)
+        return "\(prefix)...\(suffix)"
+    }
+
+    private func saveSecrets() {
+        do {
+            try store.saveSecrets(geminiKeys: geminiKeys, proxyPassword: proxyPassword, webDAVPassword: webDAVPassword)
+            let count = geminiKeys.count
+            testResult = count > 1 ? "Сохранено (\(count) ключей)" : "Сохранено в Keychain"
+            invalidateGeminiStatus()
+        } catch { testResult = error.localizedDescription }
+    }
+
+    private func invalidateGeminiStatus() {
+        model.geminiState = .unchecked
+        model.proxyState = store.proxy.isEnabled ? .unchecked : .disabled
+    }
+}
+
+private struct SettingsCard<Content: View>: View {
+    let title: String
+    let caption: String
+    let icon: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            HStack(alignment: .top, spacing: 11) {
+                Image(systemName: icon).font(.system(size: 15, weight: .medium)).foregroundStyle(WhispPalette.accent)
+                    .frame(width: 30, height: 30).background(WhispPalette.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.headline)
+                    Text(caption).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            content
+        }
+        .padding(19)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 15).stroke(WhispPalette.hairline))
+    }
+}
+
+private struct ConnectionMark: View {
+    let state: ServiceConnectionState
+    var body: some View {
+        switch state {
+        case .available: Label("Доступно", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+        case .checking: Label("Проверяем", systemImage: "clock").foregroundStyle(.orange)
+        case .unavailable: Label("Недоступно", systemImage: "xmark.circle.fill").foregroundStyle(.red)
+        case .local: Label("Локально", systemImage: "cpu").foregroundStyle(.green)
+        case .unchecked: Label("Не проверено", systemImage: "minus.circle").foregroundStyle(.secondary)
+        case .disabled: Label("Выключено", systemImage: "minus.circle").foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct SubjectsSettingsContent: View {
+    @Bindable var store: SettingsStore
+    @State private var newSubject = ""
+    var body: some View {
+        VStack(spacing: 10) {
+            ForEach($store.settings.subjects) { $subject in
+                HStack {
+                    Toggle("", isOn: $subject.isEnabled).labelsHidden()
+                    TextField("Предмет", text: $subject.name)
+                    Button(role: .destructive) {
+                        store.settings.subjects.removeAll { $0.id == subject.id }
+                    } label: { Image(systemName: "trash") }.buttonStyle(.plain).foregroundStyle(.secondary)
+                }
+            }
+            Divider()
+            HStack {
+                TextField("Новый предмет", text: $newSubject)
+                Button("Добавить") {
+                    let name = newSubject.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty else { return }
+                    store.settings.subjects.append(SubjectItem(name: name, order: store.settings.subjects.count))
+                    newSubject = ""
+                }.buttonStyle(.bordered)
+            }
+        }
+    }
+}
+
+private struct KeyStatusBadge: View {
+    let status: GeminiKeyStatus
+
+    var body: some View {
+        HStack(spacing: 4) {
+            switch status {
+            case .unchecked:
+                Image(systemName: "circle")
+                    .font(.system(size: 7))
+                    .foregroundStyle(.secondary.opacity(0.5))
+                Text("Не проверен")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            case .checking:
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Проверка...")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            case .valid:
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.green)
+                Text("Работает")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.green)
+            case .quotaExceeded(let message):
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.orange)
+                Text("Квота")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.orange)
+                    .help(message)
+            case .invalid(let message):
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.red)
+                Text("Ошибка")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.red)
+                    .help(message)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(WhispPalette.canvas.opacity(0.6), in: Capsule())
+    }
+}

@@ -1,0 +1,16 @@
+.DS_Store
+/.stfolder/
+/ex.m4a
+.build/
+DerivedData/
+Whisp.xcodeproj/
+Whisp 2.xcodeproj/
+*.xcuserstate
+xcuserdata/
+build/
+dist/
+.secrets/
+*.dmg
+__pycache__/
+*.pyc
+.swiftpm/
