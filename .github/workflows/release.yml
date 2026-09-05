@@ -21,7 +21,7 @@ concurrency:
 jobs:
   release:
     name: Build, notarize and publish
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     env:
       APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
@@ -84,12 +84,12 @@ jobs:
             mv dist/release-notes.tmp dist/release-notes.md
           fi
 
-      - name: Select Xcode and install XcodeGen
+      - name: Verify Xcode and install XcodeGen
         shell: bash
         run: |
-          sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
           brew install xcodegen
           xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
           xcodegen --version
 
       - name: Import Developer ID certificate
