@@ -535,7 +535,7 @@ struct SettingsView: View {
         case .audio: "Источники записи"
         case .storage: "Obsidian и локальные файлы"
         case .subjects: "Список дисциплин для классификации"
-        case .hotkeys: "Управление без переключения окон"
+        case .hotkeys: "Управление в активном окне Whisp"
         case .updates: "Версия приложения и новые выпуски"
         }
     }

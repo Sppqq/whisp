@@ -17,9 +17,11 @@ final class HotKeyService {
 
     func install() {
         uninstall()
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            Task { @MainActor in self?.handle(event) }
-        }
+        // `addGlobalMonitorForEvents` creates a system-wide event tap. On the
+        // current macOS beta an ad-hoc signed app launched from a downloaded
+        // DMG can stop receiving window events after that tap is installed.
+        // Keep shortcuts scoped to an active Whisp window until the public
+        // distribution is signed and notarized with a Developer ID.
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handle(event)
             return event
