@@ -369,6 +369,16 @@ private struct FailedSessionView: View {
             Text(model.currentSession?.lastError ?? "Не удалось получить аудио")
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .frame(maxWidth: 480)
+            VStack(spacing: 6) {
+                Label(model.geminiDiagnostics, systemImage: "key.horizontal")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Проверить подключение Gemini") {
+                    Task { _ = await model.testAllGeminiKeys() }
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+            }
             HStack(spacing: 10) {
                 if model.needsScreenCapturePermission {
                     Button("Открыть настройки macOS") { model.openScreenCaptureSettings() }
@@ -376,7 +386,7 @@ private struct FailedSessionView: View {
                 if model.needsMicrophonePermission {
                     Button("Открыть настройки микрофона") { model.openMicrophoneSettings() }
                 }
-                Button("Повторить обработку") { Task { await model.retryProcessing() } }
+                Button(model.currentSession?.finalTranscript.isEmpty == false || model.currentSession?.rawTranscript.isEmpty == false ? "Повторить только конспект" : "Повторить обработку") { Task { await model.retryFailedStage() } }
                     .buttonStyle(.borderedProminent).tint(WhispPalette.accent)
                 Button("Новая запись / импорт") { model.showStartScreen() }
                 Button(role: .destructive) {
@@ -455,6 +465,19 @@ private struct ProcessingView: View {
                 Label(fileName, systemImage: "waveform.badge.plus")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            if !model.pendingImportFileNames.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    Label("Далее в очереди: " + String(model.pendingImportFileNames.count), systemImage: "list.number")
+                        .font(.caption.weight(.semibold))
+                    Text(model.pendingImportFileNames.prefix(3).joined(separator: " · "))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                .padding(10)
+                .frame(width: 520, alignment: .leading)
+                .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 10))
             }
 
             if !recentSegments.isEmpty {
@@ -713,6 +736,10 @@ private struct StartView: View {
                 .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 18).stroke(WhispPalette.hairline))
                 .disabled(model.isBusy)
+                .dropDestination(for: URL.self) { urls, _ in
+                    model.enqueueAudioImports(urls)
+                    return true
+                }
 
                 Label("Перед отправкой в Obsidian вы сможете проверить результат.", systemImage: "doc.text.magnifyingglass")
                     .font(.caption)
@@ -726,12 +753,11 @@ private struct StartView: View {
         .fileImporter(
             isPresented: $showAudioImporter,
             allowedContentTypes: [.audio],
-            allowsMultipleSelection: false
+            allowsMultipleSelection: true
         ) { result in
             switch result {
             case .success(let urls):
-                guard let url = urls.first else { return }
-                Task { await model.importAudio(from: url) }
+                model.enqueueAudioImports(urls)
             case .failure(let error):
                 model.lastError = error.localizedDescription
             }

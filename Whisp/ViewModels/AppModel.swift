@@ -49,6 +49,9 @@ final class AppModel {
     var webDAVState: ServiceConnectionState = .unchecked
     var inputDevices: [AudioInputDevice] = []
     var importedFileName: String?
+    var pendingImportURLs: [URL] = []
+    private(set) var isImportQueueActive = false
+    var pendingImportFileNames: [String] { pendingImportURLs.map(\.lastPathComponent) }
     var needsScreenCapturePermission = false
     var needsMicrophonePermission = false
     private(set) var isWorking = false
@@ -266,6 +269,7 @@ final class AppModel {
     }
 
     func cancelProcessing() async {
+        pendingImportURLs.removeAll()
         addProcessingLog("Запрос на отмену обработки...")
         statusMessage = "Отменяем обработку..."
         processingTask?.cancel()
@@ -284,6 +288,67 @@ final class AppModel {
         }
     }
 
+    func enqueueAudioImports(_ sourceURLs: [URL]) {
+        guard !isRecording, !isBatchRegenerating, !isRestoringFromWebDAV else {
+            lastError = "Завершите текущую задачу перед импортом файлов"
+            return
+        }
+
+        let existingPaths = Set(pendingImportURLs.map(\.standardizedFileURL.path))
+        let unique = sourceURLs.filter { url in
+            url.isFileURL && !existingPaths.contains(url.standardizedFileURL.path)
+        }
+        guard !unique.isEmpty else { return }
+        pendingImportURLs.append(contentsOf: unique)
+        statusMessage = unique.count == 1
+            ? "Файл добавлен в очередь"
+            : "В очередь добавлено " + String(unique.count) + " файлов"
+
+        guard !isImportQueueActive else { return }
+        isImportQueueActive = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.isImportQueueActive = false }
+            while !self.pendingImportURLs.isEmpty, !Task.isCancelled {
+                let next = self.pendingImportURLs.removeFirst()
+                await self.importAudio(from: next)
+            }
+        }
+    }
+
+    func cancelImportQueue() {
+        pendingImportURLs.removeAll()
+        Task { await cancelProcessing() }
+    }
+
+    var geminiDiagnostics: String {
+        let keys = settingsStore.geminiAPIKeys
+        guard !keys.isEmpty else { return "Gemini: ключ не добавлен" }
+        let statuses = keys.map { settingsStore.status(for: $0) }
+        let valid = statuses.filter { if case .valid = $0 { return true }; return false }.count
+        let quota = statuses.filter { if case .quotaExceeded = $0 { return true }; return false }.count
+        if valid > 0 { return "Gemini: доступен " + String(valid) + " из " + String(keys.count) + " ключей" }
+        if quota > 0 { return "Gemini: лимит у " + String(quota) + " из " + String(keys.count) + " ключей" }
+        return "Gemini: " + String(keys.count) + " ключ(а), подключение не проверено"
+    }
+
+    func retryFailedStage() async {
+        guard let session = currentSession, session.status == .failed else { return }
+        if !session.finalTranscript.isEmpty || !session.rawTranscript.isEmpty {
+            isWorking = true
+            defer { isWorking = false }
+            lastError = nil
+            currentSession?.lastError = nil
+            currentSession?.status = .processing
+            processingProgress = 0.72
+            clearProcessingLogs()
+            addProcessingLog("Повторный запуск генерации конспекта без новой расшифровки...")
+            try? await persistCurrent()
+            await regenerateAnalysis(for: session.id)
+        } else {
+            await retryProcessing()
+        }
+    }
     func importAudio(from sourceURL: URL) async {
         guard !isBusy else { return }
         isWorking = true
