@@ -45,11 +45,16 @@ struct SettingsView: View {
                     Text(pageSubtitle).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if !testResult.isEmpty {
-                    Text(testResult)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(testResult.contains("доступен") || testResult.contains("Сохранено") || testResult.contains("работают") ? Color.green : Color.red)
-                        .lineLimit(2).frame(maxWidth: 260, alignment: .trailing)
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text(appVersionLabel)
+                        .font(.caption.monospacedDigit().weight(.medium))
+                        .foregroundStyle(.secondary)
+                    if !testResult.isEmpty {
+                        Text(testResult)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(testResult.contains("доступен") || testResult.contains("Сохранено") || testResult.contains("работают") ? Color.green : Color.red)
+                            .lineLimit(2).frame(maxWidth: 260, alignment: .trailing)
+                    }
                 }
             }.padding(.horizontal, 26).padding(.top, 22).padding(.bottom, 17)
 
@@ -85,6 +90,13 @@ struct SettingsView: View {
         .onChange(of: proxyPassword) { invalidateGeminiStatus() }
         .onChange(of: store.proxy) { invalidateGeminiStatus() }
         .onChange(of: store.webDAV) { model.webDAVState = .unchecked }
+    }
+
+    private var appVersionLabel: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        guard let build, !build.isEmpty, build != version else { return "Версия \(version)" }
+        return "Версия \(version) (\(build))"
     }
 
     @ViewBuilder private var pageContent: some View {
