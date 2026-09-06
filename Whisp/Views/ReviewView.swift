@@ -8,6 +8,8 @@ struct ReviewView: View {
     @State private var copied = false
     @State private var quizViewMode = "interactive"
     @State private var transcriptFilter = ""
+    @State private var editingSegment: TranscriptSegment?
+    @State private var editingSegmentIsRaw = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -141,7 +143,7 @@ struct ReviewView: View {
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 12)
-            .background(WhispPalette.panel.opacity(0.5))
+            .background(WhispPalette.panel)
 
             playerBar
 
@@ -255,7 +257,13 @@ struct ReviewView: View {
                                 .background(WhispPalette.canvas.opacity(0.7))
 
                                 if quizViewMode == "interactive" {
-                                    InteractiveQuizView(markdown: model.currentSession?.quizMarkdown ?? "")
+                                    InteractiveQuizView(
+                                        markdown: model.currentSession?.quizMarkdown ?? "",
+                                        progress: Binding(
+                                            get: { model.currentSession?.quizProgress ?? QuizProgress() },
+                                            set: { model.updateQuizProgress($0) }
+                                        )
+                                    )
                                 } else {
                                     editor(binding: Binding(
                                         get: { model.currentSession?.quizMarkdown ?? "" },
@@ -267,11 +275,13 @@ struct ReviewView: View {
                     }
                 case "raw": transcriptEditor(
                     segments: model.currentSession?.rawTranscript ?? [],
-                    binding: Binding(get: { model.currentSession?.rawMarkdown ?? "" }, set: { model.updateReview(raw: $0) })
+                    binding: Binding(get: { model.currentSession?.rawMarkdown ?? "" }, set: { model.updateReview(raw: $0) }),
+                    inRawTranscript: true
                 )
                 default: transcriptEditor(
                     segments: model.currentSession?.finalTranscript ?? [],
-                    binding: Binding(get: { model.currentSession?.finalMarkdown ?? "" }, set: { model.updateReview(final: $0) })
+                    binding: Binding(get: { model.currentSession?.finalMarkdown ?? "" }, set: { model.updateReview(final: $0) }),
+                    inRawTranscript: false
                 )
                 }
             }
@@ -347,6 +357,26 @@ struct ReviewView: View {
         }
         .task { await model.loadPlayback(source: audioSource) }
         .onChange(of: audioSource) { Task { await model.loadPlayback(source: audioSource) } }
+        .background(WhispPalette.canvas)
+        .sheet(item: $editingSegment) { segment in
+            TranscriptSegmentEditor(
+                segment: segment,
+                canMerge: model.canMergeTranscriptSegment(id: segment.id, inRawTranscript: editingSegmentIsRaw),
+                onSave: { text, speaker in
+                    model.updateTranscriptSegment(
+                        id: segment.id,
+                        text: text,
+                        speaker: speaker,
+                        inRawTranscript: editingSegmentIsRaw
+                    )
+                    editingSegment = nil
+                },
+                onMerge: {
+                    model.mergeTranscriptSegment(id: segment.id, inRawTranscript: editingSegmentIsRaw)
+                    editingSegment = nil
+                }
+            )
+        }
     }
 
     private var currentContent: String {
@@ -430,7 +460,7 @@ struct ReviewView: View {
         }.padding(.horizontal, 22).padding(.bottom, 12)
     }
 
-    private func transcriptEditor(segments: [TranscriptSegment], binding: Binding<String>) -> some View {
+    private func transcriptEditor(segments: [TranscriptSegment], binding: Binding<String>, inRawTranscript: Bool) -> some View {
         Group {
             if segments.isEmpty && binding.wrappedValue.isEmpty {
                 ContentUnavailableView(
@@ -503,11 +533,18 @@ struct ReviewView: View {
                                     .help("Перейти к \(WhispFormatting.timestamp(segment.start)) в аудиозаписи")
                                     .accessibilityLabel("Перейти к \(WhispFormatting.timestamp(segment.start)) в аудиозаписи")
 
-                                    Text(segment.text)
-                                        .lineLimit(4)
-                                        .font(.caption)
-                                        .foregroundStyle(isCurrent ? .primary : .secondary)
-                                        .fontWeight(isCurrent ? .medium : .regular)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        if let speaker = segment.speaker, !speaker.isEmpty {
+                                            Text(speaker)
+                                                .font(.caption2.weight(.semibold))
+                                                .foregroundStyle(WhispPalette.accent)
+                                        }
+                                        Text(segment.text)
+                                            .lineLimit(4)
+                                            .font(.caption)
+                                            .foregroundStyle(isCurrent ? .primary : .secondary)
+                                            .fontWeight(isCurrent ? .medium : .regular)
+                                    }
                                 }
                                 .padding(.vertical, 4)
                                 .padding(.horizontal, 6)
@@ -515,6 +552,21 @@ struct ReviewView: View {
                                     isCurrent ? WhispPalette.accent.opacity(0.14) : Color.clear,
                                     in: RoundedRectangle(cornerRadius: 6)
                                 )
+                                .contextMenu {
+                                    Button {
+                                        editingSegment = segment
+                                        editingSegmentIsRaw = inRawTranscript
+                                    } label: {
+                                        Label("Изменить реплику", systemImage: "pencil")
+                                    }
+
+                                    Button {
+                                        model.mergeTranscriptSegment(id: segment.id, inRawTranscript: inRawTranscript)
+                                    } label: {
+                                        Label("Объединить со следующей", systemImage: "arrow.merge")
+                                    }
+                                    .disabled(segment.id == segments.last?.id)
+                                }
                                 .id(segment.id)
                             }
                             .onChange(of: model.player.currentTime) { _, newTime in
@@ -547,6 +599,67 @@ struct ReviewView: View {
                     .background(Color(nsColor: .textBackgroundColor))
             }
         }
+    }
+}
+
+private struct TranscriptSegmentEditor: View {
+    let segment: TranscriptSegment
+    let onSave: (String, String) -> Void
+    let onMerge: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    @State private var speaker: String
+
+    let canMerge: Bool
+
+    init(segment: TranscriptSegment, canMerge: Bool, onSave: @escaping (String, String) -> Void, onMerge: @escaping () -> Void) {
+        self.segment = segment
+        self.canMerge = canMerge
+        self.onSave = onSave
+        self.onMerge = onMerge
+        _text = State(initialValue: segment.text)
+        _speaker = State(initialValue: segment.speaker ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Редактировать реплику").font(.title3.weight(.semibold))
+                    Text(WhispFormatting.timestamp(segment.start)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            TextField("Спикер (необязательно)", text: $speaker)
+                .textFieldStyle(.roundedBorder)
+
+            TextEditor(text: $text)
+                .font(.body)
+                .padding(8)
+                .scrollContentBackground(.hidden)
+                .background(WhispPalette.quietFill, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(WhispPalette.hairline))
+
+            HStack {
+                Button("Объединить со следующей", action: onMerge)
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(WhispPalette.accent)
+                    .disabled(!canMerge)
+                Spacer()
+                Button("Отмена") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Сохранить") {
+                    onSave(text, speaker)
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(22)
+        .frame(width: 560, height: 360)
+        .tint(WhispPalette.accent)
     }
 }
 
@@ -748,11 +861,13 @@ enum QuizParser {
 
 struct InteractiveQuizView: View {
     let markdown: String
-    @State private var revealedQuestions: Set<Int> = []
-    @State private var revealedFlashcards: Set<Int> = []
+    @Binding var progress: QuizProgress
 
     var body: some View {
         let quiz = QuizParser.parse(markdown)
+        let revealedQuestions = Set(progress.revealedQuestions)
+        let revealedFlashcards = Set(progress.revealedFlashcards)
+        let answeredQuestions = progress.answeredQuestionIDs
 
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -761,20 +876,39 @@ struct InteractiveQuizView: View {
                         .font(.title2.bold())
                 }
 
+                if !quiz.questions.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Label("Прогресс подготовки", systemImage: "chart.bar.fill")
+                                .font(.caption.weight(.semibold))
+                            Spacer()
+                            Text("\(progress.answeredQuestionCount) из \(quiz.questions.count) вопросов")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        ProgressView(value: min(1, Double(progress.answeredQuestionCount) / Double(quiz.questions.count)))
+                            .tint(WhispPalette.accent)
+                    }
+                    .padding(12)
+                    .background(WhispPalette.quietFill, in: RoundedRectangle(cornerRadius: 10))
+                }
+
                 // Questions Section
                 if !quiz.questions.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            Text("❓ Контрольные вопросы с самопроверкой")
+                            Text("Контрольные вопросы")
                                 .font(.headline)
                             Spacer()
                             Button(revealedQuestions.count == quiz.questions.count ? "Скрыть ответы" : "Показать все ответы") {
                                 withAnimation {
+                                    var updated = progress
                                     if revealedQuestions.count == quiz.questions.count {
-                                        revealedQuestions.removeAll()
+                                        updated.revealedQuestions.removeAll()
                                     } else {
-                                        revealedQuestions = Set(quiz.questions.map(\.id))
+                                        updated.revealedQuestions = quiz.questions.map(\.id)
                                     }
+                                    progress = updated
                                 }
                             }
                             .buttonStyle(.borderless)
@@ -795,11 +929,13 @@ struct InteractiveQuizView: View {
                                     Spacer()
                                     Button {
                                         withAnimation(.easeInOut(duration: 0.2)) {
+                                            var updated = progress
                                             if isRevealed {
-                                                revealedQuestions.remove(item.id)
+                                                updated.setQuestionRevealed(item.id, revealed: false)
                                             } else {
-                                                revealedQuestions.insert(item.id)
+                                                updated.setQuestionRevealed(item.id, revealed: true)
                                             }
+                                            progress = updated
                                         }
                                     } label: {
                                         Label(isRevealed ? "Скрыть ответ" : "Показать ответ", systemImage: isRevealed ? "eye.slash" : "eye")
@@ -832,9 +968,42 @@ struct InteractiveQuizView: View {
                                     )
                                     .transition(.opacity.combined(with: .move(edge: .top)))
                                 }
+
+                                HStack(spacing: 8) {
+                                    Text("Как прошло?")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Button {
+                                        var updated = progress
+                                        updated.markQuestion(item.id, correct: true)
+                                        progress = updated
+                                    } label: {
+                                        Label("Знаю", systemImage: "checkmark")
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .tint(.green)
+
+                                    Button {
+                                        var updated = progress
+                                        updated.markQuestion(item.id, correct: false)
+                                        progress = updated
+                                    } label: {
+                                        Label("Повторить", systemImage: "arrow.counterclockwise")
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .tint(.orange)
+
+                                    if answeredQuestions.contains(item.id) {
+                                        Text(progress.answeredCorrectly.contains(item.id) ? "Отмечено: знаю" : "Отмечено: повторить")
+                                            .font(.caption2.weight(.medium))
+                                            .foregroundStyle(progress.answeredCorrectly.contains(item.id) ? .green : .orange)
+                                    }
+                                }
                             }
                             .padding(14)
-                            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+                            .background(WhispPalette.panel, in: RoundedRectangle(cornerRadius: 10))
                         }
                     }
                 }
@@ -843,16 +1012,18 @@ struct InteractiveQuizView: View {
                 if !quiz.flashcards.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            Text("📇 Карточки для запоминания (Flashcards)")
+                            Text("Карточки для запоминания")
                                 .font(.headline)
                             Spacer()
                             Button(revealedFlashcards.count == quiz.flashcards.count ? "Скрыть все" : "Открыть все") {
                                 withAnimation {
+                                    var updated = progress
                                     if revealedFlashcards.count == quiz.flashcards.count {
-                                        revealedFlashcards.removeAll()
+                                        updated.revealedFlashcards.removeAll()
                                     } else {
-                                        revealedFlashcards = Set(quiz.flashcards.map(\.id))
+                                        updated.revealedFlashcards = quiz.flashcards.map(\.id)
                                     }
+                                    progress = updated
                                 }
                             }
                             .buttonStyle(.borderless)
@@ -888,15 +1059,17 @@ struct InteractiveQuizView: View {
                                 }
                                 .padding(12)
                                 .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
-                                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                                .background(WhispPalette.panel, in: RoundedRectangle(cornerRadius: 8))
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     withAnimation(.easeInOut(duration: 0.2)) {
+                                        var updated = progress
                                         if isRevealed {
-                                            revealedFlashcards.remove(card.id)
+                                            updated.setFlashcardRevealed(card.id, revealed: false)
                                         } else {
-                                            revealedFlashcards.insert(card.id)
+                                            updated.setFlashcardRevealed(card.id, revealed: true)
                                         }
+                                        progress = updated
                                     }
                                 }
                             }
@@ -959,10 +1132,6 @@ struct InteractiveQuizView: View {
             .padding(20)
         }
         .background(Color(nsColor: .textBackgroundColor))
-        .onChange(of: markdown) { _, _ in
-            revealedQuestions.removeAll()
-            revealedFlashcards.removeAll()
-        }
     }
 }
 
