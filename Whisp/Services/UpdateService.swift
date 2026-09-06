@@ -582,8 +582,8 @@ final class UpdateService {
                     notes: release.body ?? "",
                     pageURL: release.htmlURL,
                     downloadURL: asset.browserDownloadURL,
-                    checksumURL: checksumAsset?.browserDownloadURL,
-                    isPrerelease: release.prerelease
+                    isPrerelease: release.prerelease,
+                    checksumURL: checksumAsset?.browserDownloadURL
                 ))
             }
             .max(by: { $0.0 < $1.0 })?
