@@ -31,6 +31,7 @@ struct SettingsView: View {
     @State private var batchKeysText = ""
     @State private var customProviders: [CustomProvider] = []
     @State private var customProviderKeys: [String: String] = [:]
+    @State private var providerConfigurations: [String: ProviderConfiguration] = [:]
     @State private var providerAPIKeys: [String: String] = [:]
     @State private var proxyPassword = ""
     @State private var webDAVPassword = ""
@@ -89,6 +90,9 @@ struct SettingsView: View {
             geminiKey = store.geminiAPIKey
             customProviders = store.customProviders
             customProviderKeys = Dictionary(uniqueKeysWithValues: store.customProviders.map { ($0.id.uuidString, store.customProviderAPIKey(for: $0)) })
+            providerConfigurations = Dictionary(uniqueKeysWithValues: ProviderPreset.allCases
+                .filter { $0 != .gemini }
+                .map { ($0.rawValue, store.configuration(for: $0)) })
             providerAPIKeys = Dictionary(uniqueKeysWithValues: ProviderPreset.allCases
                 .filter { $0 != .gemini }
                 .map { ($0.rawValue, store.providerAPIKey(for: $0.rawValue)) })
@@ -97,7 +101,11 @@ struct SettingsView: View {
             model.refreshInputDevices()
         }
         .onChange(of: geminiKeys) { invalidateGeminiStatus() }
-        .onChange(of: store.settings.activeProviderID) { invalidateGeminiStatus() }
+        .onChange(of: store.settings.activeProviderID) {
+            invalidateGeminiStatus()
+            guard let provider = store.activeProviderPreset, provider != .gemini else { return }
+            providerConfigurations[provider.rawValue] = store.configuration(for: provider)
+        }
         .onChange(of: proxyPassword) { invalidateGeminiStatus() }
         .onChange(of: store.proxy) { invalidateGeminiStatus() }
         .onChange(of: store.webDAV) { model.webDAVState = .unchecked }
@@ -749,11 +757,13 @@ struct SettingsView: View {
         keyPath: WritableKeyPath<ProviderConfiguration, String>
     ) -> Binding<String> {
         Binding(
-            get: { store.configuration(for: provider)[keyPath: keyPath] },
+            get: {
+                (providerConfigurations[provider.rawValue] ?? store.configuration(for: provider))[keyPath: keyPath]
+            },
             set: { value in
-                var configuration = store.configuration(for: provider)
+                var configuration = providerConfigurations[provider.rawValue] ?? store.configuration(for: provider)
                 configuration[keyPath: keyPath] = value
-                store.setConfiguration(configuration, for: provider)
+                providerConfigurations[provider.rawValue] = configuration
             }
         )
     }
@@ -767,6 +777,11 @@ struct SettingsView: View {
 
     private func saveProviderSettings() {
         do {
+            for provider in ProviderPreset.allCases where provider != .gemini {
+                if let configuration = providerConfigurations[provider.rawValue] {
+                    store.setConfiguration(configuration, for: provider)
+                }
+            }
             try store.saveProviderAPIKeys(providerAPIKeys)
             testResult = "Провайдер сохранён"
             invalidateGeminiStatus()
