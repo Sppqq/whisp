@@ -212,7 +212,7 @@ jobs:
         shell: bash
         run: |
           RELEASE_FLAGS=()
-          if [[ "$CHANNEL" != stable || "$SIGNED_RELEASE" != true ]]; then RELEASE_FLAGS+=(--prerelease); fi
+          if [[ "$CHANNEL" != stable ]]; then RELEASE_FLAGS+=(--prerelease); fi
           gh release create "$TAG" \
             "dist/Whisp-${VERSION}.dmg" \
             "dist/Whisp-${VERSION}.dmg.sha256" \
