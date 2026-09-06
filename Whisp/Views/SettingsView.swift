@@ -723,11 +723,10 @@ struct SettingsView: View {
         case .gemini: "Модели, ключ и сетевое подключение"
         case .audio: "Источники записи"
         case .storage: "Obsidian и локальные файлы"
-        case .appearance: "Тема, размер текста и масштаб интерфейса"
+        case .appearance: "Светлая, тёмная или системная тема"
         case .subjects: "Список дисциплин для классификации"
         case .hotkeys: "Управление в активном окне Whisp"
         case .updates: "Версия приложения и новые выпуски"
-        case .appearance: "Светлая, тёмная или системная тема"
         }
     }
 

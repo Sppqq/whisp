@@ -41,6 +41,8 @@ final class AppModel {
     var showBackfillPrompt = false
     var showBackfillComparison = false
     var showSyncConflict = false
+    var showPostUpdateScreen = false
+    private(set) var previousAppVersion = ""
     var syncConflictPath = ""
     var backfillBefore = ""
     var backfillAfter = ""
@@ -70,6 +72,7 @@ final class AppModel {
     private var persistRequested = false
     private var currentMixURL: URL?
     private var processingTask: Task<Void, Never>?
+    private let lastLaunchedVersionKey = "lastLaunchedVersion"
 
     init() {
         audioCapture.onSamples = { [weak self] samples, source in
@@ -201,6 +204,7 @@ final class AppModel {
 
     func launch() async {
         guard !isRunningTests else { return }
+        preparePostUpdateScreen()
         showSettings = settingsStore.activeProviderAPIKeys.isEmpty || settingsStore.activeProviderEndpoint == nil
         refreshInputDevices()
         do {
@@ -227,6 +231,24 @@ final class AppModel {
                 await updateService.checkForUpdates(silent: true)
             }
         }
+    }
+
+    func dismissPostUpdateScreen() {
+        showPostUpdateScreen = false
+    }
+
+    private func preparePostUpdateScreen() {
+        let currentVersion = updateService.currentVersion
+        let defaults = UserDefaults.standard
+        let previousVersion = defaults.string(forKey: lastLaunchedVersionKey)
+
+        if let previousVersion = previousVersion,
+           UpdateService.isUpgrade(from: previousVersion, to: currentVersion) {
+            self.previousAppVersion = previousVersion
+            showPostUpdateScreen = true
+        }
+
+        defaults.set(currentVersion, forKey: lastLaunchedVersionKey)
     }
 
     func startRecording(captureSystemAudio: Bool = true) async {

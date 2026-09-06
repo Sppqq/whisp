@@ -110,6 +110,13 @@ struct MainView: View {
                      : "Доступна версия \(release.version). Whisp скачает обновление, заменит приложение в /Applications и перезапустится.")
             }
         }
+        .sheet(isPresented: $model.showPostUpdateScreen) {
+            PostUpdateView(
+                version: model.updateService.currentVersion,
+                previousVersion: model.previousAppVersion,
+                onDismiss: model.dismissPostUpdateScreen
+            )
+        }
         .sheet(isPresented: $model.showBackfillComparison) {
             BackfillComparisonView(model: model).frame(minWidth: 1_000, minHeight: 650)
         }

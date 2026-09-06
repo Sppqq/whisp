@@ -95,8 +95,8 @@ struct ReviewView: View {
                     Text("Тетрадь").tag("student")
                     Text("Разбор").tag("notes")
                     Text("К зачёту").tag("quiz")
-                    Text("Стенограмма").tag("final")
-                    Text("Исходный текст").tag("raw")
+                    Label("Стенограмма", systemImage: "text.quote").tag("final")
+                    Label("Сырой звук", systemImage: "waveform").tag("raw")
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -146,6 +146,10 @@ struct ReviewView: View {
             .background(WhispPalette.panel)
 
             playerBar
+
+            if tab == "final" || tab == "raw" {
+                transcriptModeBanner
+            }
 
             Group {
                 switch tab {
@@ -454,10 +458,48 @@ struct ReviewView: View {
             .help("Скорость воспроизведения")
 
             Picker("Дорожка", selection: $audioSource) {
-                Text("Микрофон").tag(AudioSource.microphone)
-                if model.currentSession?.captureSystemAudio == true { Text("Система").tag(AudioSource.system) }
+                Label("Микрофон", systemImage: "mic.fill").tag(AudioSource.microphone)
+                if model.currentSession?.captureSystemAudio == true {
+                    Label("Системный звук", systemImage: "waveform").tag(AudioSource.system)
+                }
             }.labelsHidden().frame(width: 120)
         }.padding(.horizontal, 22).padding(.bottom, 12)
+    }
+
+    private var transcriptModeBanner: some View {
+        let isRaw = tab == "raw"
+        let tint = isRaw ? Color.secondary : WhispPalette.accent
+        let title = isRaw ? "Сырой звук" : "Стенограмма"
+        let detail = isRaw
+            ? "Исходная расшифровка для сверки с записью"
+            : "Очищенный текст лекции для чтения и правок"
+        let icon = isRaw ? "waveform" : "text.quote"
+
+        return HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.caption.weight(.semibold))
+                Text(detail).font(.caption2).foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text(isRaw ? "ИСТОЧНИК" : "ГОТОВЫЙ ТЕКСТ")
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .tracking(0.7)
+                .foregroundStyle(tint)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(isRaw ? WhispPalette.quietFill : WhispPalette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(WhispPalette.hairline))
+        .padding(.horizontal, 22)
+        .padding(.bottom, 8)
     }
 
     private func transcriptEditor(segments: [TranscriptSegment], binding: Binding<String>, inRawTranscript: Bool) -> some View {
@@ -1143,8 +1185,8 @@ struct BackfillComparisonView: View {
         VStack(spacing: 14) {
             Text("Сравнение дорасшифровки").font(.title.bold())
             HSplitView {
-                VStack(alignment: .leading) { Text("До — Whisper").font(.headline); TextEditor(text: .constant(model.backfillBefore)).font(.system(.caption, design: .monospaced)) }
-                VStack(alignment: .leading) { Text("После — Gemini").font(.headline); TextEditor(text: .constant(model.backfillAfter)).font(.system(.caption, design: .monospaced)) }
+                VStack(alignment: .leading) { Text("До: Whisper").font(.headline); TextEditor(text: .constant(model.backfillBefore)).font(.system(.caption, design: .monospaced)) }
+                VStack(alignment: .leading) { Text("После: Gemini").font(.headline); TextEditor(text: .constant(model.backfillAfter)).font(.system(.caption, design: .monospaced)) }
             }
             HStack {
                 Button("Отмена") { model.showBackfillComparison = false }
