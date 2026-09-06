@@ -7,6 +7,7 @@ final class SettingsStore {
     var settings: WhispSettings { didSet { persist() } }
     var proxy: ProxyConfiguration { didSet { persist() } }
     var webDAV: WebDAVConfiguration { didSet { persist() } }
+    var customProviders: [CustomProvider] { didSet { persist() } }
 
     private let defaults: UserDefaults
     private let keychain: KeychainStore
@@ -14,6 +15,7 @@ final class SettingsStore {
     private let decoder = JSONDecoder()
     private var cachedGeminiAPIKey = ""
     private var cachedGeminiAPIKeys: [String] = []
+    private var cachedCustomProviderAPIKeys: [String: String] = [:]
     private(set) var secretStorageMode: SecretStorageMode
     var keyStatuses: [String: GeminiKeyStatus] = [:]
 
@@ -32,6 +34,8 @@ final class SettingsStore {
         self.keychain = keychain
         secretStorageMode = loadedStorageMode
         settings = loadedSettings
+        customProviders = defaults.data(forKey: "customProviders")
+            .flatMap { try? decoder.decode([CustomProvider].self, from: $0) } ?? []
 
         var loadedProxy = ProxyConfiguration()
         if let configString = try? keychain.get(.proxyConfiguration, mode: loadedStorageMode),
@@ -75,6 +79,16 @@ final class SettingsStore {
         let cleaned = initialKeys.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         cachedGeminiAPIKeys = cleaned
         cachedGeminiAPIKey = cachedGeminiAPIKeys.first ?? ""
+
+        if let stored = try? keychain.get(.customProviderAPIKeys, mode: loadedStorageMode),
+           let data = stored.data(using: .utf8),
+           let decoded = try? decoder.decode([String: String].self, from: data) {
+            cachedCustomProviderAPIKeys = decoded
+        }
+        if ProviderPreset(rawValue: settings.activeProviderID) == nil,
+           !customProviders.contains(where: { $0.id.uuidString == settings.activeProviderID }) {
+            settings.activeProviderID = "gemini"
+        }
     }
 
     var geminiAPIKeys: [String] {
@@ -105,6 +119,120 @@ final class SettingsStore {
         }
     }
 
+    var usesGemini: Bool { settings.activeProviderID == "gemini" }
+
+    var activeProviderPreset: ProviderPreset? {
+        ProviderPreset(rawValue: settings.activeProviderID)
+    }
+
+    var activeProvider: CustomProvider? {
+        customProviders.first { $0.id.uuidString == settings.activeProviderID }
+    }
+
+    var activeProviderName: String {
+        if let preset = activeProviderPreset { return preset.title }
+        return activeProvider.flatMap { $0.name.nonEmpty } ?? "Свой провайдер"
+    }
+
+    var activeProviderAPIKeys: [String] {
+        if usesGemini { return geminiAPIKeys }
+        if activeProviderPreset != nil {
+            let key = providerAPIKey(for: settings.activeProviderID)
+            return key.isEmpty ? [] : [key]
+        }
+        guard let provider = activeProvider else { return [] }
+        let key = customProviderAPIKey(for: provider)
+        return key.isEmpty ? [] : [key]
+    }
+
+    var activeTranscriptionModel: String {
+        if let preset = activeProviderPreset {
+            if preset == .gemini { return settings.geminiModel }
+            return configuration(for: preset).transcriptionModel.nonEmpty ?? preset.defaultConfiguration.transcriptionModel
+        }
+        return activeProvider?.transcriptionModel.nonEmpty ?? settings.geminiModel
+    }
+
+    var activeAnalysisModel: String {
+        if let preset = activeProviderPreset {
+            if preset == .gemini { return settings.analysisModel }
+            return configuration(for: preset).analysisModel.nonEmpty ?? preset.defaultConfiguration.analysisModel
+        }
+        return activeProvider?.analysisModel.nonEmpty ?? settings.analysisModel
+    }
+
+    var activeProviderEndpoint: URL? {
+        if let preset = activeProviderPreset {
+            if preset == .gemini { return GeminiAPIClient.defaultBaseURL }
+            let value = configuration(for: preset).baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: value),
+                  let scheme = url.scheme?.lowercased(), ["https", "http"].contains(scheme),
+                  url.host != nil else { return nil }
+            return url
+        }
+        return activeProvider?.endpoint
+    }
+
+    var activeProviderTransport: ProviderTransport {
+        activeProviderPreset?.transport ?? .gemini
+    }
+
+    var activeProviderSupportsLiveTranscription: Bool {
+        activeProviderPreset?.supportsLiveTranscription ?? false
+    }
+
+    var activeProviderSupportsRemoteTranscription: Bool {
+        activeProviderTransport != .anthropic
+    }
+
+    func configuration(for preset: ProviderPreset) -> ProviderConfiguration {
+        settings.providerConfigurations[preset.rawValue] ?? preset.defaultConfiguration
+    }
+
+    func setConfiguration(_ configuration: ProviderConfiguration, for preset: ProviderPreset) {
+        var updatedSettings = settings
+        updatedSettings.providerConfigurations[preset.rawValue] = configuration
+        settings = updatedSettings
+    }
+
+    func providerAPIKey(for providerID: String) -> String {
+        cachedCustomProviderAPIKeys[providerID] ?? ""
+    }
+
+    func saveProviderAPIKeys(_ apiKeys: [String: String]) throws {
+        var merged = cachedCustomProviderAPIKeys
+        for (providerID, value) in apiKeys {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { merged.removeValue(forKey: providerID) }
+            else { merged[providerID] = trimmed }
+        }
+        let encoded = try encoder.encode(merged)
+        try keychain.set(String(data: encoded, encoding: .utf8) ?? "{}", for: .customProviderAPIKeys, mode: secretStorageMode)
+        cachedCustomProviderAPIKeys = merged
+    }
+
+    func customProviderAPIKey(for provider: CustomProvider) -> String {
+        cachedCustomProviderAPIKeys[provider.id.uuidString] ?? ""
+    }
+
+    func saveCustomProviders(_ providers: [CustomProvider], apiKeys: [String: String]) throws {
+        let allowedIDs = Set(providers.map { $0.id.uuidString })
+        let cleanedKeys = apiKeys.reduce(into: [String: String]()) { result, entry in
+            let key = entry.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if allowedIDs.contains(entry.key), !key.isEmpty { result[entry.key] = key }
+        }
+        var mergedKeys = cachedCustomProviderAPIKeys.filter {
+            allowedIDs.contains($0.key) || ProviderPreset(rawValue: $0.key) != nil
+        }
+        for (key, value) in cleanedKeys { mergedKeys[key] = value }
+        let mergedEncoded = try encoder.encode(mergedKeys)
+        try keychain.set(String(data: mergedEncoded, encoding: .utf8) ?? "{}", for: .customProviderAPIKeys, mode: secretStorageMode)
+        cachedCustomProviderAPIKeys = mergedKeys
+        customProviders = providers
+        if activeProviderPreset == nil, activeProvider == nil { settings.activeProviderID = "gemini" }
+        persist()
+    }
+
     func status(for key: String) -> GeminiKeyStatus {
         keyStatuses[key] ?? .unchecked
     }
@@ -130,10 +258,12 @@ final class SettingsStore {
         guard newMode != previousMode else { return }
 
         let keysJSON = try encoder.encode(cachedGeminiAPIKeys)
+        let customKeysJSON = try encoder.encode(cachedCustomProviderAPIKeys)
         let proxyJSON = try encoder.encode(proxy)
         let values: [SecretKey: String] = [
             .geminiAPIKeys: String(data: keysJSON, encoding: .utf8) ?? "[]",
             .geminiAPIKey: cachedGeminiAPIKey,
+            .customProviderAPIKeys: String(data: customKeysJSON, encoding: .utf8) ?? "{}",
             .proxyPassword: proxy.password,
             .proxyConfiguration: String(data: proxyJSON, encoding: .utf8) ?? "{}",
             .webDAVPassword: webDAV.password
@@ -168,10 +298,18 @@ final class SettingsStore {
         var publicWebDAV = webDAV
         publicWebDAV.password = ""
         defaults.set(try? encoder.encode(settings), forKey: "settings")
+        defaults.set(try? encoder.encode(customProviders), forKey: "customProviders")
         if let data = try? encoder.encode(proxy), let value = String(data: data, encoding: .utf8) {
             try? keychain.set(value, for: .proxyConfiguration, mode: secretStorageMode)
         }
         defaults.removeObject(forKey: "proxy")
         defaults.set(try? encoder.encode(publicWebDAV), forKey: "webdav")
+    }
+}
+
+private extension String {
+    var nonEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

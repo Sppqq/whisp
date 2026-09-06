@@ -36,6 +36,7 @@ struct MainView: View {
             ZStack {
                 WhispPalette.canvas.ignoresSafeArea()
                 detail
+                updateProgressOverlay
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -50,7 +51,7 @@ struct MainView: View {
             Button("Восстановить") { Task { await model.recoverSession() } }
             Button("Позже", role: .cancel) { model.dismissRecovery() }
         } message: { Text("Уже записанные аудиосегменты сохранены.") }
-        .alert("Gemini снова доступен", isPresented: $model.showBackfillPrompt) {
+        .alert("\(model.settingsStore.activeProviderName) снова доступен", isPresented: $model.showBackfillPrompt) {
             Button("Дорасшифровать сейчас") { Task { await model.backfillNow() } }
             Button("Напомнить позже") { model.deferBackfill() }
             Button("Оставить локальную версию", role: .destructive) { model.declineBackfill() }
@@ -101,6 +102,58 @@ struct MainView: View {
         .sheet(isPresented: $model.showBatchRegenerateSheet) {
             BatchRegenerateSheet(model: model)
         }
+    }
+
+    @ViewBuilder private var updateProgressOverlay: some View {
+        switch model.updateService.state {
+        case .downloading(let release):
+            VStack {
+                Spacer()
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Скачиваем Whisp \(release.version)…")
+                            .font(.callout.weight(.medium))
+                        Spacer()
+                        if let total = model.updateService.downloadTotalBytes, total > 0 {
+                            Text("\(formattedBytes(model.updateService.downloadedBytes)) / \(formattedBytes(total))")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if let total = model.updateService.downloadTotalBytes, total > 0 {
+                        ProgressView(value: model.updateService.downloadProgress)
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .padding(14)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WhispPalette.hairline))
+                .padding(18)
+            }
+            .allowsHitTesting(false)
+        case .installing(let release):
+            VStack {
+                Spacer()
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Установка и перезапуск Whisp \(release.version)…")
+                        .font(.callout.weight(.medium))
+                }
+                .padding(14)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WhispPalette.hairline))
+                .padding(18)
+            }
+            .allowsHitTesting(false)
+        default:
+            EmptyView()
+        }
+    }
+
+    private func formattedBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     private var sidebar: some View {
@@ -884,7 +937,7 @@ struct BatchRegenerateSheet: View {
                 model.startBatchRegeneration(forceOverwrite: model.batchForceOverwrite)
             }
         } message: {
-            Text("Старые конспекты будут полностью заменены новыми текстами от модели \(model.settingsStore.settings.analysisModel).\n\nВы сможете остановить процесс в любой момент.")
+            Text("Старые конспекты будут полностью заменены новыми текстами от \(model.settingsStore.activeProviderName), модель \(model.settingsStore.activeAnalysisModel).\n\nВы сможете остановить процесс в любой момент.")
         }
     }
 
@@ -897,7 +950,7 @@ struct BatchRegenerateSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Внимание: перезапись конспектов")
                         .font(.subheadline.bold())
-                    Text("Конспекты (тетрадь и подробный разбор) для всех лекций будут заново созданы через Gemini API. Аудиозаписи и расшифровки не пострадают.")
+                    Text("Конспекты (тетрадь и подробный разбор) для всех лекций будут заново созданы через \(model.settingsStore.activeProviderName) API. Аудиозаписи и расшифровки не пострадают.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -909,7 +962,7 @@ struct BatchRegenerateSheet: View {
 
             HStack(spacing: 12) {
                 metricCard(title: "Найдено лекций", value: "\(eligibleSessions.count)", icon: "books.vertical")
-                metricCard(title: "Модель AI", value: model.settingsStore.settings.analysisModel, icon: "cpu")
+                metricCard(title: "Модель AI", value: model.settingsStore.activeAnalysisModel, icon: "cpu")
                 metricCard(title: "Оценка времени", value: "~ \(eligibleSessions.count * 6) сек", icon: "clock")
             }
 

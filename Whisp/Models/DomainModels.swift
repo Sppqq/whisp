@@ -9,7 +9,7 @@ enum LectureStatus: String, Codable, CaseIterable, Sendable {
         case .recording: "Запись"
         case .paused: "Пауза"
         case .processing: "Обработка"
-        case .awaitingBackfill: "Ожидает дорасшифровки Gemini"
+        case .awaitingBackfill: "Ожидает дорасшифровки AI"
         case .review: "Проверка"
         case .uploading: "Загрузка"
         case .synced: "Синхронизировано"
@@ -326,6 +326,140 @@ struct WebDAVConfiguration: Codable, Hashable, Sendable {
     var password = ""
 }
 
+/// A Gemini-compatible endpoint. The API key is deliberately kept in `KeychainStore`,
+/// not in this public, UserDefaults-backed configuration.
+struct CustomProvider: Codable, Identifiable, Hashable, Sendable {
+    let id: UUID
+    var name: String
+    var baseURL: String
+    var transcriptionModel: String
+    var analysisModel: String
+
+    init(
+        id: UUID = UUID(),
+        name: String = "Свой провайдер",
+        baseURL: String = "",
+        transcriptionModel: String = "gemini-3.5-transcribe",
+        analysisModel: String = "gemini-3.8-flash"
+    ) {
+        self.id = id
+        self.name = name
+        self.baseURL = baseURL
+        self.transcriptionModel = transcriptionModel
+        self.analysisModel = analysisModel
+    }
+
+    var endpoint: URL? {
+        let value = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: value),
+              let scheme = url.scheme?.lowercased(), ["https", "http"].contains(scheme),
+              url.host != nil else { return nil }
+        return url
+    }
+}
+
+enum ProviderTransport: String, Codable, Sendable {
+    case gemini
+    case openAICompatible
+    case anthropic
+}
+
+struct ProviderConfiguration: Codable, Hashable, Sendable {
+    var baseURL: String
+    var transcriptionModel: String
+    var analysisModel: String
+
+    init(baseURL: String, transcriptionModel: String, analysisModel: String) {
+        self.baseURL = baseURL
+        self.transcriptionModel = transcriptionModel
+        self.analysisModel = analysisModel
+    }
+}
+
+enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
+    case gemini
+    case openAI = "openai"
+    case anthropic
+    case xAI = "xai"
+    case openRouter = "openrouter"
+    case customOpenAICompatible = "custom-openai-compatible"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .gemini: "Google Gemini"
+        case .openAI: "OpenAI"
+        case .anthropic: "Anthropic"
+        case .xAI: "xAI"
+        case .openRouter: "OpenRouter"
+        case .customOpenAICompatible: "Свой OpenAI-совместимый"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .gemini: "sparkles"
+        case .openAI: "circle.hexagongrid"
+        case .anthropic: "text.bubble"
+        case .xAI: "xmark"
+        case .openRouter: "arrow.triangle.branch"
+        case .customOpenAICompatible: "server.rack"
+        }
+    }
+
+    var transport: ProviderTransport {
+        switch self {
+        case .gemini: .gemini
+        case .anthropic: .anthropic
+        case .openAI, .xAI, .openRouter, .customOpenAICompatible: .openAICompatible
+        }
+    }
+
+    var supportsLiveTranscription: Bool { self == .gemini }
+
+    var defaultConfiguration: ProviderConfiguration {
+        switch self {
+        case .gemini:
+            ProviderConfiguration(
+                baseURL: "https://generativelanguage.googleapis.com",
+                transcriptionModel: "gemini-3.5-transcribe",
+                analysisModel: "gemini-3.8-flash"
+            )
+        case .openAI:
+            ProviderConfiguration(
+                baseURL: "https://api.openai.com/v1",
+                transcriptionModel: "gpt-4o-transcribe",
+                analysisModel: "gpt-4o-mini"
+            )
+        case .anthropic:
+            ProviderConfiguration(
+                baseURL: "https://api.anthropic.com",
+                transcriptionModel: "claude-3-5-haiku-latest",
+                analysisModel: "claude-3-5-haiku-latest"
+            )
+        case .xAI:
+            ProviderConfiguration(
+                baseURL: "https://api.x.ai/v1",
+                transcriptionModel: "grok-2-audio",
+                analysisModel: "grok-3-mini"
+            )
+        case .openRouter:
+            ProviderConfiguration(
+                baseURL: "https://openrouter.ai/api/v1",
+                transcriptionModel: "openai/whisper-1",
+                analysisModel: "openai/gpt-4o-mini"
+            )
+        case .customOpenAICompatible:
+            ProviderConfiguration(
+                baseURL: "",
+                transcriptionModel: "whisper-1",
+                analysisModel: "gpt-4o-mini"
+            )
+        }
+    }
+}
+
 struct WhispSettings: Codable, Sendable {
     var subjects = WhispSettings.defaultSubjects
     var customVocabulary: [String] = ["10.02.05", "информационная безопасность"]
@@ -333,9 +467,36 @@ struct WhispSettings: Codable, Sendable {
     var geminiModel = "gemini-3.5-transcribe"
     var geminiLiveModel = "gemini-3.5-transcribe-live"
     var analysisModel = "gemini-3.8-flash"
+    /// `gemini` remains the default provider for new installations.
+    var activeProviderID = "gemini"
+    var providerConfigurations: [String: ProviderConfiguration] = [:]
     var hotkeyRecord = "⌥⌘R"
     var hotkeyFinish = "⌥⌘."
     var preferredMicrophoneID: UInt32?
+
+    private enum CodingKeys: String, CodingKey {
+        case subjects, customVocabulary, localRetentionDays, geminiModel, geminiLiveModel, analysisModel
+        case activeProviderID, providerConfigurations, hotkeyRecord, hotkeyFinish, preferredMicrophoneID
+    }
+
+    init() {}
+
+    /// Older installations do not contain `activeProviderID`; decode every setting
+    /// defensively so adding a provider never resets existing user preferences.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        subjects = try values.decodeIfPresent([SubjectItem].self, forKey: .subjects) ?? Self.defaultSubjects
+        customVocabulary = try values.decodeIfPresent([String].self, forKey: .customVocabulary) ?? ["10.02.05", "информационная безопасность"]
+        localRetentionDays = try values.decodeIfPresent(Int.self, forKey: .localRetentionDays) ?? 30
+        geminiModel = try values.decodeIfPresent(String.self, forKey: .geminiModel) ?? "gemini-3.5-transcribe"
+        geminiLiveModel = try values.decodeIfPresent(String.self, forKey: .geminiLiveModel) ?? "gemini-3.5-transcribe-live"
+        analysisModel = try values.decodeIfPresent(String.self, forKey: .analysisModel) ?? "gemini-3.8-flash"
+        activeProviderID = try values.decodeIfPresent(String.self, forKey: .activeProviderID) ?? "gemini"
+        providerConfigurations = try values.decodeIfPresent([String: ProviderConfiguration].self, forKey: .providerConfigurations) ?? [:]
+        hotkeyRecord = try values.decodeIfPresent(String.self, forKey: .hotkeyRecord) ?? "⌥⌘R"
+        hotkeyFinish = try values.decodeIfPresent(String.self, forKey: .hotkeyFinish) ?? "⌥⌘."
+        preferredMicrophoneID = try values.decodeIfPresent(UInt32.self, forKey: .preferredMicrophoneID)
+    }
 
     static let defaultSubjects = [
         "Биология", "Иностранный язык", "Информатика", "История", "Литература",

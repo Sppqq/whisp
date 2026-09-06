@@ -19,6 +19,7 @@ actor FinalTranscriptionService {
     private let client: GeminiAPIClient
     private let processor: AudioPostProcessor
     private let model: String
+    private let providerName: String
     private let vocabulary: [String]
     private let onProgress: ProgressHandler?
 
@@ -26,12 +27,14 @@ actor FinalTranscriptionService {
         client: GeminiAPIClient,
         processor: AudioPostProcessor,
         model: String,
+        providerName: String = "Gemini",
         vocabulary: [String],
         onProgress: ProgressHandler? = nil
     ) {
         self.client = client
         self.processor = processor
         self.model = model
+        self.providerName = providerName
         self.vocabulary = vocabulary
         self.onProgress = onProgress
     }
@@ -110,8 +113,8 @@ actor FinalTranscriptionService {
                     chunkEnd: end,
                     totalDuration: duration,
                     progress: baseFraction + chunkFractionWeight * 0.3,
-                    stageDescription: "Фрагмент \(chunkNum) из \(totalChunks): отправка в Gemini API...",
-                    logMessage: "Фрагмент \(chunkNum)/\(totalChunks): отправка аудио в Gemini API..."
+                    stageDescription: "Фрагмент \(chunkNum) из \(totalChunks): отправка в \(providerName)...",
+                    logMessage: "Фрагмент \(chunkNum)/\(totalChunks): отправка аудио в \(providerName)..."
                 ))
 
                 let relative = try await client.transcribe(

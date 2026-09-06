@@ -40,11 +40,11 @@ actor BackfillService {
         })
     }
 
-    func notifyAvailable(sessionTitle: String) async {
+    func notifyAvailable(sessionTitle: String, providerName: String) async {
         let center = UNUserNotificationCenter.current()
         _ = try? await center.requestAuthorization(options: [.alert, .sound])
         let content = UNMutableNotificationContent()
-        content.title = "Gemini снова доступен"
+        content.title = "\(providerName) снова доступен"
         content.body = "Можно дорасшифровать локальные участки лекции «\(sessionTitle)»."
         content.sound = .default
         try? await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
