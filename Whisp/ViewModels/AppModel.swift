@@ -116,7 +116,7 @@ final class AppModel {
     var isRestoringFromWebDAV = false
     private var batchRegenerateTask: Task<Void, Never>?
 
-    var isBusy: Bool { isRecording || isBatchRegenerating || isRestoringFromWebDAV }
+    var isBusy: Bool { isRecording || isBatchRegenerating || isRestoringFromWebDAV || isWorking }
     private(set) var activeProcessingSessionID: UUID?
     var selectedMicrophoneID: UInt32? {
         get { settingsStore.settings.preferredMicrophoneID }
@@ -611,7 +611,10 @@ final class AppModel {
         if let final { session.finalMarkdown = final; session.userEditedFinal = true }
         if let notes { session.notesMarkdown = notes; session.userEditedNotes = true }
         if let studentNotes { session.studentNotesMarkdown = studentNotes; session.userEditedStudentNotes = true }
-        if let quiz { session.quizMarkdown = quiz }
+        if let quiz, quiz != session.quizMarkdown {
+            session.quizMarkdown = quiz
+            session.quizProgress.reset()
+        }
         currentSession = session
         schedulePersistCurrent()
     }
@@ -688,12 +691,9 @@ final class AppModel {
             session.rawTranscript = segments
             session.rawMarkdown = MarkdownExporter.render(session: session).raw
         } else {
-            let shouldUpdateMarkdown = !session.userEditedFinal
             session.finalTranscript = segments
             session.userEditedFinal = true
-            if shouldUpdateMarkdown {
-                session.finalMarkdown = MarkdownExporter.render(session: session).final
-            }
+            session.finalMarkdown = MarkdownExporter.render(session: session).final
         }
         currentSession = session
         schedulePersistCurrent()
@@ -716,15 +716,18 @@ final class AppModel {
             session.rawTranscript = segments
             session.rawMarkdown = MarkdownExporter.render(session: session).raw
         } else {
-            let shouldUpdateMarkdown = !session.userEditedFinal
             session.finalTranscript = segments
             session.userEditedFinal = true
-            if shouldUpdateMarkdown {
-                session.finalMarkdown = MarkdownExporter.render(session: session).final
-            }
+            session.finalMarkdown = MarkdownExporter.render(session: session).final
         }
         currentSession = session
         schedulePersistCurrent()
+    }
+
+    func canMergeTranscriptSegment(id: UUID, inRawTranscript: Bool) -> Bool {
+        let segments = inRawTranscript ? currentSession?.rawTranscript : currentSession?.finalTranscript
+        guard let segments, let index = segments.firstIndex(where: { $0.id == id }) else { return false }
+        return index + 1 < segments.count
     }
 
     func updateQuizProgress(_ progress: QuizProgress) {
@@ -1587,27 +1590,30 @@ final class AppModel {
         )
     }
 
+private var pendingPersistenceSnapshots: [UUID: LectureSession] = [:]
+
     private func schedulePersistCurrent() {
+        guard let session = currentSession else { return }
+        pendingPersistenceSnapshots[session.id] = session
+        if let index = sessions.firstIndex(where: { $0.id == session.id }) { sessions[index] = session }
+        else { sessions.insert(session, at: 0) }
         persistRequested = true
         guard persistTask == nil else { return }
         persistTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(250))
-            } catch {
-                return
-            }
+            do { try await Task.sleep(for: .milliseconds(250)) } catch { self?.persistTask = nil; return }
             guard let self else { return }
-            self.persistRequested = false
             self.persistTask = nil
-            try? await self.persistCurrent()
-            if self.persistRequested {
-                self.schedulePersistCurrent()
-            }
+            let snapshots = Array(self.pendingPersistenceSnapshots.values)
+            self.pendingPersistenceSnapshots.removeAll()
+            self.persistRequested = false
+            for snapshot in snapshots { try? await self.store.save(snapshot) }
+            if self.persistRequested { self.schedulePersistCurrent() }
         }
     }
 
     private func persistCurrent() async throws {
         guard let currentSession else { return }
+        pendingPersistenceSnapshots.removeValue(forKey: currentSession.id)
         try await store.save(currentSession)
         if let index = sessions.firstIndex(where: { $0.id == currentSession.id }) { sessions[index] = currentSession }
         else { sessions.insert(currentSession, at: 0) }

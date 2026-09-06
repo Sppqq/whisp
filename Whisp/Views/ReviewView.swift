@@ -361,6 +361,7 @@ struct ReviewView: View {
         .sheet(item: $editingSegment) { segment in
             TranscriptSegmentEditor(
                 segment: segment,
+                canMerge: model.canMergeTranscriptSegment(id: segment.id, inRawTranscript: editingSegmentIsRaw),
                 onSave: { text, speaker in
                     model.updateTranscriptSegment(
                         id: segment.id,
@@ -609,8 +610,11 @@ private struct TranscriptSegmentEditor: View {
     @State private var text: String
     @State private var speaker: String
 
-    init(segment: TranscriptSegment, onSave: @escaping (String, String) -> Void, onMerge: @escaping () -> Void) {
+    let canMerge: Bool
+
+    init(segment: TranscriptSegment, canMerge: Bool, onSave: @escaping (String, String) -> Void, onMerge: @escaping () -> Void) {
         self.segment = segment
+        self.canMerge = canMerge
         self.onSave = onSave
         self.onMerge = onMerge
         _text = State(initialValue: segment.text)
@@ -641,6 +645,7 @@ private struct TranscriptSegmentEditor: View {
                 Button("Объединить со следующей", action: onMerge)
                     .buttonStyle(.borderless)
                     .foregroundStyle(WhispPalette.accent)
+                    .disabled(!canMerge)
                 Spacer()
                 Button("Отмена") { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -1127,9 +1132,6 @@ struct InteractiveQuizView: View {
             .padding(20)
         }
         .background(Color(nsColor: .textBackgroundColor))
-        .onChange(of: markdown) { _, _ in
-            progress.reset()
-        }
     }
 }
 

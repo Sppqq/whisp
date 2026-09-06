@@ -84,10 +84,11 @@ actor WebDAVClient {
             }
         }
 
-        let sessionJsonURL = localDirectory.appending(path: "session.json")
-        if let sessionData = try? Data(contentsOf: sessionJsonURL) {
-            _ = try? await atomicUpload(data: sessionData, remotePath: remotePath + "/session.json")
-        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let sessionData = try encoder.encode(lecture)
+        try await atomicUpload(data: sessionData, remotePath: remotePath + "/session.json", expectedETag: lecture.remoteETag)
         return remotePath
     }
 
@@ -108,8 +109,7 @@ actor WebDAVClient {
     /// Servers without ETag/Last-Modified metadata are treated as unknown and do
     /// not block an upload; the existing atomic PUT path remains the fallback.
     func hasRemoteConflict(for lecture: LectureSession) async throws -> Bool {
-        guard let remotePath = lecture.remotePath,
-              lecture.remoteETag != nil || lecture.syncedAt != nil else { return false }
+        guard let remotePath = lecture.remotePath else { return false }
 
         let metadata = try await remoteMetadata(path: remotePath + "/session.json")
         guard metadata.exists else { return false }
@@ -117,10 +117,11 @@ actor WebDAVClient {
         if let expectedETag = lecture.remoteETag, let actualETag = metadata.etag {
             return expectedETag != actualETag
         }
+        if lecture.remoteETag != nil { return true }
         if let syncedAt = lecture.syncedAt, let modifiedAt = metadata.lastModified {
             return modifiedAt > syncedAt.addingTimeInterval(1)
         }
-        return false
+        return true
     }
 
     func remoteETag(path: String) async throws -> String? {
@@ -141,6 +142,14 @@ actor WebDAVClient {
             throw WebDAVError.verificationFailed(url.lastPathComponent)
         }
         if http.statusCode == 404 { return RemoteMetadata(exists: false, etag: nil, lastModified: nil) }
+        if [405, 501].contains(http.statusCode) {
+            let get = authenticatedRequest(url: url, method: "GET")
+            let (_, getResponse) = try await session.data(for: get)
+            guard let getHTTP = getResponse as? HTTPURLResponse else { throw WebDAVError.verificationFailed(url.lastPathComponent) }
+            if getHTTP.statusCode == 404 { return RemoteMetadata(exists: false, etag: nil, lastModified: nil) }
+            guard (200..<300).contains(getHTTP.statusCode) else { throw WebDAVError.unexpectedStatus(getHTTP.statusCode, "Не удалось проверить удалённую версию") }
+            return RemoteMetadata(exists: true, etag: getHTTP.value(forHTTPHeaderField: "ETag"), lastModified: Self.parseHTTPDate(getHTTP.value(forHTTPHeaderField: "Last-Modified")))
+        }
         guard (200..<300).contains(http.statusCode) else {
             throw WebDAVError.unexpectedStatus(http.statusCode, "Не удалось проверить удалённую версию")
         }
@@ -405,23 +414,25 @@ actor WebDAVClient {
         try await verify(url: finalURL, expectedLength: (try FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? NSNumber)?.intValue)
     }
 
-    private func atomicUpload(data: Data, remotePath: String) async throws {
+    private func atomicUpload(data: Data, remotePath: String, expectedETag: String? = nil) async throws {
         let finalURL = try remoteURL(path: remotePath)
         let temporaryURL = try remoteURL(path: remotePath + ".whisp-uploading")
         var put = authenticatedRequest(url: temporaryURL, method: "PUT")
         put.httpBody = data
         let (responseData, response) = try await session.data(for: put)
         try validate(response, data: responseData, accepted: [200, 201, 204])
-        try await move(from: temporaryURL, to: finalURL, fallbackData: data)
+        try await move(from: temporaryURL, to: finalURL, fallbackData: data, expectedETag: expectedETag)
         try await verify(url: finalURL, expectedLength: data.count)
     }
 
-    private func move(from source: URL, to destination: URL, fallbackData: Data? = nil, fallbackFile: URL? = nil) async throws {
+    private func move(from source: URL, to destination: URL, fallbackData: Data? = nil, fallbackFile: URL? = nil, expectedETag: String? = nil) async throws {
         var move = authenticatedRequest(url: source, method: "MOVE")
         move.setValue(destination.absoluteString, forHTTPHeaderField: "Destination")
         move.setValue("T", forHTTPHeaderField: "Overwrite")
+        if let expectedETag { move.setValue(expectedETag, forHTTPHeaderField: "If-Match") }
         let (data, response) = try await session.data(for: move)
         if let http = response as? HTTPURLResponse, [200, 201, 204].contains(http.statusCode) { return }
+        if let http = response as? HTTPURLResponse, http.statusCode == 412 { throw WebDAVError.unexpectedStatus(412, "Удалённая версия изменилась во время синхронизации") }
 
         if let fallbackFile {
             var put = authenticatedRequest(url: destination, method: "PUT")

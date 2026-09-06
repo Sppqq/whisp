@@ -30,7 +30,10 @@ struct MainView: View {
                 || session.rawTranscript.contains { $0.text.localizedCaseInsensitiveContains(query) }
             let notesMatch = session.notesMarkdown.localizedCaseInsensitiveContains(query)
                 || session.studentNotesMarkdown.localizedCaseInsensitiveContains(query)
-            return titleMatch || subjectMatch || tagsMatch || conceptsMatch || transcriptMatch || notesMatch
+            let markdownMatch = session.finalMarkdown.localizedCaseInsensitiveContains(query)
+                || session.rawMarkdown.localizedCaseInsensitiveContains(query)
+                || session.quizMarkdown.localizedCaseInsensitiveContains(query)
+            return titleMatch || subjectMatch || tagsMatch || conceptsMatch || transcriptMatch || notesMatch || markdownMatch
         }
     }
 
@@ -751,7 +754,10 @@ private struct LectureRow: View {
         let notes = [session.studentNotesMarkdown, session.notesMarkdown]
             .flatMap { $0.components(separatedBy: .newlines) }
             .first { $0.localizedCaseInsensitiveContains(trimmedQuery) }
-        return notes
+        if let notes { return notes }
+        return [session.finalMarkdown, session.rawMarkdown, session.quizMarkdown]
+            .flatMap { $0.components(separatedBy: .newlines) }
+            .first { $0.localizedCaseInsensitiveContains(trimmedQuery) }
     }
 }
 

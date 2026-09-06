@@ -726,6 +726,7 @@ struct SettingsView: View {
         case .subjects: "Список дисциплин для классификации"
         case .hotkeys: "Управление в активном окне Whisp"
         case .updates: "Версия приложения и новые выпуски"
+        case .appearance: "Светлая, тёмная или системная тема"
         }
     }
 
