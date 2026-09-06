@@ -2,14 +2,32 @@ name: Release Whisp
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - dev
   workflow_dispatch:
     inputs:
       version:
-        description: "Версия без префикса v, например 1.0.1"
-        required: true
+        description: "Версия без v; пусто — вычислить автоматически"
+        required: false
         type: string
+      channel:
+        description: "Канал для ручного запуска"
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - alpha
+          - rc
+      bump:
+        description: "Увеличение версии, если version пустая"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -41,20 +59,57 @@ jobs:
       - name: Validate version and changelog
         shell: bash
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ inputs.version }}"
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            CHANNEL="alpha"
+            VERSION="$(python3 scripts/next_version.py --channel alpha --bump patch)"
           else
-            VERSION="${GITHUB_REF_NAME#v}"
+            CHANNEL="${{ inputs.channel }}"
+            if [[ -n "${{ inputs.version }}" ]]; then
+              VERSION="${{ inputs.version }}"
+            else
+              VERSION="$(python3 scripts/next_version.py --channel "$CHANNEL" --bump "${{ inputs.bump }}")"
+            fi
+          fi
+          if [[ "$GITHUB_REF_NAME" == "dev" && "$CHANNEL" == "stable" ]]; then
+            echo "Стабильные релизы запускаются из main" >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_NAME" == "main" && "$CHANNEL" != "stable" ]]; then
+            echo "Alpha/RC-релизы запускаются из dev" >&2
+            exit 1
           fi
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "Некорректная версия: $VERSION" >&2
             exit 1
           fi
+          if [[ "$CHANNEL" == "stable" && "$VERSION" == *-* ]]; then
+            echo "Для stable нельзя указывать prerelease-версию: $VERSION" >&2
+            exit 1
+          fi
+          if [[ "$CHANNEL" != "stable" && "$VERSION" != *-* ]]; then
+            echo "Для $CHANNEL нужна prerelease-версия: $VERSION" >&2
+            exit 1
+          fi
           TAG="v$VERSION"
           mkdir -p dist
-          python3 scripts/release_notes.py "$VERSION" --output dist/release-notes.md
+          if [[ "$CHANNEL" == "stable" ]]; then
+            PREVIOUS_STABLE="$(python3 -c 'import sys; sys.path.insert(0, "scripts"); import next_version; stable=next_version.stable_tags(); print(max(stable)[3] if stable else "")')"
+            if [[ -n "$PREVIOUS_STABLE" ]]; then
+              python3 scripts/release_notes.py --aggregate-since "$PREVIOUS_STABLE" --output dist/release-notes.md
+            else
+              python3 scripts/release_notes.py "$VERSION" --output dist/release-notes.md
+            fi
+          else
+            if ! python3 scripts/release_notes.py Unreleased --output dist/release-notes.md; then
+              {
+                echo "### Изменения"
+                git log --format='- %s' -20 "$GITHUB_SHA"
+              } > dist/release-notes.md
+            fi
+          fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "CHANNEL=$CHANNEL" >> "$GITHUB_ENV"
 
       - name: Determine signing mode
         shell: bash
@@ -153,7 +208,7 @@ jobs:
         shell: bash
         run: |
           RELEASE_FLAGS=()
-          if [[ "$SIGNED_RELEASE" != true ]]; then RELEASE_FLAGS+=(--prerelease); fi
+          if [[ "$CHANNEL" != stable || "$SIGNED_RELEASE" != true ]]; then RELEASE_FLAGS+=(--prerelease); fi
           gh release create "$TAG" \
             "dist/Whisp-${VERSION}.dmg" \
             "dist/Whisp-${VERSION}.dmg.sha256" \

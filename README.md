@@ -188,18 +188,20 @@ GitHub Actions собирает релиз на Apple Silicon runner, запус
 | `APPLE_ID` | Apple ID для notarization |
 | `APPLE_APP_SPECIFIC_PASSWORD` | Пароль приложения для notarization |
 
-Для каждого релиза:
+В репозитории используются две ветки:
 
-1. Перенесите готовые пункты из секции `Unreleased` в новую секцию `## [X.Y.Z] - YYYY-MM-DD` файла `CHANGELOG.md`.
-2. Обновите `MARKETING_VERSION` в `project.yml`.
-3. Создайте и отправьте тег:
+- `dev` — prerelease-канал. Каждый push автоматически собирает GitHub Release с версией вида `v0.1.2-alpha.1`; повторные сборки увеличивают номер alpha. RC запускается вручную через **Actions → Release Whisp**, выбрав канал `rc`.
+- `main` — стабильный канал. После merge изменений из `dev` запустите workflow вручную на `main` с каналом `stable`. Если поле версии оставить пустым, patch/minor/major выбирается в `bump`, а notes объединяют `Unreleased` и все changelog-секции новее предыдущего стабильного тега.
+
+Для prerelease достаточно отправить изменения:
 
 ```bash
-git tag v1.0.1
-git push origin v1.0.1
+git push origin dev
 ```
 
-Workflow не публикует автоматическую сводку коммитов. Он извлекает только секцию `X.Y.Z` из `CHANGELOG.md` и останавливает релиз, если такой секции нет или она пуста. Релиз также можно запустить вручную на вкладке Actions, указав версию без `v`.
+Для стабильного выпуска откройте **Actions → Release Whisp → Run workflow**, выберите ветку `main`, канал `stable` и нужный тип увеличения версии. Явную версию без `v` можно указать в поле `version`.
+
+`MARKETING_VERSION` в `project.yml` остаётся версией исходного проекта; CI передаёт вычисленную SemVer в `xcodebuild`, поэтому alpha/RC не требуют ручного редактирования файла.
 
 ## Структура проекта
 
