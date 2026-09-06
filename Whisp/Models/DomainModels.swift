@@ -326,6 +326,38 @@ struct WebDAVConfiguration: Codable, Hashable, Sendable {
     var password = ""
 }
 
+/// A Gemini-compatible endpoint. The API key is deliberately kept in `KeychainStore`,
+/// not in this public, UserDefaults-backed configuration.
+struct CustomProvider: Codable, Identifiable, Hashable, Sendable {
+    let id: UUID
+    var name: String
+    var baseURL: String
+    var transcriptionModel: String
+    var analysisModel: String
+
+    init(
+        id: UUID = UUID(),
+        name: String = "Свой провайдер",
+        baseURL: String = "",
+        transcriptionModel: String = "gemini-3.5-transcribe",
+        analysisModel: String = "gemini-3.8-flash"
+    ) {
+        self.id = id
+        self.name = name
+        self.baseURL = baseURL
+        self.transcriptionModel = transcriptionModel
+        self.analysisModel = analysisModel
+    }
+
+    var endpoint: URL? {
+        let value = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: value),
+              let scheme = url.scheme?.lowercased(), ["https", "http"].contains(scheme),
+              url.host != nil else { return nil }
+        return url
+    }
+}
+
 struct WhispSettings: Codable, Sendable {
     var subjects = WhispSettings.defaultSubjects
     var customVocabulary: [String] = ["10.02.05", "информационная безопасность"]
@@ -333,9 +365,34 @@ struct WhispSettings: Codable, Sendable {
     var geminiModel = "gemini-3.5-transcribe"
     var geminiLiveModel = "gemini-3.5-transcribe-live"
     var analysisModel = "gemini-3.8-flash"
+    /// `gemini` is the built-in provider and intentionally remains the default.
+    var activeProviderID = "gemini"
     var hotkeyRecord = "⌥⌘R"
     var hotkeyFinish = "⌥⌘."
     var preferredMicrophoneID: UInt32?
+
+    private enum CodingKeys: String, CodingKey {
+        case subjects, customVocabulary, localRetentionDays, geminiModel, geminiLiveModel, analysisModel
+        case activeProviderID, hotkeyRecord, hotkeyFinish, preferredMicrophoneID
+    }
+
+    init() {}
+
+    /// Older installations do not contain `activeProviderID`; decode every setting
+    /// defensively so adding a provider never resets existing user preferences.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        subjects = try values.decodeIfPresent([SubjectItem].self, forKey: .subjects) ?? Self.defaultSubjects
+        customVocabulary = try values.decodeIfPresent([String].self, forKey: .customVocabulary) ?? ["10.02.05", "информационная безопасность"]
+        localRetentionDays = try values.decodeIfPresent(Int.self, forKey: .localRetentionDays) ?? 30
+        geminiModel = try values.decodeIfPresent(String.self, forKey: .geminiModel) ?? "gemini-3.5-transcribe"
+        geminiLiveModel = try values.decodeIfPresent(String.self, forKey: .geminiLiveModel) ?? "gemini-3.5-transcribe-live"
+        analysisModel = try values.decodeIfPresent(String.self, forKey: .analysisModel) ?? "gemini-3.8-flash"
+        activeProviderID = try values.decodeIfPresent(String.self, forKey: .activeProviderID) ?? "gemini"
+        hotkeyRecord = try values.decodeIfPresent(String.self, forKey: .hotkeyRecord) ?? "⌥⌘R"
+        hotkeyFinish = try values.decodeIfPresent(String.self, forKey: .hotkeyFinish) ?? "⌥⌘."
+        preferredMicrophoneID = try values.decodeIfPresent(UInt32.self, forKey: .preferredMicrophoneID)
+    }
 
     static let defaultSubjects = [
         "Биология", "Иностранный язык", "Информатика", "История", "Литература",

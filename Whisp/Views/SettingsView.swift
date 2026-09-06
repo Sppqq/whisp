@@ -29,6 +29,8 @@ struct SettingsView: View {
     @State private var newKey = ""
     @State private var showBatchPaste = false
     @State private var batchKeysText = ""
+    @State private var customProviders: [CustomProvider] = []
+    @State private var customProviderKeys: [String: String] = [:]
     @State private var proxyPassword = ""
     @State private var webDAVPassword = ""
     @State private var testResult = ""
@@ -84,11 +86,14 @@ struct SettingsView: View {
         .onAppear {
             geminiKeys = store.geminiAPIKeys
             geminiKey = store.geminiAPIKey
+            customProviders = store.customProviders
+            customProviderKeys = Dictionary(uniqueKeysWithValues: store.customProviders.map { ($0.id.uuidString, store.customProviderAPIKey(for: $0)) })
             proxyPassword = store.proxy.password
             webDAVPassword = store.webDAV.password
             model.refreshInputDevices()
         }
         .onChange(of: geminiKeys) { invalidateGeminiStatus() }
+        .onChange(of: store.settings.activeProviderID) { invalidateGeminiStatus() }
         .onChange(of: proxyPassword) { invalidateGeminiStatus() }
         .onChange(of: store.proxy) { invalidateGeminiStatus() }
         .onChange(of: store.webDAV) { model.webDAVState = .unchecked }
@@ -114,6 +119,29 @@ struct SettingsView: View {
 
     private var geminiPage: some View {
         VStack(spacing: 16) {
+            SettingsCard(
+                title: "Провайдер расшифровки",
+                caption: "По умолчанию используется Google Gemini. Свои провайдеры должны быть совместимы с Gemini API.",
+                icon: "point.3.connected.trianglepath.dotted"
+            ) {
+                Picker("Активный провайдер", selection: $store.settings.activeProviderID) {
+                    Text("Google Gemini (по умолчанию)").tag("gemini")
+                    ForEach(store.customProviders) { provider in
+                        Text(provider.name.isEmpty ? "Свой провайдер" : provider.name).tag(provider.id.uuidString)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                if !store.usesGemini {
+                    Label(
+                        "Live-расшифровка доступна только через Gemini; до финальной расшифровки будет работать локальный Whisper.",
+                        systemImage: "info.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+
             SettingsCard(
                 title: "Google Gemini API",
                 caption: "Ключи хранятся локально. При исчерпании квоты одного ключа Whisp автоматически переключится на следующий.",
@@ -249,7 +277,9 @@ struct SettingsView: View {
                         saveSecrets()
                         Task {
                             isTestingAll = true
-                            testResult = await model.testAllGeminiKeys()
+                            testResult = store.usesGemini
+                                ? await model.testAllGeminiKeys()
+                                : await model.testActiveProvider()
                             isTestingAll = false
                         }
                     } label: {
@@ -259,7 +289,7 @@ struct SettingsView: View {
                             } else {
                                 Image(systemName: "arrow.clockwise.badge.checkmark")
                             }
-                            Text("Проверить все ключи (\(geminiKeys.count))")
+                            Text(store.usesGemini ? "Проверить все ключи (\(geminiKeys.count))" : "Проверить провайдера")
                         }
                     }
                     .buttonStyle(.bordered)
@@ -270,7 +300,62 @@ struct SettingsView: View {
                 }
             }
 
-            SettingsCard(title: "Прокси", caption: "Используется только для запросов Gemini. WebDAV идёт напрямую.", icon: "network") {
+            SettingsCard(
+                title: "Свои Gemini-совместимые провайдеры",
+                caption: "Укажите базовый URL API без пути /v1beta. Ключи сохраняются отдельно от настроек.",
+                icon: "server.rack"
+            ) {
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach($customProviders) { $provider in
+                        VStack(alignment: .leading, spacing: 9) {
+                            HStack {
+                                TextField("Название", text: $provider.name)
+                                    .textFieldStyle(.roundedBorder)
+                                Button(role: .destructive) {
+                                    let id = provider.id.uuidString
+                                    customProviders.removeAll { $0.id == provider.id }
+                                    customProviderKeys[id] = nil
+                                    if store.settings.activeProviderID == id {
+                                        store.settings.activeProviderID = "gemini"
+                                    }
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Удалить провайдера")
+                            }
+                            TextField("Базовый URL, например https://api.example.com", text: $provider.baseURL)
+                                .textFieldStyle(.roundedBorder)
+                            HStack {
+                                TextField("Модель расшифровки", text: $provider.transcriptionModel)
+                                TextField("Модель для конспекта", text: $provider.analysisModel)
+                            }
+                            .textFieldStyle(.roundedBorder)
+                            SecureField("API key", text: Binding(
+                                get: { customProviderKeys[provider.id.uuidString] ?? "" },
+                                set: { customProviderKeys[provider.id.uuidString] = $0 }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                        }
+                        .padding(12)
+                        .background(WhispPalette.canvas.opacity(0.55), in: RoundedRectangle(cornerRadius: 9))
+                    }
+
+                    HStack {
+                        Button {
+                            customProviders.append(CustomProvider())
+                        } label: {
+                            Label("Добавить провайдера", systemImage: "plus")
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button("Сохранить провайдеров") { saveCustomProviders() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+            }
+
+            SettingsCard(title: "Прокси", caption: "Используется для Gemini и совместимых провайдеров. WebDAV идёт напрямую.", icon: "network") {
                 Toggle("Использовать прокси", isOn: $store.proxy.isEnabled)
                     .toggleStyle(.switch)
                     .onChange(of: store.proxy.isEnabled) { _, _ in
@@ -564,6 +649,16 @@ struct SettingsView: View {
             testResult = count > 1 ? "Сохранено (\(count) ключей)" : "Сохранено в Keychain"
             invalidateGeminiStatus()
         } catch { testResult = error.localizedDescription }
+    }
+
+    private func saveCustomProviders() {
+        do {
+            try store.saveCustomProviders(customProviders, apiKeys: customProviderKeys)
+            testResult = "Провайдеры сохранены"
+            invalidateGeminiStatus()
+        } catch {
+            testResult = error.localizedDescription
+        }
     }
 
     private func invalidateGeminiStatus() {

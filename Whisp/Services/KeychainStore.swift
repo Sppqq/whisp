@@ -34,6 +34,7 @@ enum SecretStorageMode: String, CaseIterable, Identifiable, Codable, Sendable {
 enum SecretKey: String, CaseIterable, Hashable, Sendable {
     case geminiAPIKey
     case geminiAPIKeys
+    case customProviderAPIKeys
     case proxyPassword
     case proxyConfiguration
     case webDAVPassword

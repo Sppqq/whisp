@@ -196,7 +196,7 @@ final class AppModel {
 
     func launch() async {
         guard !isRunningTests else { return }
-        showSettings = settingsStore.geminiAPIKey.isEmpty
+        showSettings = settingsStore.activeProviderAPIKeys.isEmpty || settingsStore.activeProviderEndpoint == nil
         refreshInputDevices()
         do {
             sessions = try await store.loadAll()
@@ -426,17 +426,18 @@ final class AppModel {
             let durationDesc = WhispFormatting.durationDescription(duration)
             addProcessingLog("Аудио готово: \(WhispFormatting.timestamp(duration)) (\(durationDesc)).")
 
-            guard !settingsStore.geminiAPIKey.isEmpty else {
-                addProcessingLog("Ошибка: не указан Gemini API Key")
-                throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала добавьте Gemini API Key в Настройках", retryAfter: nil)
+            guard !settingsStore.activeProviderAPIKeys.isEmpty else {
+                addProcessingLog("Ошибка: не указан API key активного провайдера")
+                throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала добавьте API key активного провайдера в Настройках", retryAfter: nil)
             }
 
             statusMessage = "Расшифровываем импортированную запись"
-            addProcessingLog("Запуск сервиса расшифровки через модель \(settingsStore.settings.geminiModel)...")
+            addProcessingLog("Запуск расшифровки через \(settingsStore.activeProviderName), модель \(settingsStore.activeTranscriptionModel)...")
             let service = FinalTranscriptionService(
-                client: geminiClient(),
+                client: try providerClient(),
                 processor: processor,
-                model: settingsStore.settings.geminiModel,
+                model: settingsStore.activeTranscriptionModel,
+                providerName: settingsStore.activeProviderName,
                 vocabulary: settingsStore.settings.customVocabulary,
                 onProgress: progressHandler(sessionID: session.id)
             )
@@ -700,8 +701,8 @@ final class AppModel {
         do {
             let directory = try await store.directory(for: session.id)
             let mix = try await ensureMix(session: session, directory: directory)
-            let client = geminiClient()
-            let service = BackfillService(client: client, model: settingsStore.settings.geminiModel, vocabulary: settingsStore.settings.customVocabulary, processor: processor)
+            let client = try providerClient()
+            let service = BackfillService(client: client, model: settingsStore.activeTranscriptionModel, vocabulary: settingsStore.settings.customVocabulary, processor: processor)
             backfillBefore = session.finalMarkdown
             for index in session.fallbackIntervals.indices where ![.accepted, .declined].contains(session.fallbackIntervals[index].status) {
                 session.fallbackIntervals[index].status = .processing
@@ -774,13 +775,18 @@ final class AppModel {
     }
 
     func testGemini() async -> String {
+        return await testActiveProvider()
+    }
+
+    func testActiveProvider() async -> String {
         geminiState = .checking
         proxyState = settingsStore.proxy.isEnabled ? .checking : .disabled
         do {
-            try await geminiClient().probeTranscription(settingsStore.settings.geminiModel)
+            try await providerClient().probeTranscription(settingsStore.activeTranscriptionModel)
             geminiState = .available
-            let count = settingsStore.geminiAPIKeys.count
-            return count > 1 ? "Gemini доступен (\(count) ключей)" : "Gemini доступен"
+            let count = settingsStore.activeProviderAPIKeys.count
+            let name = settingsStore.activeProviderName
+            return count > 1 ? "\(name) доступен (\(count) ключей)" : "\(name) доступен"
         } catch {
             let message = connectionMessage(for: error)
             geminiState = .unavailable(message)
@@ -894,12 +900,13 @@ final class AppModel {
             }
             processingProgress = 0.25
 
-            if !settingsStore.geminiAPIKey.isEmpty {
+            if !settingsStore.activeProviderAPIKeys.isEmpty {
                 do {
-                    statusMessage = "Финальная расшифровка Gemini"
+                    statusMessage = "Финальная расшифровка: \(settingsStore.activeProviderName)"
                     let finalService = FinalTranscriptionService(
-                        client: geminiClient(), processor: processor,
-                        model: settingsStore.settings.geminiModel,
+                        client: try providerClient(), processor: processor,
+                        model: settingsStore.activeTranscriptionModel,
+                        providerName: settingsStore.activeProviderName,
                         vocabulary: settingsStore.settings.customVocabulary,
                         onProgress: progressHandler(sessionID: session.id)
                     )
@@ -914,7 +921,7 @@ final class AppModel {
                 }
             } else {
                 if session.rawTranscript.isEmpty {
-                    throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала добавьте Gemini API Key", retryAfter: nil)
+                    throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала добавьте API key активного провайдера", retryAfter: nil)
                 }
                 session.finalTranscript = TranscriptMerger.merge(session.rawTranscript)
             }
@@ -963,10 +970,10 @@ final class AppModel {
             session.finalTranscript = session.rawTranscript
         }
         var analysisError: String?
-        if !settingsStore.geminiAPIKey.isEmpty, !session.finalTranscript.isEmpty {
+        if !settingsStore.activeProviderAPIKeys.isEmpty, !session.finalTranscript.isEmpty {
             do {
-                statusMessage = "Создаём конспект через \(settingsStore.settings.analysisModel)..."
-                let analysis = try await LectureAnalysisService(client: geminiClient(), model: settingsStore.settings.analysisModel)
+                statusMessage = "Создаём конспект через \(settingsStore.activeProviderName)..."
+                let analysis = try await LectureAnalysisService(client: try providerClient(), model: settingsStore.activeAnalysisModel)
                     .analyze(segments: session.finalTranscript, subjects: activeSubjects, onStatus: { [weak self] status in
                         await MainActor.run { self?.statusMessage = status }
                     })
@@ -1030,7 +1037,7 @@ final class AppModel {
         batchSuccessCount = 0
         batchFailureCount = 0
         batchLogs.removeAll()
-        addBatchLog("🚀 Старт массовой перегенерации (\(eligible.count) лекций, модель: \(settingsStore.settings.analysisModel))")
+        addBatchLog("🚀 Старт массовой перегенерации (\(eligible.count) лекций, модель: \(settingsStore.activeAnalysisModel))")
 
         batchRegenerateTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1191,15 +1198,15 @@ final class AppModel {
             lastError = "Стенограмма пуста, невозможно составить вопросы"
             return
         }
-        guard !settingsStore.geminiAPIKey.isEmpty else {
-            lastError = "Укажите ключ Gemini API в настройках"
+        guard !settingsStore.activeProviderAPIKeys.isEmpty else {
+            lastError = "Укажите API key активного провайдера в настройках"
             return
         }
 
         isGeneratingQuiz = true
         defer { isGeneratingQuiz = false }
 
-        statusMessage = "Составляем карточки и вопросы к экзамену через Gemini..."
+        statusMessage = "Составляем карточки и вопросы через \(settingsStore.activeProviderName)..."
         let prompt = """
         Ты — преподаватель и наставник для подготовки к экзаменам и зачётам.
         На основе приведённой расшифровки лекции составь блок для самопроверки студента в формате Obsidian Markdown:
@@ -1231,8 +1238,8 @@ final class AppModel {
         """
 
         do {
-            let client = geminiClient()
-            let rawQuiz = try await client.generateText(prompt: prompt, model: settingsStore.settings.analysisModel)
+            let client = try providerClient()
+            let rawQuiz = try await client.generateText(prompt: prompt, model: settingsStore.activeAnalysisModel)
             session.quizMarkdown = WhispFormatting.formatMarkdownNotes(rawQuiz)
             sessions[index] = session
             if currentSession?.id == targetID {
@@ -1301,16 +1308,16 @@ final class AppModel {
 
     private func beginBackfillMonitorIfNeeded() {
         backfillMonitor?.cancel()
-        guard currentSession?.hasPendingBackfill == true, !settingsStore.geminiAPIKey.isEmpty else { return }
+        guard currentSession?.hasPendingBackfill == true, !settingsStore.activeProviderAPIKeys.isEmpty else { return }
         let sessionID = currentSession?.id
         backfillMonitor = Task { [weak self] in
             var delay = 60.0
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(delay)) } catch { return }
                 guard let self, self.currentSession?.id == sessionID else { return }
-                let client = self.geminiClient()
-                let service = BackfillService(client: client, model: self.settingsStore.settings.geminiModel, vocabulary: self.settingsStore.settings.customVocabulary, processor: self.processor)
                 do {
+                    let client = try self.providerClient()
+                    let service = BackfillService(client: client, model: self.settingsStore.activeTranscriptionModel, vocabulary: self.settingsStore.settings.customVocabulary, processor: self.processor)
                     try await service.checkAvailability()
                     guard !Task.isCancelled, !self.isBusy,
                           var session = self.currentSession, session.id == sessionID else { return }
@@ -1432,6 +1439,30 @@ final class AppModel {
 
     private func geminiClient() -> GeminiAPIClient {
         GeminiAPIClient(apiKeys: settingsStore.geminiAPIKeys, proxy: settingsStore.proxy)
+    }
+
+    private func providerClient() throws -> GeminiAPIClient {
+        guard let endpoint = settingsStore.activeProviderEndpoint else {
+            throw GeminiAPIError(
+                code: -1,
+                status: "PROVIDER_URL",
+                message: "Укажите корректный базовый URL активного провайдера",
+                retryAfter: nil
+            )
+        }
+        guard !settingsStore.activeProviderAPIKeys.isEmpty else {
+            throw GeminiAPIError(
+                code: 401,
+                status: "API_KEY",
+                message: "Укажите API key активного провайдера",
+                retryAfter: nil
+            )
+        }
+        return GeminiAPIClient(
+            apiKeys: settingsStore.activeProviderAPIKeys,
+            proxy: settingsStore.proxy,
+            baseURL: endpoint
+        )
     }
 
     private func persistCurrent() async throws {

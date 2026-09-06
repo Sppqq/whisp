@@ -45,6 +45,22 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(session.studentNotesMarkdown, "")
     }
 
+    func testLegacySettingsKeepExistingValuesAndDefaultToGemini() throws {
+        let legacy = #"{"geminiModel":"gemini-test","analysisModel":"gemini-analysis","localRetentionDays":14}"#
+        let settings = try JSONDecoder().decode(WhispSettings.self, from: Data(legacy.utf8))
+        XCTAssertEqual(settings.geminiModel, "gemini-test")
+        XCTAssertEqual(settings.analysisModel, "gemini-analysis")
+        XCTAssertEqual(settings.localRetentionDays, 14)
+        XCTAssertEqual(settings.activeProviderID, "gemini")
+    }
+
+    func testCustomProviderAcceptsOnlyHTTPOrHTTPSEndpoints() {
+        var provider = CustomProvider(baseURL: "https://api.example.test")
+        XCTAssertEqual(provider.endpoint?.host, "api.example.test")
+        provider.baseURL = "file:///tmp/provider"
+        XCTAssertNil(provider.endpoint)
+    }
+
     func testLoadRealSessionsDirectory() async throws {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let sessionsDir = appSupport.appending(path: "Whisp/Sessions", directoryHint: .isDirectory)

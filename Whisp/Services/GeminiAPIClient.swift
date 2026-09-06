@@ -13,12 +13,14 @@ actor GeminiAPIClient {
     private var currentKeyIndex: Int = 0
     private let session: URLSession
     private let proxyDelegate: ProxyAuthenticationDelegate?
-    private let baseURL = URL(string: "https://generativelanguage.googleapis.com")!
+    static let defaultBaseURL = URL(string: "https://generativelanguage.googleapis.com")!
+    private let baseURL: URL
 
-    init(apiKeys: [String], proxy: ProxyConfiguration) {
+    init(apiKeys: [String], proxy: ProxyConfiguration, baseURL: URL = GeminiAPIClient.defaultBaseURL) {
         let cleaned = apiKeys.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         self.apiKeys = cleaned.isEmpty ? [""] : cleaned
         self.currentKeyIndex = 0
+        self.baseURL = baseURL
         let proxyDelegate = ProxyTransport.authenticationDelegate(proxy: proxy)
         self.proxyDelegate = proxyDelegate
         let configuration = ProxyTransport.sessionConfiguration(proxy: proxy)
@@ -31,8 +33,8 @@ actor GeminiAPIClient {
         )
     }
 
-    init(apiKey: String, proxy: ProxyConfiguration) {
-        self.init(apiKeys: [apiKey], proxy: proxy)
+    init(apiKey: String, proxy: ProxyConfiguration, baseURL: URL = GeminiAPIClient.defaultBaseURL) {
+        self.init(apiKeys: [apiKey], proxy: proxy, baseURL: baseURL)
     }
 
     func currentAPIKey() -> String {
