@@ -647,7 +647,6 @@ private struct LectureRow: View {
                 Spacer(minLength: 0)
             }
             HStack(spacing: 7) {
-                Label(WhispFormatting.timestamp(session.duration), systemImage: "clock")
                 if !session.fallbackIntervals.isEmpty {
                     Label(session.hasPendingBackfill ? "нужна проверка" : "локальная часть", systemImage: "cpu")
                         .foregroundStyle(session.hasPendingBackfill ? .orange : .secondary)
