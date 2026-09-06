@@ -14,7 +14,11 @@ struct PostUpdateView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("Что изменилось")
+                    if !releaseChanges.isEmpty {
+                        changelogSection
+                    }
+
+                    Text("Как теперь работать с записью")
                         .font(.headline)
 
                     LazyVGrid(
@@ -94,6 +98,104 @@ struct PostUpdateView: View {
             Spacer()
         }
         .padding(24)
+    }
+
+    private var changelogSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Что нового")
+                    .font(.headline)
+
+                Spacer()
+
+                Text("Изменения версии")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(releaseChanges.indices, id: \.self) { index in
+                    let change = releaseChanges[index]
+                    PostUpdateChangeRow(change: change)
+
+                    if index < releaseChanges.count - 1 {
+                        Divider()
+                            .padding(.leading, 36)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(WhispPalette.hairline))
+        }
+    }
+
+    private var releaseChanges: [PostUpdateChange] {
+        guard version.contains("1.1.12") else { return [] }
+
+        return [
+            PostUpdateChange(
+                icon: "sparkles",
+                category: "Добавлено",
+                title: "Экран обновления после первого запуска новой версии"
+            ),
+            PostUpdateChange(
+                icon: "text.quote",
+                category: "Изменено",
+                title: "Стенограмма и сырой звук получили разные подписи, иконки и оформление"
+            ),
+            PostUpdateChange(
+                icon: "waveform",
+                category: "Изменено",
+                title: "Источник аудио в плеере теперь различается по иконке микрофона или системного звука"
+            ),
+            PostUpdateChange(
+                icon: "checkmark.circle",
+                category: "Исправлено",
+                title: "Убран дублирующийся пункт описания темы в настройках"
+            )
+        ]
+    }
+}
+
+private struct PostUpdateChange: Identifiable {
+    let id: String
+    let icon: String
+    let category: String
+    let title: String
+
+    init(icon: String, category: String, title: String) {
+        self.id = "\(category)-\(title)"
+        self.icon = icon
+        self.category = category
+        self.title = title
+    }
+}
+
+private struct PostUpdateChangeRow: View {
+    let change: PostUpdateChange
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: change.icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(WhispPalette.accent)
+                .frame(width: 24, height: 24)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(change.category.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(WhispPalette.accent)
+
+                Text(change.title)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 12)
     }
 }
 
