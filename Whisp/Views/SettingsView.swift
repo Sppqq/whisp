@@ -57,7 +57,7 @@ struct SettingsView: View {
                     if !testResult.isEmpty {
                         Text(testResult)
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(testResult.contains("доступен") || testResult.contains("Сохранено") || testResult.contains("сохранён") || testResult.contains("работают") ? Color.green : Color.red)
+                            .foregroundStyle(isSuccessfulTestResult ? Color.green : Color.red)
                             .lineLimit(2).frame(maxWidth: 260, alignment: .trailing)
                     }
                 }
@@ -108,6 +108,14 @@ struct SettingsView: View {
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
         guard let build, !build.isEmpty, build != version else { return "Версия \(version)" }
         return "Версия \(version) (\(build))"
+    }
+
+    private var isSuccessfulTestResult: Bool {
+        let result = testResult.lowercased()
+        return result.contains("доступен")
+            || result.contains("сохран")
+            || result.contains("перенес")
+            || result.contains("работ")
     }
 
     @ViewBuilder private var pageContent: some View {

@@ -349,46 +349,56 @@ final class UpdateService {
         session: URLSession
     ) -> AsyncThrowingStream<DownloadProgress, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task.detached(priority: .utility) {
-                do {
-                    let (bytes, response) = try await session.bytes(for: request)
-                    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                        throw UpdateError.downloadFailed
-                    }
+            let downloadTask = session.downloadTask(with: request) { temporaryURL, response, error in
+                if let error {
+                    continuation.finish(throwing: error)
+                    return
+                }
 
-                    let expected = http.expectedContentLength > 0 ? http.expectedContentLength : nil
-                    continuation.yield(DownloadProgress(downloadedBytes: 0, totalBytes: expected))
+                guard let temporaryURL,
+                      let http = response as? HTTPURLResponse,
+                      http.statusCode == 200 else {
+                    continuation.finish(throwing: UpdateError.downloadFailed)
+                    return
+                }
+
+                do {
                     if FileManager.default.fileExists(atPath: destination.path) {
                         try FileManager.default.removeItem(at: destination)
                     }
-                    FileManager.default.createFile(atPath: destination.path, contents: nil)
-                    let handle = try FileHandle(forWritingTo: destination)
-                    defer { try? handle.close() }
-
-                    var downloadedBytes: Int64 = 0
-                    var buffer = Data()
-                    buffer.reserveCapacity(64 * 1024)
-                    for try await byte in bytes {
-                        try Task.checkCancellation()
-                        buffer.append(byte)
-                        if buffer.count >= 64 * 1024 {
-                            try handle.write(contentsOf: buffer)
-                            downloadedBytes += Int64(buffer.count)
-                            buffer.removeAll(keepingCapacity: true)
-                            continuation.yield(DownloadProgress(downloadedBytes: downloadedBytes, totalBytes: expected))
-                        }
-                    }
-                    if !buffer.isEmpty {
-                        try handle.write(contentsOf: buffer)
-                        downloadedBytes += Int64(buffer.count)
-                    }
-                    continuation.yield(DownloadProgress(downloadedBytes: downloadedBytes, totalBytes: expected))
+                    try FileManager.default.moveItem(at: temporaryURL, to: destination)
+                    let expected = http.expectedContentLength > 0 ? http.expectedContentLength : nil
+                    continuation.yield(DownloadProgress(downloadedBytes: expected ?? 0, totalBytes: expected))
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { @Sendable _ in task.cancel() }
+
+            let monitorTask = Task.detached(priority: .utility) {
+                while !Task.isCancelled {
+                    let expected = downloadTask.countOfBytesExpectedToReceive
+                    let received = max(downloadTask.countOfBytesReceived, 0)
+                    if expected > 0 || received > 0 {
+                        continuation.yield(DownloadProgress(
+                            downloadedBytes: received,
+                            totalBytes: expected > 0 ? expected : nil
+                        ))
+                    }
+                    if downloadTask.state == .completed { return }
+                    do {
+                        try await Task.sleep(for: .milliseconds(200))
+                    } catch {
+                        return
+                    }
+                }
+            }
+
+            continuation.onTermination = { @Sendable _ in
+                downloadTask.cancel()
+                monitorTask.cancel()
+            }
+            downloadTask.resume()
         }
     }
 
