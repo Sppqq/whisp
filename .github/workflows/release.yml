@@ -38,6 +38,7 @@ concurrency:
 
 jobs:
   release:
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
     name: Build, notarize and publish
     runs-on: macos-26
     timeout-minutes: 90
@@ -49,6 +50,9 @@ jobs:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       GH_TOKEN: ${{ github.token }}
+      VERSION_INPUT: ${{ inputs.version }}
+      CHANNEL_INPUT: ${{ inputs.channel }}
+      BUMP_INPUT: ${{ inputs.bump }}
 
     steps:
       - name: Checkout
@@ -63,11 +67,11 @@ jobs:
             CHANNEL="alpha"
             VERSION="$(python3 scripts/next_version.py --channel alpha --bump patch)"
           else
-            CHANNEL="${{ inputs.channel }}"
-            if [[ -n "${{ inputs.version }}" ]]; then
-              VERSION="${{ inputs.version }}"
+            CHANNEL="$CHANNEL_INPUT"
+            if [[ -n "$VERSION_INPUT" ]]; then
+              VERSION="$VERSION_INPUT"
             else
-              VERSION="$(python3 scripts/next_version.py --channel "$CHANNEL" --bump "${{ inputs.bump }}")"
+              VERSION="$(python3 scripts/next_version.py --channel "$CHANNEL" --bump "$BUMP_INPUT")"
             fi
           fi
           if [[ "$GITHUB_REF_NAME" == "dev" && "$CHANNEL" == "stable" ]]; then
@@ -78,7 +82,7 @@ jobs:
             echo "Alpha/RC-релизы запускаются из dev" >&2
             exit 1
           fi
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "Некорректная версия: $VERSION" >&2
             exit 1
           fi

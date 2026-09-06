@@ -9,7 +9,7 @@ enum LectureStatus: String, Codable, CaseIterable, Sendable {
         case .recording: "Запись"
         case .paused: "Пауза"
         case .processing: "Обработка"
-        case .awaitingBackfill: "Ожидает дорасшифровки Gemini"
+        case .awaitingBackfill: "Ожидает дорасшифровки AI"
         case .review: "Проверка"
         case .uploading: "Загрузка"
         case .synced: "Синхронизировано"

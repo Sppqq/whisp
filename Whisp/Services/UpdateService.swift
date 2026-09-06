@@ -113,6 +113,7 @@ final class UpdateService {
     }
 
     private static let releasesURL = URL(string: "https://api.github.com/repos/Sppqq/whisp/releases?per_page=20")!
+    private static let latestReleaseURL = URL(string: "https://api.github.com/repos/Sppqq/whisp/releases/latest")!
     private static let releasesPageURL = URL(string: "https://github.com/Sppqq/whisp/releases")!
     private let defaults: UserDefaults
     private let session: URLSession
@@ -159,7 +160,8 @@ final class UpdateService {
         resetDownloadProgress()
         if !silent { state = .checking }
         do {
-            var request = URLRequest(url: Self.releasesURL)
+            let releasesURL = updateChannel == .stable ? Self.latestReleaseURL : Self.releasesURL
+            var request = URLRequest(url: releasesURL)
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             request.setValue("Whisp/\(currentVersion)", forHTTPHeaderField: "User-Agent")
             let (data, response) = try await session.data(for: request)
@@ -170,7 +172,12 @@ final class UpdateService {
             case 403: throw UpdateError.rateLimited
             default: throw UpdateError.unavailable
             }
-            let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+            let releases: [GitHubRelease]
+            if updateChannel == .stable {
+                releases = [try JSONDecoder().decode(GitHubRelease.self, from: data)]
+            } else {
+                releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+            }
             if let release = Self.newestRelease(from: releases, newerThan: currentVersion, channel: updateChannel) {
                 state = .available(release)
             } else if !silent {

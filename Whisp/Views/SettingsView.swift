@@ -324,9 +324,6 @@ struct SettingsView: View {
                                     let id = provider.id.uuidString
                                     customProviders.removeAll { $0.id == provider.id }
                                     customProviderKeys[id] = nil
-                                    if store.settings.activeProviderID == id {
-                                        store.settings.activeProviderID = "gemini"
-                                    }
                                 } label: {
                                     Image(systemName: "trash")
                                 }

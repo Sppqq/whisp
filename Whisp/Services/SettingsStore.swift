@@ -181,6 +181,10 @@ final class SettingsStore {
         activeProviderPreset?.supportsLiveTranscription ?? false
     }
 
+    var activeProviderSupportsRemoteTranscription: Bool {
+        activeProviderTransport != .anthropic
+    }
+
     func configuration(for preset: ProviderPreset) -> ProviderConfiguration {
         settings.providerConfigurations[preset.rawValue] ?? preset.defaultConfiguration
     }

@@ -42,6 +42,10 @@ jobs:
         shell: bash
         run: xcodegen generate
 
+      - name: Test release scripts
+        shell: bash
+        run: python3 scripts/test_release_notes.py
+
       - name: Build and run tests
         shell: bash
         run: |

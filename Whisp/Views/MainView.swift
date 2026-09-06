@@ -51,7 +51,7 @@ struct MainView: View {
             Button("Восстановить") { Task { await model.recoverSession() } }
             Button("Позже", role: .cancel) { model.dismissRecovery() }
         } message: { Text("Уже записанные аудиосегменты сохранены.") }
-        .alert("Gemini снова доступен", isPresented: $model.showBackfillPrompt) {
+        .alert("\(model.settingsStore.activeProviderName) снова доступен", isPresented: $model.showBackfillPrompt) {
             Button("Дорасшифровать сейчас") { Task { await model.backfillNow() } }
             Button("Напомнить позже") { model.deferBackfill() }
             Button("Оставить локальную версию", role: .destructive) { model.declineBackfill() }
@@ -950,7 +950,7 @@ struct BatchRegenerateSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Внимание: перезапись конспектов")
                         .font(.subheadline.bold())
-                    Text("Конспекты (тетрадь и подробный разбор) для всех лекций будут заново созданы через Gemini API. Аудиозаписи и расшифровки не пострадают.")
+                    Text("Конспекты (тетрадь и подробный разбор) для всех лекций будут заново созданы через \(model.settingsStore.activeProviderName) API. Аудиозаписи и расшифровки не пострадают.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

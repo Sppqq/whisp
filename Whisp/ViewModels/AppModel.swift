@@ -426,6 +426,14 @@ final class AppModel {
             let durationDesc = WhispFormatting.durationDescription(duration)
             addProcessingLog("Аудио готово: \(WhispFormatting.timestamp(duration)) (\(durationDesc)).")
 
+            guard settingsStore.activeProviderSupportsRemoteTranscription else {
+                throw GeminiAPIError(
+                    code: 400,
+                    status: "UNSUPPORTED",
+                    message: "Anthropic создаёт конспекты по готовому тексту, но не расшифровывает аудио. Для импорта выберите Gemini или OpenAI-совместимый провайдер.",
+                    retryAfter: nil
+                )
+            }
             guard !settingsStore.activeProviderAPIKeys.isEmpty else {
                 addProcessingLog("Ошибка: не указан API key активного провайдера")
                 throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала добавьте API key активного провайдера в Настройках", retryAfter: nil)
@@ -696,6 +704,10 @@ final class AppModel {
     func backfillNow() async {
         showBackfillPrompt = false
         guard !isBusy, var session = currentSession, session.hasPendingBackfill else { return }
+        guard settingsStore.activeProviderSupportsRemoteTranscription else {
+            lastError = "Anthropic не расшифровывает аудио. Выберите Gemini или OpenAI-совместимый провайдер для дорасшифровки."
+            return
+        }
         isWorking = true
         defer { isWorking = false }
         do {
@@ -900,7 +912,18 @@ final class AppModel {
             }
             processingProgress = 0.25
 
-            if !settingsStore.activeProviderAPIKeys.isEmpty {
+            if !settingsStore.activeProviderSupportsRemoteTranscription {
+                guard !session.rawTranscript.isEmpty else {
+                    throw GeminiAPIError(
+                        code: 400,
+                        status: "UNSUPPORTED",
+                        message: "Anthropic создаёт конспекты по готовому тексту, но не расшифровывает аудио. Сначала выберите Gemini или OpenAI-совместимый провайдер для расшифровки.",
+                        retryAfter: nil
+                    )
+                }
+                session.finalTranscript = TranscriptMerger.merge(session.rawTranscript)
+                session.lastError = nil
+            } else if !settingsStore.activeProviderAPIKeys.isEmpty {
                 do {
                     statusMessage = "Финальная расшифровка: \(settingsStore.activeProviderName)"
                     let finalService = FinalTranscriptionService(
@@ -1311,7 +1334,9 @@ final class AppModel {
 
     private func beginBackfillMonitorIfNeeded() {
         backfillMonitor?.cancel()
-        guard currentSession?.hasPendingBackfill == true, !settingsStore.activeProviderAPIKeys.isEmpty else { return }
+        guard currentSession?.hasPendingBackfill == true,
+              settingsStore.activeProviderSupportsRemoteTranscription,
+              !settingsStore.activeProviderAPIKeys.isEmpty else { return }
         let sessionID = currentSession?.id
         backfillMonitor = Task { [weak self] in
             var delay = 60.0
@@ -1329,7 +1354,10 @@ final class AppModel {
                     }
                     self.currentSession = session
                     self.showBackfillPrompt = true
-                    await service.notifyAvailable(sessionTitle: session.title)
+                    await service.notifyAvailable(
+                        sessionTitle: session.title,
+                        providerName: self.settingsStore.activeProviderName
+                    )
                     try? await self.persistCurrent()
                     return
                 } catch {
