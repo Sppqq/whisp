@@ -633,7 +633,7 @@ private struct LectureRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 Text(session.title).font(.callout.weight(.semibold)).lineLimit(2)
                 if session.isPinned { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary) }
@@ -641,27 +641,29 @@ private struct LectureRow: View {
             HStack(spacing: 5) {
                 Circle().fill(statusColor).frame(width: 5, height: 5)
                 Text(session.subject)
-                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Text("·").foregroundStyle(.tertiary)
-                Text(session.status.title).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            HStack(spacing: 7) {
+                Text(session.status.title)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 if !session.fallbackIntervals.isEmpty {
-                    Label(session.hasPendingBackfill ? "нужна проверка" : "локальная часть", systemImage: "cpu")
+                    Image(systemName: "cpu")
                         .foregroundStyle(session.hasPendingBackfill ? .orange : .secondary)
+                        .help(session.hasPendingBackfill ? "Нужна проверка локальной части" : "Локальная часть расшифровки")
                 }
                 if hasManualEdits {
                     Image(systemName: "pencil.circle.fill")
                         .foregroundStyle(WhispPalette.accent)
                         .help("Есть ручные правки")
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: 4)
                 Text(session.createdAt.formatted(date: .abbreviated, time: .omitted))
+                    .foregroundStyle(.tertiary)
             }
             .font(.caption2)
-            .foregroundStyle(.tertiary)
-        }.padding(.vertical, 9)
+        }
+        .padding(.vertical, 4)
     }
 }
 
