@@ -207,6 +207,8 @@ git push origin dev
 
 `MARKETING_VERSION` в `project.yml` остаётся версией исходного проекта; CI передаёт вычисленную SemVer в `xcodebuild`, поэтому alpha/RC не требуют ручного редактирования файла.
 
+Для pull request-ов в `main` и `dev` workflow **PR test build** генерирует Xcode-проект, запускает тесты и проверяет Debug-сборку на macOS. Этот check нужно включить как required status check в Branch protection rules целевых веток.
+
 ## Структура проекта
 
 ```text
