@@ -24,7 +24,7 @@ def extract_release(markdown: str, version: str) -> str:
     return notes + "\n"
 
 
-def _version_key(value: str) -> tuple[int, int, int, tuple[str, ...]]:
+def _version_key(value: str) -> tuple[int, int, int, tuple]:
     """Return a SemVer-ish key suitable for ordering changelog headings."""
     clean = value.removeprefix("v")
     numeric, _, prerelease = clean.partition("-")
@@ -32,7 +32,13 @@ def _version_key(value: str) -> tuple[int, int, int, tuple[str, ...]]:
     if len(numbers) != 3 or not all(part.isdigit() for part in numbers):
         raise ValueError(f"Некорректная версия в CHANGELOG.md: {value}")
     # Stable releases sort after prereleases of the same numeric version.
-    pre_key = (1,) if not prerelease else (0, *prerelease.split("."))
+    pre_key = (1,) if not prerelease else (
+        0,
+        *(
+            (0, int(identifier)) if identifier.isdigit() else (1, identifier)
+            for identifier in prerelease.split(".")
+        ),
+    )
     return (int(numbers[0]), int(numbers[1]), int(numbers[2]), pre_key)
 
 

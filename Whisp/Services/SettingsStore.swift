@@ -217,7 +217,6 @@ final class SettingsStore {
             let key = entry.value.trimmingCharacters(in: .whitespacesAndNewlines)
             if allowedIDs.contains(entry.key), !key.isEmpty { result[entry.key] = key }
         }
-        let encoded = try encoder.encode(cleanedKeys)
         var mergedKeys = cachedCustomProviderAPIKeys.filter {
             allowedIDs.contains($0.key) || ProviderPreset(rawValue: $0.key) != nil
         }

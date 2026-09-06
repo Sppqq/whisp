@@ -42,6 +42,12 @@ class ReleaseNotesTests(unittest.TestCase):
     def test_extract_release(self):
         self.assertIn("Первая альфа", release_notes.extract_release(CHANGELOG, "0.1.2-alpha.1"))
 
+    def test_version_key_orders_numeric_prerelease_identifiers(self):
+        self.assertLess(
+            release_notes._version_key("0.1.2-alpha.2"),
+            release_notes._version_key("0.1.2-alpha.10"),
+        )
+
     def test_aggregate_since_includes_unreleased_and_prereleases(self):
         result = release_notes.aggregate_since(CHANGELOG, "0.1.1")
         self.assertIn("Новая функция", result)

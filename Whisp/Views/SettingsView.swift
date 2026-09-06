@@ -133,7 +133,7 @@ struct SettingsView: View {
                         Label(provider == .gemini ? "\(provider.title) (по умолчанию)" : provider.title, systemImage: provider.icon)
                             .tag(provider.rawValue)
                     }
-                    ForEach(store.customProviders) { provider in
+                    ForEach(customProviders) { provider in
                         Text(provider.name.isEmpty ? "Свой провайдер" : provider.name).tag(provider.id.uuidString)
                     }
                 }

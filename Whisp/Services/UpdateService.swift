@@ -313,41 +313,76 @@ final class UpdateService {
         downloadTotalBytes = nil
     }
 
+    private struct DownloadProgress: Sendable {
+        let downloadedBytes: Int64
+        let totalBytes: Int64?
+    }
+
     private func downloadDMG(to destination: URL, request: URLRequest) async throws {
         resetDownloadProgress()
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw UpdateError.downloadFailed
-        }
 
-        let expected = http.expectedContentLength > 0 ? http.expectedContentLength : nil
-        downloadTotalBytes = expected
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
-        }
-        FileManager.default.createFile(atPath: destination.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: destination)
-        defer { try? handle.close() }
-
-        var buffer = Data()
-        buffer.reserveCapacity(64 * 1024)
-        for try await byte in bytes {
-            try Task.checkCancellation()
-            buffer.append(byte)
-            if buffer.count >= 64 * 1024 {
-                try handle.write(contentsOf: buffer)
-                downloadedBytes += Int64(buffer.count)
-                buffer.removeAll(keepingCapacity: true)
-                if let expected, expected > 0 {
-                    downloadProgress = min(1, Double(downloadedBytes) / Double(expected))
-                }
+        let progressStream = Self.downloadDMGStream(
+            to: destination,
+            request: request,
+            session: session
+        )
+        for try await progress in progressStream {
+            downloadedBytes = progress.downloadedBytes
+            downloadTotalBytes = progress.totalBytes
+            if let totalBytes = progress.totalBytes, totalBytes > 0 {
+                downloadProgress = min(1, Double(progress.downloadedBytes) / Double(totalBytes))
             }
         }
-        if !buffer.isEmpty {
-            try handle.write(contentsOf: buffer)
-            downloadedBytes += Int64(buffer.count)
-        }
         downloadProgress = 1
+    }
+
+    private nonisolated static func downloadDMGStream(
+        to destination: URL,
+        request: URLRequest,
+        session: URLSession
+    ) -> AsyncThrowingStream<DownloadProgress, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task.detached(priority: .utility) {
+                do {
+                    let (bytes, response) = try await session.bytes(for: request)
+                    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                        throw UpdateError.downloadFailed
+                    }
+
+                    let expected = http.expectedContentLength > 0 ? http.expectedContentLength : nil
+                    continuation.yield(DownloadProgress(downloadedBytes: 0, totalBytes: expected))
+                    if FileManager.default.fileExists(atPath: destination.path) {
+                        try FileManager.default.removeItem(at: destination)
+                    }
+                    FileManager.default.createFile(atPath: destination.path, contents: nil)
+                    let handle = try FileHandle(forWritingTo: destination)
+                    defer { try? handle.close() }
+
+                    var downloadedBytes: Int64 = 0
+                    var buffer = Data()
+                    buffer.reserveCapacity(64 * 1024)
+                    for try await byte in bytes {
+                        try Task.checkCancellation()
+                        buffer.append(byte)
+                        if buffer.count >= 64 * 1024 {
+                            try handle.write(contentsOf: buffer)
+                            downloadedBytes += Int64(buffer.count)
+                            buffer.removeAll(keepingCapacity: true)
+                            continuation.yield(DownloadProgress(downloadedBytes: downloadedBytes, totalBytes: expected))
+                        }
+                    }
+                    if !buffer.isEmpty {
+                        try handle.write(contentsOf: buffer)
+                        downloadedBytes += Int64(buffer.count)
+                    }
+                    continuation.yield(DownloadProgress(downloadedBytes: downloadedBytes, totalBytes: expected))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
     }
 
     @discardableResult
