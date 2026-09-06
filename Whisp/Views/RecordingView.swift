@@ -55,12 +55,7 @@ struct RecordingView: View {
 
             Spacer()
 
-            HStack(spacing: 7) {
-                ServiceBadge(title: "Gemini", icon: "sparkles", state: model.geminiState)
-                ServiceBadge(title: "Whisper", icon: "cpu", state: model.whisperState)
-                ServiceBadge(title: "Прокси", icon: "network", state: model.settingsStore.proxy.isEnabled ? model.proxyState : .disabled)
-                ServiceBadge(title: "WebDAV", icon: "icloud", state: model.webDAVState)
-            }
+            RecordingStatePill(model: model)
         }
         .padding(.horizontal, 24).padding(.vertical, 17)
         .background(.ultraThinMaterial)
@@ -175,7 +170,46 @@ struct RecordingView: View {
     }
 }
 
-private struct ServiceBadge: View {
+private struct RecordingStatePill: View {
+    let model: AppModel
+
+    private var title: String {
+        if model.isPaused { return "Запись на паузе" }
+        if model.whisperState == .local { return "Локальная расшифровка" }
+        if !model.geminiState.isAvailable { return "Запись без Gemini" }
+        return "Запись идёт"
+    }
+
+    private var color: Color {
+        if model.isPaused { return .orange }
+        if model.whisperState == .local || !model.geminiState.isAvailable { return .orange }
+        return WhispPalette.accent
+    }
+
+    var body: some View {
+        Menu {
+            Section("Состояние сервисов") {
+                ServiceStateRow(title: "Gemini", icon: "sparkles", state: model.geminiState)
+                ServiceStateRow(title: "Whisper", icon: "cpu", state: model.whisperState)
+                ServiceStateRow(title: "Прокси", icon: "network", state: model.settingsStore.proxy.isEnabled ? model.proxyState : .disabled)
+                ServiceStateRow(title: "WebDAV", icon: "icloud", state: model.webDAVState)
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Circle().fill(color).frame(width: 7, height: 7)
+                Text(title).font(.caption.weight(.semibold))
+                Image(systemName: "chevron.up.chevron.down").font(.caption2)
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 11).padding(.vertical, 7)
+            .background(color.opacity(0.12), in: Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .help("Открыть состояние Gemini, Whisper, прокси и WebDAV")
+    }
+}
+
+private struct ServiceStateRow: View {
     let title: String
     let icon: String
     let state: ServiceConnectionState
@@ -201,15 +235,11 @@ private struct ServiceBadge: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Image(systemName: icon).font(.caption2)
-            Text(title).font(.caption.weight(.medium))
+        Label {
+            Text("\(title): \(hint)")
+        } icon: {
+            Image(systemName: icon).foregroundStyle(color)
         }
-        .foregroundStyle(state.isAvailable ? .primary : .secondary)
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .help(hint)
     }
 }
 

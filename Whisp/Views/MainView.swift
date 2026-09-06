@@ -615,17 +615,50 @@ private struct ProcessingView: View {
 
 private struct LectureRow: View {
     let session: LectureSession
+
+    private var statusColor: Color {
+        switch session.status {
+        case .synced: .green
+        case .failed: .red
+        case .awaitingBackfill: .orange
+        default: WhispPalette.accent
+        }
+    }
+
+    private var hasManualEdits: Bool {
+        session.userEditedFinal || session.userEditedNotes || session.userEditedStudentNotes
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
                 Text(session.title).font(.callout.weight(.semibold)).lineLimit(2)
                 if session.isPinned { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary) }
             }
             HStack(spacing: 5) {
-                Circle().fill(session.status == .synced ? Color.green : WhispPalette.accent).frame(width: 5, height: 5)
-                Text("\(session.subject) · \(session.status.title)")
+                Circle().fill(statusColor).frame(width: 5, height: 5)
+                Text(session.subject)
                     .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                Text("·").foregroundStyle(.tertiary)
+                Text(session.status.title).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 0)
             }
+            HStack(spacing: 7) {
+                Label(WhispFormatting.timestamp(session.duration), systemImage: "clock")
+                if !session.fallbackIntervals.isEmpty {
+                    Label(session.hasPendingBackfill ? "нужна проверка" : "локальная часть", systemImage: "cpu")
+                        .foregroundStyle(session.hasPendingBackfill ? .orange : .secondary)
+                }
+                if hasManualEdits {
+                    Image(systemName: "pencil.circle.fill")
+                        .foregroundStyle(WhispPalette.accent)
+                        .help("Есть ручные правки")
+                }
+                Spacer(minLength: 0)
+                Text(session.createdAt.formatted(date: .abbreviated, time: .omitted))
+            }
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
         }.padding(.vertical, 9)
     }
 }

@@ -16,6 +16,12 @@ struct ReviewView: View {
                     get: { model.currentSession?.title ?? "" },
                     set: { model.updateReview(title: $0) }
                 )).font(.title2.bold()).textFieldStyle(.plain)
+                if hasManualEdits {
+                    Label("Есть ручные правки", systemImage: "pencil.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(WhispPalette.accent)
+                        .help("Ручные изменения сохраняются автоматически")
+                }
                 Picker("Предмет", selection: Binding(
                     get: { model.currentSession?.subject ?? "Не определено" },
                     set: { model.updateReview(subject: $0) }
@@ -360,6 +366,11 @@ struct ReviewView: View {
         return "~ \(minutes) мин чтения (\(words) сл.)"
     }
 
+    private var hasManualEdits: Bool {
+        guard let session = model.currentSession else { return false }
+        return session.userEditedFinal || session.userEditedNotes || session.userEditedStudentNotes
+    }
+
     private var playerBar: some View {
         HStack(spacing: 12) {
             Button {
@@ -458,6 +469,15 @@ struct ReviewView: View {
                             ? segments
                             : segments.filter { $0.text.localizedCaseInsensitiveContains(transcriptFilter) }
 
+                        if !transcriptFilter.trimmingCharacters(in: .whitespaces).isEmpty {
+                            Text(filtered.isEmpty ? "Совпадений нет" : "Найдено: \(filtered.count)")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(filtered.isEmpty ? .secondary : WhispPalette.accent)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
                         ScrollViewReader { proxy in
                             List(filtered) { segment in
                                 let isCurrent = model.player.currentTime >= segment.start && model.player.currentTime <= segment.end
@@ -480,6 +500,8 @@ struct ReviewView: View {
                                     }
                                     .buttonStyle(.link)
                                     .font(.caption.weight(isCurrent ? .bold : .regular))
+                                    .help("Перейти к \(WhispFormatting.timestamp(segment.start)) в аудиозаписи")
+                                    .accessibilityLabel("Перейти к \(WhispFormatting.timestamp(segment.start)) в аудиозаписи")
 
                                     Text(segment.text)
                                         .lineLimit(4)
