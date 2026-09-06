@@ -85,7 +85,7 @@ final class SettingsStore {
            let decoded = try? decoder.decode([String: String].self, from: data) {
             cachedCustomProviderAPIKeys = decoded
         }
-        if settings.activeProviderID != "gemini",
+        if ProviderPreset(rawValue: settings.activeProviderID) == nil,
            !customProviders.contains(where: { $0.id.uuidString == settings.activeProviderID }) {
             settings.activeProviderID = "gemini"
         }
@@ -121,29 +121,90 @@ final class SettingsStore {
 
     var usesGemini: Bool { settings.activeProviderID == "gemini" }
 
+    var activeProviderPreset: ProviderPreset? {
+        ProviderPreset(rawValue: settings.activeProviderID)
+    }
+
     var activeProvider: CustomProvider? {
         customProviders.first { $0.id.uuidString == settings.activeProviderID }
     }
 
-    var activeProviderName: String { activeProvider.flatMap { $0.name.nonEmpty } ?? "Google Gemini" }
+    var activeProviderName: String {
+        if let preset = activeProviderPreset { return preset.title }
+        return activeProvider.flatMap { $0.name.nonEmpty } ?? "Свой провайдер"
+    }
 
     var activeProviderAPIKeys: [String] {
         if usesGemini { return geminiAPIKeys }
+        if activeProviderPreset != nil {
+            let key = providerAPIKey(for: settings.activeProviderID)
+            return key.isEmpty ? [] : [key]
+        }
         guard let provider = activeProvider else { return [] }
         let key = customProviderAPIKey(for: provider)
         return key.isEmpty ? [] : [key]
     }
 
     var activeTranscriptionModel: String {
-        activeProvider?.transcriptionModel.nonEmpty ?? settings.geminiModel
+        if let preset = activeProviderPreset {
+            if preset == .gemini { return settings.geminiModel }
+            return configuration(for: preset).transcriptionModel.nonEmpty ?? preset.defaultConfiguration.transcriptionModel
+        }
+        return activeProvider?.transcriptionModel.nonEmpty ?? settings.geminiModel
     }
 
     var activeAnalysisModel: String {
-        activeProvider?.analysisModel.nonEmpty ?? settings.analysisModel
+        if let preset = activeProviderPreset {
+            if preset == .gemini { return settings.analysisModel }
+            return configuration(for: preset).analysisModel.nonEmpty ?? preset.defaultConfiguration.analysisModel
+        }
+        return activeProvider?.analysisModel.nonEmpty ?? settings.analysisModel
     }
 
     var activeProviderEndpoint: URL? {
-        usesGemini ? GeminiAPIClient.defaultBaseURL : activeProvider?.endpoint
+        if let preset = activeProviderPreset {
+            if preset == .gemini { return GeminiAPIClient.defaultBaseURL }
+            let value = configuration(for: preset).baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: value),
+                  let scheme = url.scheme?.lowercased(), ["https", "http"].contains(scheme),
+                  url.host != nil else { return nil }
+            return url
+        }
+        return activeProvider?.endpoint
+    }
+
+    var activeProviderTransport: ProviderTransport {
+        activeProviderPreset?.transport ?? .gemini
+    }
+
+    var activeProviderSupportsLiveTranscription: Bool {
+        activeProviderPreset?.supportsLiveTranscription ?? false
+    }
+
+    func configuration(for preset: ProviderPreset) -> ProviderConfiguration {
+        settings.providerConfigurations[preset.rawValue] ?? preset.defaultConfiguration
+    }
+
+    func setConfiguration(_ configuration: ProviderConfiguration, for preset: ProviderPreset) {
+        var updatedSettings = settings
+        updatedSettings.providerConfigurations[preset.rawValue] = configuration
+        settings = updatedSettings
+    }
+
+    func providerAPIKey(for providerID: String) -> String {
+        cachedCustomProviderAPIKeys[providerID] ?? ""
+    }
+
+    func saveProviderAPIKeys(_ apiKeys: [String: String]) throws {
+        var merged = cachedCustomProviderAPIKeys
+        for (providerID, value) in apiKeys {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { merged.removeValue(forKey: providerID) }
+            else { merged[providerID] = trimmed }
+        }
+        let encoded = try encoder.encode(merged)
+        try keychain.set(String(data: encoded, encoding: .utf8) ?? "{}", for: .customProviderAPIKeys, mode: secretStorageMode)
+        cachedCustomProviderAPIKeys = merged
     }
 
     func customProviderAPIKey(for provider: CustomProvider) -> String {
@@ -157,10 +218,15 @@ final class SettingsStore {
             if allowedIDs.contains(entry.key), !key.isEmpty { result[entry.key] = key }
         }
         let encoded = try encoder.encode(cleanedKeys)
-        try keychain.set(String(data: encoded, encoding: .utf8) ?? "{}", for: .customProviderAPIKeys, mode: secretStorageMode)
-        cachedCustomProviderAPIKeys = cleanedKeys
+        var mergedKeys = cachedCustomProviderAPIKeys.filter {
+            allowedIDs.contains($0.key) || ProviderPreset(rawValue: $0.key) != nil
+        }
+        for (key, value) in cleanedKeys { mergedKeys[key] = value }
+        let mergedEncoded = try encoder.encode(mergedKeys)
+        try keychain.set(String(data: mergedEncoded, encoding: .utf8) ?? "{}", for: .customProviderAPIKeys, mode: secretStorageMode)
+        cachedCustomProviderAPIKeys = mergedKeys
         customProviders = providers
-        if !usesGemini, activeProvider == nil { settings.activeProviderID = "gemini" }
+        if activeProviderPreset == nil, activeProvider == nil { settings.activeProviderID = "gemini" }
         persist()
     }
 

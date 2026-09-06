@@ -1255,9 +1255,12 @@ final class AppModel {
 
     private func makeCoordinator() -> TranscriptionCoordinator {
         TranscriptionCoordinator(
-            apiKey: settingsStore.geminiAPIKey,
+            apiKey: settingsStore.activeProviderSupportsLiveTranscription ? settingsStore.geminiAPIKey : "",
             proxy: settingsStore.proxy,
             settings: settingsStore.settings,
+            liveUnavailableMessage: settingsStore.activeProviderSupportsLiveTranscription
+                ? "Ключ Gemini не настроен"
+                : "Live-расшифровка доступна только через Gemini; используется локальный Whisper",
             elapsed: { [clock] in clock.elapsed() },
             callbacks: .init(
                 onSegment: { [weak self] segment in Task { @MainActor in self?.receive(segment: segment) } },
@@ -1461,7 +1464,8 @@ final class AppModel {
         return GeminiAPIClient(
             apiKeys: settingsStore.activeProviderAPIKeys,
             proxy: settingsStore.proxy,
-            baseURL: endpoint
+            baseURL: endpoint,
+            transport: settingsStore.activeProviderTransport
         )
     }
 

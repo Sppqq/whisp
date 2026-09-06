@@ -36,6 +36,7 @@ struct MainView: View {
             ZStack {
                 WhispPalette.canvas.ignoresSafeArea()
                 detail
+                updateProgressOverlay
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -101,6 +102,58 @@ struct MainView: View {
         .sheet(isPresented: $model.showBatchRegenerateSheet) {
             BatchRegenerateSheet(model: model)
         }
+    }
+
+    @ViewBuilder private var updateProgressOverlay: some View {
+        switch model.updateService.state {
+        case .downloading(let release):
+            VStack {
+                Spacer()
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Скачиваем Whisp \(release.version)…")
+                            .font(.callout.weight(.medium))
+                        Spacer()
+                        if let total = model.updateService.downloadTotalBytes, total > 0 {
+                            Text("\(formattedBytes(model.updateService.downloadedBytes)) / \(formattedBytes(total))")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if let total = model.updateService.downloadTotalBytes, total > 0 {
+                        ProgressView(value: model.updateService.downloadProgress)
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .padding(14)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WhispPalette.hairline))
+                .padding(18)
+            }
+            .allowsHitTesting(false)
+        case .installing(let release):
+            VStack {
+                Spacer()
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Установка и перезапуск Whisp \(release.version)…")
+                        .font(.callout.weight(.medium))
+                }
+                .padding(14)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WhispPalette.hairline))
+                .padding(18)
+            }
+            .allowsHitTesting(false)
+        default:
+            EmptyView()
+        }
+    }
+
+    private func formattedBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     private var sidebar: some View {

@@ -2,6 +2,27 @@ import AppKit
 import Foundation
 import Observation
 
+enum UpdateChannel: String, CaseIterable, Identifiable, Codable, Sendable {
+    case stable
+    case beta
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .stable: "Стабильные релизы"
+        case .beta: "Beta / prerelease"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .stable: "Только опубликованные стабильные версии без prerelease."
+        case .beta: "Стабильные версии и предварительные alpha/beta/RC-сборки."
+        }
+    }
+}
+
 struct AppVersion: Comparable, Equatable, Sendable {
     let numbers: [Int]
     let prerelease: String?
@@ -100,6 +121,12 @@ final class UpdateService {
     var automaticallyChecksForUpdates: Bool {
         didSet { defaults.set(automaticallyChecksForUpdates, forKey: "automaticallyChecksForUpdates") }
     }
+    var updateChannel: UpdateChannel {
+        didSet { defaults.set(updateChannel.rawValue, forKey: "updateChannel") }
+    }
+    private(set) var downloadProgress: Double = 0
+    private(set) var downloadedBytes: Int64 = 0
+    private(set) var downloadTotalBytes: Int64?
 
     var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
@@ -125,9 +152,11 @@ final class UpdateService {
         } else {
             automaticallyChecksForUpdates = defaults.bool(forKey: "automaticallyChecksForUpdates")
         }
+        updateChannel = UpdateChannel(rawValue: defaults.string(forKey: "updateChannel") ?? "") ?? .stable
     }
 
     func checkForUpdates(silent: Bool = false) async {
+        resetDownloadProgress()
         if !silent { state = .checking }
         do {
             var request = URLRequest(url: Self.releasesURL)
@@ -142,7 +171,7 @@ final class UpdateService {
             default: throw UpdateError.unavailable
             }
             let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
-            if let release = Self.newestRelease(from: releases, newerThan: currentVersion) {
+            if let release = Self.newestRelease(from: releases, newerThan: currentVersion, channel: updateChannel) {
                 state = .available(release)
             } else if !silent {
                 state = .upToDate
@@ -157,18 +186,11 @@ final class UpdateService {
         do {
             var request = URLRequest(url: release.downloadURL)
             request.setValue("Whisp/\(currentVersion)", forHTTPHeaderField: "User-Agent")
-            let (temporaryURL, response) = try await session.download(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                throw UpdateError.downloadFailed
-            }
             let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("Whisp/Updates", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let destination = directory.appendingPathComponent("Whisp-\(release.version).dmg")
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
-            }
-            try FileManager.default.moveItem(at: temporaryURL, to: destination)
+            try await downloadDMG(to: destination, request: request)
             state = .downloaded(release, destination)
             NSWorkspace.shared.open(destination)
         } catch {
@@ -198,15 +220,7 @@ final class UpdateService {
 
             var request = URLRequest(url: release.downloadURL)
             request.setValue("Whisp/\(currentVersion)", forHTTPHeaderField: "User-Agent")
-            let (temporaryURL, response) = try await session.download(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                throw UpdateError.downloadFailed
-            }
-
-            if FileManager.default.fileExists(atPath: destinationDMG.path) {
-                try FileManager.default.removeItem(at: destinationDMG)
-            }
-            try FileManager.default.moveItem(at: temporaryURL, to: destinationDMG)
+            try await downloadDMG(to: destinationDMG, request: request)
 
             state = .installing(release)
 
@@ -291,6 +305,49 @@ final class UpdateService {
         } catch {
             state = .failed(error.localizedDescription)
         }
+    }
+
+    private func resetDownloadProgress() {
+        downloadProgress = 0
+        downloadedBytes = 0
+        downloadTotalBytes = nil
+    }
+
+    private func downloadDMG(to destination: URL, request: URLRequest) async throws {
+        resetDownloadProgress()
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw UpdateError.downloadFailed
+        }
+
+        let expected = http.expectedContentLength > 0 ? http.expectedContentLength : nil
+        downloadTotalBytes = expected
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        FileManager.default.createFile(atPath: destination.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: destination)
+        defer { try? handle.close() }
+
+        var buffer = Data()
+        buffer.reserveCapacity(64 * 1024)
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            buffer.append(byte)
+            if buffer.count >= 64 * 1024 {
+                try handle.write(contentsOf: buffer)
+                downloadedBytes += Int64(buffer.count)
+                buffer.removeAll(keepingCapacity: true)
+                if let expected, expected > 0 {
+                    downloadProgress = min(1, Double(downloadedBytes) / Double(expected))
+                }
+            }
+        }
+        if !buffer.isEmpty {
+            try handle.write(contentsOf: buffer)
+            downloadedBytes += Int64(buffer.count)
+        }
+        downloadProgress = 1
     }
 
     @discardableResult
@@ -397,10 +454,14 @@ final class UpdateService {
         if case .available = state { state = .idle }
     }
 
-    private static func newestRelease(from releases: [GitHubRelease], newerThan current: String) -> WhispRelease? {
+    private static func newestRelease(
+        from releases: [GitHubRelease],
+        newerThan current: String,
+        channel: UpdateChannel
+    ) -> WhispRelease? {
         guard let currentVersion = AppVersion(current) else { return nil }
         return releases
-            .filter { !$0.draft }
+            .filter { !$0.draft && (channel == .beta || !$0.prerelease) }
             .compactMap { release -> (AppVersion, WhispRelease)? in
                 guard let version = AppVersion(release.tagName), version > currentVersion,
                       let asset = release.assets.first(where: { $0.name.hasSuffix(".dmg") }) else { return nil }

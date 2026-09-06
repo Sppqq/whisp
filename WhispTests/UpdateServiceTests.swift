@@ -37,4 +37,18 @@ final class UpdateServiceTests: XCTestCase {
         XCTAssertTrue(script.contains("xattr -dr com.apple.quarantine"))
         XCTAssertTrue(script.contains("open \"$TARGET_APP\""))
     }
+
+    func testUpdateChannelsHaveStableAndBetaOptions() {
+        XCTAssertEqual(UpdateChannel.allCases, [.stable, .beta])
+        XCTAssertTrue(UpdateChannel.stable.description.contains("prerelease"))
+        XCTAssertTrue(UpdateChannel.beta.description.contains("alpha"))
+    }
+
+    func testProviderPresetsIncludeRequestedServices() {
+        let ids = Set(ProviderPreset.allCases.map(\.rawValue))
+        XCTAssertTrue(ids.isSuperset(of: ["gemini", "openai", "anthropic", "xai", "openrouter", "custom-openai-compatible"]))
+        XCTAssertEqual(ProviderPreset.openAI.transport, .openAICompatible)
+        XCTAssertEqual(ProviderPreset.anthropic.transport, .anthropic)
+        XCTAssertEqual(ProviderPreset.gemini.transport, .gemini)
+    }
 }

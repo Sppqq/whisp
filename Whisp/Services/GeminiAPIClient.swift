@@ -15,12 +15,19 @@ actor GeminiAPIClient {
     private let proxyDelegate: ProxyAuthenticationDelegate?
     static let defaultBaseURL = URL(string: "https://generativelanguage.googleapis.com")!
     private let baseURL: URL
+    private let transport: ProviderTransport
 
-    init(apiKeys: [String], proxy: ProxyConfiguration, baseURL: URL = GeminiAPIClient.defaultBaseURL) {
+    init(
+        apiKeys: [String],
+        proxy: ProxyConfiguration,
+        baseURL: URL = GeminiAPIClient.defaultBaseURL,
+        transport: ProviderTransport = .gemini
+    ) {
         let cleaned = apiKeys.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         self.apiKeys = cleaned.isEmpty ? [""] : cleaned
         self.currentKeyIndex = 0
         self.baseURL = baseURL
+        self.transport = transport
         let proxyDelegate = ProxyTransport.authenticationDelegate(proxy: proxy)
         self.proxyDelegate = proxyDelegate
         let configuration = ProxyTransport.sessionConfiguration(proxy: proxy)
@@ -33,8 +40,13 @@ actor GeminiAPIClient {
         )
     }
 
-    init(apiKey: String, proxy: ProxyConfiguration, baseURL: URL = GeminiAPIClient.defaultBaseURL) {
-        self.init(apiKeys: [apiKey], proxy: proxy, baseURL: baseURL)
+    init(
+        apiKey: String,
+        proxy: ProxyConfiguration,
+        baseURL: URL = GeminiAPIClient.defaultBaseURL,
+        transport: ProviderTransport = .gemini
+    ) {
+        self.init(apiKeys: [apiKey], proxy: proxy, baseURL: baseURL, transport: transport)
     }
 
     func currentAPIKey() -> String {
@@ -58,7 +70,14 @@ actor GeminiAPIClient {
     }
 
     func probeTranscription(_ model: String) async throws {
-        try await probeKey(currentAPIKey(), model: model)
+        switch transport {
+        case .gemini:
+            try await probeKey(currentAPIKey(), model: model)
+        case .openAICompatible:
+            try await probeModels()
+        case .anthropic:
+            _ = try await generateText(prompt: "Ответь одним словом: готово", model: model)
+        }
     }
 
     func probeKey(_ key: String, model: String) async throws {
@@ -67,6 +86,13 @@ actor GeminiAPIClient {
             "type": "audio", "mime_type": "audio/wav", "data": wav.base64EncodedString()
         ])
         _ = try await sendJSON(body, path: "v1beta/interactions", apiKeyOverride: key)
+    }
+
+    private func probeModels() async throws {
+        var request = URLRequest(url: baseURL.appending(path: "models"))
+        request.setValue("Bearer \(currentAPIKey())", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response, data: data)
     }
 
     func analyze(
@@ -177,17 +203,39 @@ actor GeminiAPIClient {
             let key = currentAPIKey()
             let effectiveModel = (attempt > apiKeys.count && model == "gemini-3.8-flash") ? "gemini-2.5-flash" : model
             do {
-                var generation: [String: Any] = ["temperature": 0.2]
-                if let responseSchema {
-                    generation["responseMimeType"] = "application/json"
-                    generation["responseSchema"] = responseSchema
+                let data: Data
+                switch transport {
+                case .gemini:
+                    var generation: [String: Any] = ["temperature": 0.2]
+                    if let responseSchema {
+                        generation["responseMimeType"] = "application/json"
+                        generation["responseSchema"] = responseSchema
+                    }
+                    let body: [String: Any] = [
+                        "contents": [["role": "user", "parts": [["text": prompt]]]],
+                        "generationConfig": generation
+                    ]
+                    data = try await sendJSON(body, path: "v1beta/models/\(effectiveModel):generateContent", apiKeyOverride: key)
+                case .openAICompatible:
+                    var body: [String: Any] = [
+                        "model": model,
+                        "messages": [["role": "user", "content": prompt]],
+                        "temperature": 0.2
+                    ]
+                    if responseSchema != nil {
+                        body["response_format"] = ["type": "json_object"]
+                    }
+                    data = try await sendProviderJSON(body, path: "chat/completions", apiKeyOverride: key)
+                case .anthropic:
+                    let body: [String: Any] = [
+                        "model": model,
+                        "max_tokens": 8_192,
+                        "temperature": 0.2,
+                        "messages": [["role": "user", "content": prompt]]
+                    ]
+                    data = try await sendProviderJSON(body, path: "v1/messages", apiKeyOverride: key)
                 }
-                let body: [String: Any] = [
-                    "contents": [["role": "user", "parts": [["text": prompt]]]],
-                    "generationConfig": generation
-                ]
-                let data = try await sendJSON(body, path: "v1beta/models/\(effectiveModel):generateContent", apiKeyOverride: key)
-                return try extractText(data)
+                return try extractText(data, transport: transport)
             } catch let error as GeminiAPIError where error.isRateLimitOrQuota {
                 lastError = error
                 if attempt == maxAttempts { throw error }
@@ -242,6 +290,26 @@ actor GeminiAPIClient {
         model: String,
         onStatus: (@Sendable (String) async -> Void)?
     ) async throws -> [TranscriptSegment] {
+        switch transport {
+        case .gemini:
+            return try await performGeminiTranscribe(audioURL: audioURL, model: model, onStatus: onStatus)
+        case .openAICompatible:
+            return try await performOpenAICompatibleTranscribe(audioURL: audioURL, model: model, onStatus: onStatus)
+        case .anthropic:
+            throw GeminiAPIError(
+                code: 400,
+                status: "UNSUPPORTED",
+                message: "Anthropic не предоставляет API для расшифровки аудио. Выберите Gemini, OpenAI-совместимый провайдер или используйте локальный Whisper.",
+                retryAfter: nil
+            )
+        }
+    }
+
+    private func performGeminiTranscribe(
+        audioURL: URL,
+        model: String,
+        onStatus: (@Sendable (String) async -> Void)?
+    ) async throws -> [TranscriptSegment] {
         let key = currentAPIKey()
         let mime = mimeType(for: audioURL)
         let fileSize = (try? audioURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
@@ -264,6 +332,67 @@ actor GeminiAPIClient {
             await deleteUploadedFile(uploaded)
             throw error
         }
+    }
+
+    private func performOpenAICompatibleTranscribe(
+        audioURL: URL,
+        model: String,
+        onStatus: (@Sendable (String) async -> Void)?
+    ) async throws -> [TranscriptSegment] {
+        let bytes = try Data(contentsOf: audioURL, options: .mappedIfSafe)
+        let mime = mimeType(for: audioURL)
+        let boundary = "WhispBoundary\(UUID().uuidString)"
+        var body = Data()
+
+        func appendField(_ name: String, _ value: String) {
+            body.append(Data("--\(boundary)\r\n".utf8))
+            body.append(Data("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8))
+            body.append(Data("\(value)\r\n".utf8))
+        }
+
+        appendField("model", model)
+        appendField("response_format", "verbose_json")
+        appendField("timestamp_granularities[]", "segment")
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"\(audioURL.lastPathComponent)\"\r\n".utf8))
+        body.append(Data("Content-Type: \(mime)\r\n\r\n".utf8))
+        body.append(bytes)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+
+        let sizeMB = String(format: "%.1f МБ", Double(bytes.count) / (1024 * 1024))
+        await onStatus?("Загрузка аудио в OpenAI-совместимый API (\(sizeMB))...")
+        var request = URLRequest(url: baseURL.appending(path: "audio/transcriptions"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(currentAPIKey())", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        let (data, response) = try await session.upload(for: request, from: body)
+        try validate(response: response, data: data)
+
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GeminiAPIError(code: -1, status: "TRANSCRIPTION", message: "Провайдер вернул некорректный ответ расшифровки", retryAfter: nil)
+        }
+        let items = root["segments"] as? [[String: Any]] ?? []
+        var segments = items.compactMap { item -> TranscriptSegment? in
+            guard let text = item["text"] as? String,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            let start = (item["start"] as? NSNumber)?.doubleValue ?? 0
+            let end = max(start, (item["end"] as? NSNumber)?.doubleValue ?? start + 1)
+            return TranscriptSegment(
+                start: start,
+                end: end,
+                text: text,
+                source: .geminiBackfill,
+                model: model
+            )
+        }
+        if segments.isEmpty, let text = root["text"] as? String,
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            segments = [TranscriptSegment(start: 0, end: 0, text: text, source: .geminiBackfill, model: model)]
+        }
+        guard !segments.isEmpty else {
+            throw GeminiAPIError(code: -1, status: "EMPTY", message: "Провайдер не вернул распознанную речь", retryAfter: nil)
+        }
+        return segments.sorted { $0.start < $1.start }
     }
 
     private func waitUntilActive(_ uploaded: UploadedFile, key: String) async throws {
@@ -339,6 +468,23 @@ actor GeminiAPIClient {
         return data
     }
 
+    private func sendProviderJSON(_ object: [String: Any], path: String, apiKeyOverride: String? = nil) async throws -> Data {
+        var request = URLRequest(url: baseURL.appending(path: path))
+        request.httpMethod = "POST"
+        let key = apiKeyOverride ?? currentAPIKey()
+        if transport == .anthropic {
+            request.setValue(key, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        } else {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: object)
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response, data: data)
+        return data
+    }
+
     private func validate(response: URLResponse, data: Data?) throws {
         guard let http = response as? HTTPURLResponse else { return }
         guard (200..<300).contains(http.statusCode) else {
@@ -351,8 +497,27 @@ actor GeminiAPIClient {
         }
     }
 
-    private func extractText(_ data: Data) throws -> String {
+    private func extractText(_ data: Data, transport: ProviderTransport) throws -> String {
         let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        if transport == .openAICompatible {
+            let choices = root?["choices"] as? [[String: Any]]
+            let message = choices?.first?["message"] as? [String: Any]
+            if let text = message?["content"] as? String { return text }
+            if let parts = message?["content"] as? [[String: Any]] {
+                for part in parts where (part["type"] as? String) == "text" {
+                    if let text = part["text"] as? String { return text }
+                }
+            }
+        }
+
+        if transport == .anthropic {
+            let content = root?["content"] as? [[String: Any]]
+            for part in content ?? [] where (part["type"] as? String) == "text" {
+                if let text = part["text"] as? String { return text }
+            }
+        }
+
         let candidates = root?["candidates"] as? [[String: Any]]
         let content = candidates?.first?["content"] as? [String: Any]
         let parts = content?["parts"] as? [[String: Any]]
@@ -360,7 +525,8 @@ actor GeminiAPIClient {
             if let text = part["text"] as? String { return text }
             if let transcription = part["audioTranscription"] as? [String: Any], let text = transcription["text"] as? String { return text }
         }
-        throw GeminiAPIError(code: -1, status: "EMPTY", message: "Gemini вернул пустой ответ", retryAfter: nil)
+        let message = transport == .gemini ? "Gemini вернул пустой ответ" : "Провайдер вернул пустой ответ"
+        throw GeminiAPIError(code: -1, status: "EMPTY", message: message, retryAfter: nil)
     }
 
     private func parseRetryDelay(_ message: String) -> TimeInterval? {

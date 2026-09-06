@@ -13,6 +13,7 @@ actor TranscriptionCoordinator {
     private let apiKey: String
     private let proxy: ProxyConfiguration
     private let settings: WhispSettings
+    private let liveUnavailableMessage: String
     private let whisper = WhisperFallbackService()
     private let elapsed: @Sendable () -> TimeInterval
     private let callbacks: Callbacks
@@ -33,12 +34,14 @@ actor TranscriptionCoordinator {
         apiKey: String,
         proxy: ProxyConfiguration,
         settings: WhispSettings,
+        liveUnavailableMessage: String = "Ключ Gemini не настроен",
         elapsed: @escaping @Sendable () -> TimeInterval,
         callbacks: Callbacks
     ) {
         self.apiKey = apiKey
         self.proxy = proxy
         self.settings = settings
+        self.liveUnavailableMessage = liveUnavailableMessage
         self.elapsed = elapsed
         self.callbacks = callbacks
     }
@@ -112,7 +115,7 @@ actor TranscriptionCoordinator {
 
     private func connectLive(planned: Bool) async {
         guard !stopped, !apiKey.isEmpty, retryAllowed else {
-            if apiKey.isEmpty { openFallback(reason: .authentication, message: "Ключ Gemini не настроен") }
+            if apiKey.isEmpty { openFallback(reason: .authentication, message: liveUnavailableMessage) }
             return
         }
         callbacks.onGeminiState(.checking)

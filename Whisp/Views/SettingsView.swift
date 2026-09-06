@@ -31,6 +31,7 @@ struct SettingsView: View {
     @State private var batchKeysText = ""
     @State private var customProviders: [CustomProvider] = []
     @State private var customProviderKeys: [String: String] = [:]
+    @State private var providerAPIKeys: [String: String] = [:]
     @State private var proxyPassword = ""
     @State private var webDAVPassword = ""
     @State private var testResult = ""
@@ -56,7 +57,7 @@ struct SettingsView: View {
                     if !testResult.isEmpty {
                         Text(testResult)
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(testResult.contains("доступен") || testResult.contains("Сохранено") || testResult.contains("работают") ? Color.green : Color.red)
+                            .foregroundStyle(testResult.contains("доступен") || testResult.contains("Сохранено") || testResult.contains("сохранён") || testResult.contains("работают") ? Color.green : Color.red)
                             .lineLimit(2).frame(maxWidth: 260, alignment: .trailing)
                     }
                 }
@@ -88,6 +89,9 @@ struct SettingsView: View {
             geminiKey = store.geminiAPIKey
             customProviders = store.customProviders
             customProviderKeys = Dictionary(uniqueKeysWithValues: store.customProviders.map { ($0.id.uuidString, store.customProviderAPIKey(for: $0)) })
+            providerAPIKeys = Dictionary(uniqueKeysWithValues: ProviderPreset.allCases
+                .filter { $0 != .gemini }
+                .map { ($0.rawValue, store.providerAPIKey(for: $0.rawValue)) })
             proxyPassword = store.proxy.password
             webDAVPassword = store.webDAV.password
             model.refreshInputDevices()
@@ -121,11 +125,14 @@ struct SettingsView: View {
         VStack(spacing: 16) {
             SettingsCard(
                 title: "Провайдер расшифровки",
-                caption: "По умолчанию используется Google Gemini. Свои провайдеры должны быть совместимы с Gemini API.",
+                caption: "Выберите сервис для финальной расшифровки и создания конспектов.",
                 icon: "point.3.connected.trianglepath.dotted"
             ) {
                 Picker("Активный провайдер", selection: $store.settings.activeProviderID) {
-                    Text("Google Gemini (по умолчанию)").tag("gemini")
+                    ForEach(ProviderPreset.allCases) { provider in
+                        Label(provider == .gemini ? "\(provider.title) (по умолчанию)" : provider.title, systemImage: provider.icon)
+                            .tag(provider.rawValue)
+                    }
                     ForEach(store.customProviders) { provider in
                         Text(provider.name.isEmpty ? "Свой провайдер" : provider.name).tag(provider.id.uuidString)
                     }
@@ -141,6 +148,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                 }
             }
+
+            activeProviderSettings
 
             SettingsCard(
                 title: "Google Gemini API",
@@ -274,7 +283,7 @@ struct SettingsView: View {
                     Button("Сохранить") { saveSecrets() }.buttonStyle(.borderedProminent)
 
                     Button {
-                        saveSecrets()
+                        saveActiveProviderCredentials()
                         Task {
                             isTestingAll = true
                             testResult = store.usesGemini
@@ -372,6 +381,46 @@ struct SettingsView: View {
                 HStack {
                     TextField("Логин", text: $store.proxy.username)
                     SecureField("Пароль", text: $proxyPassword)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var activeProviderSettings: some View {
+        if let provider = store.activeProviderPreset, provider != .gemini {
+            SettingsCard(
+                title: provider.title,
+                caption: "API key хранится отдельно. URL и модели можно заменить под свой аккаунт.",
+                icon: provider.icon
+            ) {
+                VStack(alignment: .leading, spacing: 10) {
+                    TextField("Базовый URL API", text: providerConfigurationBinding(provider, keyPath: \.baseURL))
+                        .textFieldStyle(.roundedBorder)
+                    HStack {
+                        TextField("Модель расшифровки", text: providerConfigurationBinding(provider, keyPath: \.transcriptionModel))
+                        TextField("Модель для конспекта", text: providerConfigurationBinding(provider, keyPath: \.analysisModel))
+                    }
+                    .textFieldStyle(.roundedBorder)
+                    SecureField("API key", text: providerAPIKeyBinding(provider))
+                        .textFieldStyle(.roundedBorder)
+
+                    if provider == .anthropic {
+                        Label("Anthropic используется для конспектов; для расшифровки аудио выберите Gemini или OpenAI-совместимый API.", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if !provider.supportsLiveTranscription {
+                        Label("Во время записи Live-режим доступен только через Gemini; до финальной обработки работает локальный Whisper.", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    HStack {
+                        Button("Сохранить провайдера") { saveProviderSettings() }
+                            .buttonStyle(.borderedProminent)
+                        Spacer()
+                    }
                 }
             }
         }
@@ -536,6 +585,21 @@ struct SettingsView: View {
                 ))
                     .toggleStyle(.switch)
 
+                Picker("Канал обновлений", selection: Binding(
+                    get: { model.updateService.updateChannel },
+                    set: { model.updateService.updateChannel = $0 }
+                )) {
+                    ForEach(UpdateChannel.allCases) { channel in
+                        Text(channel.title).tag(channel)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                Label(model.updateService.updateChannel.description, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 LabeledContent("Установленная версия") {
                     Text(model.updateService.currentVersion).monospacedDigit()
                 }
@@ -603,7 +667,17 @@ struct SettingsView: View {
                     .buttonStyle(.link)
             }
         case .downloading(let release):
-            HStack { ProgressView().controlSize(.small); Text("Скачиваем Whisp \(release.version)…") }
+            VStack(alignment: .leading, spacing: 7) {
+                HStack { ProgressView().controlSize(.small); Text("Скачиваем Whisp \(release.version)…") }
+                if let total = model.updateService.downloadTotalBytes, total > 0 {
+                    ProgressView(value: model.updateService.downloadProgress)
+                    Text("\(formattedBytes(model.updateService.downloadedBytes)) из \(formattedBytes(total))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else {
+                    ProgressView()
+                }
+            }
         case .installing(let release):
             HStack { ProgressView().controlSize(.small); Text("Установка и перезапуск Whisp \(release.version)…") }
         case .downloaded(let release, _):
@@ -622,6 +696,10 @@ struct SettingsView: View {
         case .checking, .downloading, .installing: true
         default: false
         }
+    }
+
+    private func formattedBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     private var pageSubtitle: String {
@@ -658,6 +736,47 @@ struct SettingsView: View {
             invalidateGeminiStatus()
         } catch {
             testResult = error.localizedDescription
+        }
+    }
+
+    private func providerConfigurationBinding(
+        _ provider: ProviderPreset,
+        keyPath: WritableKeyPath<ProviderConfiguration, String>
+    ) -> Binding<String> {
+        Binding(
+            get: { store.configuration(for: provider)[keyPath: keyPath] },
+            set: { value in
+                var configuration = store.configuration(for: provider)
+                configuration[keyPath: keyPath] = value
+                store.setConfiguration(configuration, for: provider)
+            }
+        )
+    }
+
+    private func providerAPIKeyBinding(_ provider: ProviderPreset) -> Binding<String> {
+        Binding(
+            get: { providerAPIKeys[provider.rawValue] ?? "" },
+            set: { providerAPIKeys[provider.rawValue] = $0 }
+        )
+    }
+
+    private func saveProviderSettings() {
+        do {
+            try store.saveProviderAPIKeys(providerAPIKeys)
+            testResult = "Провайдер сохранён"
+            invalidateGeminiStatus()
+        } catch {
+            testResult = error.localizedDescription
+        }
+    }
+
+    private func saveActiveProviderCredentials() {
+        if store.usesGemini {
+            saveSecrets()
+        } else if store.activeProviderPreset != nil {
+            saveProviderSettings()
+        } else {
+            saveCustomProviders()
         }
     }
 
