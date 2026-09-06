@@ -468,21 +468,29 @@ struct SettingsView: View {
 
                     if case .available(let release) = model.updateService.state {
                         Button {
-                            Task { await model.updateService.downloadAndOpen(release) }
+                            Task { await model.updateService.installUpdate(release) }
                         } label: {
-                            Label("Скачать \(release.version)", systemImage: "arrow.down.circle.fill")
+                            Label("Обновить до \(release.version)", systemImage: "arrow.triangle.2.circlepath.circle.fill")
                         }
                         .buttonStyle(.borderedProminent)
+                        .disabled(model.isRecording)
+
+                        Button {
+                            Task { await model.updateService.downloadAndOpen(release) }
+                        } label: {
+                            Label("Скачать DMG вручную", systemImage: "arrow.down.circle")
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
             }
 
             SettingsCard(
-                title: "Как устанавливается обновление",
-                caption: "Whisp скачивает и открывает новый образ приложения.",
-                icon: "shippingbox"
+                title: "Автоматическое обновление",
+                caption: "Whisp обновляется в один клик и перезапускается.",
+                icon: "sparkles"
             ) {
-                Text("После открытия DMG перетащите новую версию Whisp в Applications с заменой. Записи и настройки находятся отдельно от приложения и сохранятся.")
+                Text("При обновлении Whisp автоматически скачивает образ новой версии, аккуратно заменяет приложение в Applications и перезапускается. Все ваши записи, конспекты и настройки сохраняются в неизменном виде.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -511,6 +519,8 @@ struct SettingsView: View {
             }
         case .downloading(let release):
             HStack { ProgressView().controlSize(.small); Text("Скачиваем Whisp \(release.version)…") }
+        case .installing(let release):
+            HStack { ProgressView().controlSize(.small); Text("Установка и перезапуск Whisp \(release.version)…") }
         case .downloaded(let release, _):
             Label("DMG версии \(release.version) скачан и открыт", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
         case .failed(let message):
@@ -524,7 +534,7 @@ struct SettingsView: View {
 
     private var isUpdateCheckRunning: Bool {
         switch model.updateService.state {
-        case .checking, .downloading: true
+        case .checking, .downloading, .installing: true
         default: false
         }
     }

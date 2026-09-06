@@ -53,6 +53,7 @@ enum UpdateState: Equatable, Sendable {
     case upToDate
     case available(WhispRelease)
     case downloading(WhispRelease)
+    case installing(WhispRelease)
     case downloaded(WhispRelease, URL)
     case failed(String)
 }
@@ -175,6 +176,215 @@ final class UpdateService {
         }
     }
 
+    var updatesDirectory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Whisp/Updates", isDirectory: true)
+    }
+
+    var targetAppURL: URL {
+        let bundle = Bundle.main.bundleURL
+        if bundle.pathExtension == "app" && !bundle.path.contains("DerivedData") && !bundle.path.contains("/Build/Products/") {
+            return bundle
+        }
+        return URL(fileURLWithPath: "/Applications/Whisp.app")
+    }
+
+    func installUpdate(_ release: WhispRelease) async {
+        state = .downloading(release)
+        do {
+            let directory = updatesDirectory
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let destinationDMG = directory.appendingPathComponent("Whisp-\(release.version).dmg")
+
+            var request = URLRequest(url: release.downloadURL)
+            request.setValue("Whisp/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+            let (temporaryURL, response) = try await session.download(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                throw UpdateError.downloadFailed
+            }
+
+            if FileManager.default.fileExists(atPath: destinationDMG.path) {
+                try FileManager.default.removeItem(at: destinationDMG)
+            }
+            try FileManager.default.moveItem(at: temporaryURL, to: destinationDMG)
+
+            state = .installing(release)
+
+            let mountPoint = directory.appendingPathComponent("Mount_\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
+
+            var isMounted = false
+            defer {
+                if isMounted {
+                    _ = try? runProcess(executable: "/usr/bin/hdiutil", arguments: ["detach", mountPoint.path, "-force"])
+                }
+                try? FileManager.default.removeItem(at: mountPoint)
+            }
+
+            _ = try runProcess(
+                executable: "/usr/bin/hdiutil",
+                arguments: ["attach", destinationDMG.path, "-mountpoint", mountPoint.path, "-nobrowse", "-readonly", "-noautoopen"]
+            )
+            isMounted = true
+
+            let contents = try FileManager.default.contentsOfDirectory(at: mountPoint, includingPropertiesForKeys: nil)
+            guard let appInMount = contents.first(where: { $0.pathExtension == "app" }) else {
+                throw UpdateError.invalidPackage("В скачанном DMG не найден файл Whisp.app")
+            }
+
+            let infoPlistURL = appInMount.appendingPathComponent("Contents/Info.plist")
+            guard FileManager.default.fileExists(atPath: infoPlistURL.path),
+                  let infoData = try? Data(contentsOf: infoPlistURL),
+                  let plist = try? PropertyListSerialization.propertyList(from: infoData, format: nil) as? [String: Any],
+                  let bundleId = plist["CFBundleIdentifier"] as? String,
+                  bundleId == "app.whisp.lectures" else {
+                throw UpdateError.invalidPackage("Файл приложения в DMG имеет некорректный идентификатор")
+            }
+
+            let executableURL = appInMount.appendingPathComponent("Contents/MacOS/Whisp")
+            guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
+                throw UpdateError.invalidPackage("Файл приложения в DMG не содержит исполняемого бинарного файла")
+            }
+
+            let stagingDirectory = directory.appendingPathComponent("Staging", isDirectory: true)
+            if FileManager.default.fileExists(atPath: stagingDirectory.path) {
+                try FileManager.default.removeItem(at: stagingDirectory)
+            }
+            try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+            let stagedApp = stagingDirectory.appendingPathComponent("Whisp.app", isDirectory: true)
+
+            _ = try runProcess(executable: "/usr/bin/ditto", arguments: [appInMount.path, stagedApp.path])
+
+            _ = try runProcess(executable: "/usr/bin/hdiutil", arguments: ["detach", mountPoint.path, "-force"])
+            isMounted = false
+
+            let scriptURL = directory.appendingPathComponent("install_and_restart.sh")
+            let logURL = directory.appendingPathComponent("updater.log")
+            let scriptContent = Self.updaterScriptContent
+
+            try scriptContent.write(to: scriptURL, atomically: true, encoding: .utf8)
+            _ = try runProcess(executable: "/bin/chmod", arguments: ["+x", scriptURL.path])
+
+            let currentPID = ProcessInfo.processInfo.processIdentifier
+            let targetURL = targetAppURL
+
+            let launcher = Process()
+            launcher.executableURL = URL(fileURLWithPath: "/bin/bash")
+            launcher.arguments = [
+                "-c",
+                "nohup \"$1\" \"$2\" \"$3\" \"$4\" \"$5\" </dev/null >/dev/null 2>&1 &",
+                "bash",
+                scriptURL.path,
+                "\(currentPID)",
+                stagedApp.path,
+                targetURL.path,
+                logURL.path
+            ]
+            try launcher.run()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                NSApplication.shared.terminate(nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    exit(0)
+                }
+            }
+        } catch {
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    @discardableResult
+    private nonisolated func runProcess(executable: String, arguments: [String]) throws -> String {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else {
+            throw UpdateError.processFailed("Команда \(executable) завершилась с ошибкой (\(process.terminationStatus)): \(output.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        return output
+    }
+
+    static let updaterScriptContent = #"""
+    #!/bin/bash
+    set -e
+    trap '' HUP INT TERM
+    export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
+    PID="$1"
+    STAGE_APP="$2"
+    TARGET_APP="$3"
+    LOG_FILE="$4"
+
+    exec > "$LOG_FILE" 2>&1
+    echo "=== Whisp Auto-Updater ==="
+    echo "Date: $(date)"
+    echo "Waiting for process $PID to terminate..."
+
+    for i in {1..30}; do
+        if ! kill -0 "$PID" 2>/dev/null; then
+            echo "Process $PID exited."
+            break
+        fi
+        sleep 0.5
+    done
+
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "Process $PID still running after 15s. Sending SIGKILL..."
+        kill -9 "$PID" 2>/dev/null || true
+        sleep 0.5
+    fi
+
+    if [ ! -d "$STAGE_APP" ]; then
+        echo "ERROR: Stage app does not exist at $STAGE_APP"
+        exit 1
+    fi
+
+    TARGET_DIR="$(dirname "$TARGET_APP")"
+    CAN_WRITE=1
+    if [ -e "$TARGET_APP" ] && [ ! -w "$TARGET_APP" ]; then CAN_WRITE=0; fi
+    if [ -e "$TARGET_DIR" ] && [ ! -w "$TARGET_DIR" ]; then CAN_WRITE=0; fi
+
+    echo "Replacing $TARGET_APP with $STAGE_APP (writable=$CAN_WRITE)..."
+
+    if [ "$CAN_WRITE" -eq 1 ]; then
+        BACKUP_APP="${TARGET_APP}.old.$$"
+        rm -rf "$BACKUP_APP"
+        if [ -d "$TARGET_APP" ]; then
+            mv "$TARGET_APP" "$BACKUP_APP" 2>/dev/null || rm -rf "$TARGET_APP" 2>/dev/null || true
+        fi
+        if ditto "$STAGE_APP" "$TARGET_APP"; then
+            rm -rf "$BACKUP_APP" 2>/dev/null || true
+            echo "Direct replacement succeeded."
+        else
+            echo "Direct replacement failed. Restoring backup..."
+            if [ -d "$BACKUP_APP" ]; then
+                mv "$BACKUP_APP" "$TARGET_APP" 2>/dev/null || true
+            fi
+            exit 1
+        fi
+    else
+        echo "Administrator privileges required. Requesting via osascript..."
+        osascript -e "do shell script \"rm -rf '$TARGET_APP' && ditto '$STAGE_APP' '$TARGET_APP' && xattr -dr com.apple.quarantine '$TARGET_APP'\" with administrator privileges"
+    fi
+
+    xattr -dr com.apple.quarantine "$TARGET_APP" 2>/dev/null || true
+
+    echo "Cleaning up staging..."
+    STAGE_DIR="$(dirname "$STAGE_APP")"
+    rm -rf "$STAGE_DIR" 2>/dev/null || true
+
+    echo "Relaunching $TARGET_APP..."
+    open "$TARGET_APP"
+    echo "Update complete."
+    """#
+
     func openReleasePage(_ release: WhispRelease) {
         NSWorkspace.shared.open(release.pageURL)
     }
@@ -214,6 +424,8 @@ private enum UpdateError: LocalizedError {
     case privateRepository
     case rateLimited
     case downloadFailed
+    case invalidPackage(String)
+    case processFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -221,6 +433,8 @@ private enum UpdateError: LocalizedError {
         case .privateRepository: "Репозиторий Whisp пока приватный. Автообновление заработает после открытия репозитория."
         case .rateLimited: "GitHub временно ограничил проверку обновлений. Попробуйте позже."
         case .downloadFailed: "Не удалось скачать DMG обновления"
+        case .invalidPackage(let reason): "Образ обновления повреждён: \(reason)"
+        case .processFailed(let reason): "Ошибка выполнения команды обновления: \(reason)"
         }
     }
 }

@@ -78,15 +78,18 @@ struct MainView: View {
             set: { if !$0 { model.updateService.dismissAvailableUpdate() } }
         )) {
             if let release = model.updateService.availableRelease {
-                Button("Скачать \(release.version)") {
-                    Task { await model.updateService.downloadAndOpen(release) }
+                Button("Обновить до \(release.version)") {
+                    Task { await model.updateService.installUpdate(release) }
                 }
+                .disabled(model.isRecording)
                 Button("Страница релиза") { model.updateService.openReleasePage(release) }
             }
             Button("Позже", role: .cancel) { model.updateService.dismissAvailableUpdate() }
         } message: {
             if let release = model.updateService.availableRelease {
-                Text(release.isPrerelease ? "Доступна предварительная версия \(release.version)." : "Доступна версия \(release.version).")
+                Text(release.isPrerelease
+                     ? "Доступна предварительная версия \(release.version). Whisp скачает обновление, заменит приложение в /Applications и перезапустится."
+                     : "Доступна версия \(release.version). Whisp скачает обновление, заменит приложение в /Applications и перезапустится.")
             }
         }
         .sheet(isPresented: $model.showBackfillComparison) {
