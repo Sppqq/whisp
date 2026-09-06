@@ -2,11 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum WhispPalette {
-    static let accent = Color(red: 0.94, green: 0.36, blue: 0.28)
+    static let accent = Color(red: 0.92, green: 0.32, blue: 0.24)
     static let canvas = Color(nsColor: .windowBackgroundColor)
     static let panel = Color(nsColor: .controlBackgroundColor)
-    static let elevated = Color(nsColor: .textBackgroundColor).opacity(0.72)
-    static let hairline = Color.primary.opacity(0.09)
+    static let elevated = Color(nsColor: .textBackgroundColor)
+    static let sidebar = Color(nsColor: .underPageBackgroundColor)
+    static let hairline = Color.primary.opacity(0.13)
+    static let quietFill = Color.primary.opacity(0.055)
 }
 
 struct MainView: View {
@@ -24,7 +26,11 @@ struct MainView: View {
             let subjectMatch = session.subject.lowercased().contains(query)
             let tagsMatch = session.analysis?.tags.contains { $0.lowercased().contains(query) } ?? false
             let conceptsMatch = session.analysis?.keyConcepts.contains { $0.lowercased().contains(query) } ?? false
-            return titleMatch || subjectMatch || tagsMatch || conceptsMatch
+            let transcriptMatch = session.finalTranscript.contains { $0.text.localizedCaseInsensitiveContains(query) }
+                || session.rawTranscript.contains { $0.text.localizedCaseInsensitiveContains(query) }
+            let notesMatch = session.notesMarkdown.localizedCaseInsensitiveContains(query)
+                || session.studentNotesMarkdown.localizedCaseInsensitiveContains(query)
+            return titleMatch || subjectMatch || tagsMatch || conceptsMatch || transcriptMatch || notesMatch
         }
     }
 
@@ -51,6 +57,14 @@ struct MainView: View {
             Button("Восстановить") { Task { await model.recoverSession() } }
             Button("Позже", role: .cancel) { model.dismissRecovery() }
         } message: { Text("Уже записанные аудиосегменты сохранены.") }
+        .alert("Удалённая версия изменилась", isPresented: $model.showSyncConflict) {
+            Button("Перезаписать удалённую", role: .destructive) {
+                Task { await model.overwriteRemoteAfterConflict() }
+            }
+            Button("Позже", role: .cancel) { model.showSyncConflict = false }
+        } message: {
+            Text("В папке WebDAV «\(model.syncConflictPath)» появились изменения после последней синхронизации. Проверьте удалённую заметку перед перезаписью.")
+        }
         .alert("\(model.settingsStore.activeProviderName) снова доступен", isPresented: $model.showBackfillPrompt) {
             Button("Дорасшифровать сейчас") { Task { await model.backfillNow() } }
             Button("Напомнить позже") { model.deferBackfill() }
@@ -204,14 +218,14 @@ struct MainView: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+                .background(WhispPalette.quietFill, in: RoundedRectangle(cornerRadius: 7))
                 .help("Действия с лекциями")
 
                 Button { model.showStartScreen() } label: {
                     Image(systemName: "plus").frame(width: 26, height: 26)
                 }
                 .buttonStyle(.plain)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+                .background(WhispPalette.quietFill, in: RoundedRectangle(cornerRadius: 7))
                 .help("Новая лекция или импорт")
                 .accessibilityLabel("Новая лекция или импорт")
                 .disabled(model.isRecording)
@@ -223,7 +237,7 @@ struct MainView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextField("Название, предмет или тег", text: $searchText)
+                TextField("Название, предмет, тег или текст", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.caption)
                 if !searchText.isEmpty {
@@ -239,7 +253,7 @@ struct MainView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 9)
-            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7))
+            .background(WhispPalette.quietFill, in: RoundedRectangle(cornerRadius: 7))
             .overlay(RoundedRectangle(cornerRadius: 7).stroke(WhispPalette.hairline, lineWidth: 1))
             .padding(.horizontal, 14)
             .padding(.bottom, 8)
@@ -257,7 +271,7 @@ struct MainView: View {
                                     .font(.caption2.weight(selectedSubject == subj ? .semibold : .regular))
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 3)
-                                    .background(selectedSubject == subj ? WhispPalette.accent.opacity(0.15) : Color.primary.opacity(0.05), in: Capsule())
+                                    .background(selectedSubject == subj ? WhispPalette.accent.opacity(0.15) : WhispPalette.quietFill, in: Capsule())
                                     .foregroundStyle(selectedSubject == subj ? WhispPalette.accent : .primary)
                             }
                             .buttonStyle(.plain)
@@ -314,7 +328,7 @@ struct MainView: View {
                         .padding(.vertical, 8)
                     } else {
                         ForEach(filteredSessions) { session in
-                            LectureRow(session: session)
+                            LectureRow(session: session, query: searchText)
                                 .tag(session.id)
                                 .contextMenu {
                                     Button {
@@ -360,7 +374,7 @@ struct MainView: View {
             }
             .padding(.horizontal, 17).padding(.vertical, 14)
         }
-        .background(Color(nsColor: .underPageBackgroundColor).opacity(0.72))
+        .background(WhispPalette.sidebar)
     }
 
     @ViewBuilder private var detail: some View {
@@ -671,6 +685,7 @@ private struct ProcessingView: View {
 
 private struct LectureRow: View {
     let session: LectureSession
+    var query = ""
 
     private var statusColor: Color {
         switch session.status {
@@ -715,8 +730,28 @@ private struct LectureRow: View {
                     .foregroundStyle(.tertiary)
             }
             .font(.caption2)
+            if let snippet = matchingSnippet, !snippet.isEmpty {
+                Text(snippet)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .padding(.top, 1)
+            }
         }
         .padding(.vertical, 4)
+    }
+
+    private var matchingSnippet: String? {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return nil }
+        let transcript = session.finalTranscript + session.rawTranscript
+        if let segment = transcript.first(where: { $0.text.localizedCaseInsensitiveContains(trimmedQuery) }) {
+            return segment.text
+        }
+        let notes = [session.studentNotesMarkdown, session.notesMarkdown]
+            .flatMap { $0.components(separatedBy: .newlines) }
+            .first { $0.localizedCaseInsensitiveContains(trimmedQuery) }
+        return notes
     }
 }
 

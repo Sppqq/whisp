@@ -104,6 +104,62 @@ actor WebDAVClient {
         return data
     }
 
+    /// Returns true when the remote session changed after this Mac last synced it.
+    /// Servers without ETag/Last-Modified metadata are treated as unknown and do
+    /// not block an upload; the existing atomic PUT path remains the fallback.
+    func hasRemoteConflict(for lecture: LectureSession) async throws -> Bool {
+        guard let remotePath = lecture.remotePath,
+              lecture.remoteETag != nil || lecture.syncedAt != nil else { return false }
+
+        let metadata = try await remoteMetadata(path: remotePath + "/session.json")
+        guard metadata.exists else { return false }
+
+        if let expectedETag = lecture.remoteETag, let actualETag = metadata.etag {
+            return expectedETag != actualETag
+        }
+        if let syncedAt = lecture.syncedAt, let modifiedAt = metadata.lastModified {
+            return modifiedAt > syncedAt.addingTimeInterval(1)
+        }
+        return false
+    }
+
+    func remoteETag(path: String) async throws -> String? {
+        (try await remoteMetadata(path: path + "/session.json")).etag
+    }
+
+    private struct RemoteMetadata {
+        let exists: Bool
+        let etag: String?
+        let lastModified: Date?
+    }
+
+    private func remoteMetadata(path: String) async throws -> RemoteMetadata {
+        let url = try remoteURL(path: path)
+        let request = authenticatedRequest(url: url, method: "HEAD")
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw WebDAVError.verificationFailed(url.lastPathComponent)
+        }
+        if http.statusCode == 404 { return RemoteMetadata(exists: false, etag: nil, lastModified: nil) }
+        guard (200..<300).contains(http.statusCode) else {
+            throw WebDAVError.unexpectedStatus(http.statusCode, "Не удалось проверить удалённую версию")
+        }
+        return RemoteMetadata(
+            exists: true,
+            etag: http.value(forHTTPHeaderField: "ETag"),
+            lastModified: Self.parseHTTPDate(http.value(forHTTPHeaderField: "Last-Modified"))
+        )
+    }
+
+    private static func parseHTTPDate(_ value: String?) -> Date? {
+        guard let value, !value.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        return formatter.date(from: value)
+    }
+
     func listRemoteTree(root: String) async throws -> [RemoteEntry] {
         let url = try remoteURL(path: root)
         var request = authenticatedRequest(url: url, method: "PROPFIND")
@@ -191,6 +247,7 @@ actor WebDAVClient {
                     decoder.dateDecodingStrategy = .iso8601
                     var session = try decoder.decode(LectureSession.self, from: sessionData)
                     session.remotePath = folder
+                    session.remoteETag = try? await remoteETag(path: folder)
                     session.status = .synced
                     session.syncedAt = Date()
 

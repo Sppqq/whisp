@@ -40,6 +40,8 @@ final class AppModel {
     var showRecoveryPrompt = false
     var showBackfillPrompt = false
     var showBackfillComparison = false
+    var showSyncConflict = false
+    var syncConflictPath = ""
     var backfillBefore = ""
     var backfillAfter = ""
     var lastError: String?
@@ -63,6 +65,9 @@ final class AppModel {
     private var coordinator: TranscriptionCoordinator?
     private var backfillMonitor: Task<Void, Never>?
     private var syncRetryTask: Task<Void, Never>?
+    private var syncConflictSessionID: UUID?
+    private var persistTask: Task<Void, Never>?
+    private var persistRequested = false
     private var currentMixURL: URL?
     private var processingTask: Task<Void, Never>?
 
@@ -608,10 +613,10 @@ final class AppModel {
         if let studentNotes { session.studentNotesMarkdown = studentNotes; session.userEditedStudentNotes = true }
         if let quiz { session.quizMarkdown = quiz }
         currentSession = session
-        Task { try? await persistCurrent() }
+        schedulePersistCurrent()
     }
 
-    func syncCurrent() async {
+    func syncCurrent(forceOverwriteRemote: Bool = false) async {
         guard !isBusy, var session = currentSession else { return }
         isWorking = true
         defer { isWorking = false }
@@ -624,9 +629,24 @@ final class AppModel {
         do {
             let directory = try await store.directory(for: session.id)
             let client = WebDAVClient(configuration: settingsStore.webDAV)
+            if !forceOverwriteRemote, try await client.hasRemoteConflict(for: session) {
+                syncConflictSessionID = session.id
+                syncConflictPath = session.remotePath ?? "удалённая папка лекции"
+                session.status = .review
+                session.lastError = "На WebDAV уже есть изменения после последней синхронизации."
+                currentSession = session
+                statusMessage = "Нужна проверка WebDAV"
+                webDAVState = .unavailable("Удалённая версия новее локальной")
+                showSyncConflict = true
+                try? await persistCurrent()
+                return
+            }
+
             session.remotePath = try await client.upload(session: session, localDirectory: directory)
+            session.remoteETag = try? await client.remoteETag(path: session.remotePath ?? "")
             session.status = .synced
             session.syncedAt = Date()
+            session.lastError = nil
             currentSession = session
             statusMessage = "Синхронизировано"
             webDAVState = .available
@@ -643,6 +663,75 @@ final class AppModel {
             try? await persistCurrent()
             scheduleSyncRetry()
         }
+    }
+
+    func overwriteRemoteAfterConflict() async {
+        guard syncConflictSessionID == currentSession?.id else {
+            showSyncConflict = false
+            return
+        }
+        showSyncConflict = false
+        await syncCurrent(forceOverwriteRemote: true)
+    }
+
+    func updateTranscriptSegment(id: UUID, text: String, speaker: String?, inRawTranscript: Bool) {
+        guard var session = currentSession else { return }
+        let cleanedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedText.isEmpty else { return }
+        var segments = inRawTranscript ? session.rawTranscript : session.finalTranscript
+        guard let index = segments.firstIndex(where: { $0.id == id }) else { return }
+        segments[index].text = cleanedText
+        let cleanedSpeaker = speaker?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        segments[index].speaker = cleanedSpeaker.isEmpty ? nil : cleanedSpeaker
+        segments[index].manuallyEdited = true
+        if inRawTranscript {
+            session.rawTranscript = segments
+            session.rawMarkdown = MarkdownExporter.render(session: session).raw
+        } else {
+            let shouldUpdateMarkdown = !session.userEditedFinal
+            session.finalTranscript = segments
+            session.userEditedFinal = true
+            if shouldUpdateMarkdown {
+                session.finalMarkdown = MarkdownExporter.render(session: session).final
+            }
+        }
+        currentSession = session
+        schedulePersistCurrent()
+    }
+
+    func mergeTranscriptSegment(id: UUID, inRawTranscript: Bool) {
+        guard var session = currentSession else { return }
+        var segments = inRawTranscript ? session.rawTranscript : session.finalTranscript
+        guard let index = segments.firstIndex(where: { $0.id == id }), index + 1 < segments.count else { return }
+        let next = segments[index + 1]
+        segments[index].text = [segments[index].text, next.text]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        segments[index].end = max(segments[index].end, next.end)
+        segments[index].speaker = segments[index].speaker ?? next.speaker
+        segments[index].manuallyEdited = true
+        segments.remove(at: index + 1)
+        if inRawTranscript {
+            session.rawTranscript = segments
+            session.rawMarkdown = MarkdownExporter.render(session: session).raw
+        } else {
+            let shouldUpdateMarkdown = !session.userEditedFinal
+            session.finalTranscript = segments
+            session.userEditedFinal = true
+            if shouldUpdateMarkdown {
+                session.finalMarkdown = MarkdownExporter.render(session: session).final
+            }
+        }
+        currentSession = session
+        schedulePersistCurrent()
+    }
+
+    func updateQuizProgress(_ progress: QuizProgress) {
+        guard var session = currentSession else { return }
+        session.quizProgress = progress
+        currentSession = session
+        schedulePersistCurrent()
     }
 
     func reloadSessions() async {
@@ -772,7 +861,7 @@ final class AppModel {
             session.fallbackIntervals[index].retryAfter = Date().addingTimeInterval(3_600)
         }
         currentSession = session
-        Task { try? await persistCurrent() }
+        schedulePersistCurrent()
     }
 
     func declineBackfill() {
@@ -783,7 +872,7 @@ final class AppModel {
         }
         session.status = .review
         currentSession = session
-        Task { try? await persistCurrent() }
+        schedulePersistCurrent()
     }
 
     func testGemini() async -> String {
@@ -1264,6 +1353,7 @@ final class AppModel {
             let client = try providerClient()
             let rawQuiz = try await client.generateText(prompt: prompt, model: settingsStore.activeAnalysisModel)
             session.quizMarkdown = WhispFormatting.formatMarkdownNotes(rawQuiz)
+            session.quizProgress.reset()
             sessions[index] = session
             if currentSession?.id == targetID {
                 currentSession = session
@@ -1306,21 +1396,21 @@ final class AppModel {
         session.rawTranscript = TranscriptMerger.merge(session.rawTranscript + [segment])
         session.finalTranscript = TranscriptMerger.merge(session.finalTranscript + [segment])
         currentSession = session
-        Task { try? await persistCurrent() }
+        schedulePersistCurrent()
     }
 
     private func receive(chunk: AudioChunk) {
         guard var session = currentSession else { return }
         session.audioChunks.append(chunk)
         currentSession = session
-        Task { try? await persistCurrent() }
+        schedulePersistCurrent()
     }
 
     private func openFallback(_ interval: FallbackInterval) {
         guard var session = currentSession, !session.fallbackIntervals.contains(where: \.isOpen) else { return }
         session.fallbackIntervals.append(interval)
         currentSession = session
-        Task { try? await persistCurrent() }
+        schedulePersistCurrent()
     }
 
     private func closeFallback(at end: TimeInterval) {
@@ -1329,7 +1419,7 @@ final class AppModel {
         session.fallbackIntervals[index].end = end
         session.fallbackIntervals[index].status = .pending
         currentSession = session
-        Task { try? await persistCurrent() }
+        schedulePersistCurrent()
     }
 
     private func beginBackfillMonitorIfNeeded() {
@@ -1495,6 +1585,25 @@ final class AppModel {
             baseURL: endpoint,
             transport: settingsStore.activeProviderTransport
         )
+    }
+
+    private func schedulePersistCurrent() {
+        persistRequested = true
+        guard persistTask == nil else { return }
+        persistTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
+            guard let self else { return }
+            self.persistRequested = false
+            self.persistTask = nil
+            try? await self.persistCurrent()
+            if self.persistRequested {
+                self.schedulePersistCurrent()
+            }
+        }
     }
 
     private func persistCurrent() async throws {

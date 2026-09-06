@@ -22,12 +22,27 @@ final class UpdateServiceTests: XCTestCase {
             notes: "Test notes",
             pageURL: URL(string: "https://example.com")!,
             downloadURL: URL(string: "https://example.com/Whisp.dmg")!,
-            isPrerelease: false
+            isPrerelease: false,
+            checksumURL: URL(string: "https://example.com/Whisp.dmg.sha256")!
         )
         XCTAssertEqual(UpdateState.idle, UpdateState.idle)
         XCTAssertEqual(UpdateState.checking, UpdateState.checking)
         XCTAssertEqual(UpdateState.installing(release), UpdateState.installing(release))
         XCTAssertNotEqual(UpdateState.downloading(release), UpdateState.installing(release))
+    }
+
+    func testQuizProgressTracksAnswersAndReveals() {
+        var progress = QuizProgress()
+        progress.markQuestion(2, correct: true)
+        progress.markQuestion(4, correct: false)
+        progress.setQuestionRevealed(2, revealed: true)
+        progress.setFlashcardRevealed(1, revealed: true)
+
+        XCTAssertEqual(progress.answeredQuestionCount, 2)
+        XCTAssertEqual(progress.answeredCorrectly, [2])
+        XCTAssertEqual(progress.needsReview, [4])
+        XCTAssertEqual(progress.revealedQuestions, [2])
+        XCTAssertEqual(progress.revealedFlashcards, [1])
     }
 
     func testUpdaterScriptContainsCriticalOperations() {

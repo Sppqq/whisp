@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import CryptoKit
 
 enum UpdateChannel: String, CaseIterable, Identifiable, Codable, Sendable {
     case stable
@@ -63,7 +64,26 @@ struct WhispRelease: Identifiable, Equatable, Sendable {
     let notes: String
     let pageURL: URL
     let downloadURL: URL
+    let checksumURL: URL?
     let isPrerelease: Bool
+
+    init(
+        version: String,
+        title: String,
+        notes: String,
+        pageURL: URL,
+        downloadURL: URL,
+        isPrerelease: Bool,
+        checksumURL: URL? = nil
+    ) {
+        self.version = version
+        self.title = title
+        self.notes = notes
+        self.pageURL = pageURL
+        self.downloadURL = downloadURL
+        self.checksumURL = checksumURL
+        self.isPrerelease = isPrerelease
+    }
 
     var id: String { version }
 }
@@ -198,6 +218,7 @@ final class UpdateService {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let destination = directory.appendingPathComponent("Whisp-\(release.version).dmg")
             try await downloadDMG(to: destination, request: request)
+            try await verifyChecksum(of: destination, for: release)
             state = .downloaded(release, destination)
             NSWorkspace.shared.open(destination)
         } catch {
@@ -228,6 +249,7 @@ final class UpdateService {
             var request = URLRequest(url: release.downloadURL)
             request.setValue("Whisp/\(currentVersion)", forHTTPHeaderField: "User-Agent")
             try await downloadDMG(to: destinationDMG, request: request)
+            try await verifyChecksum(of: destinationDMG, for: release)
 
             state = .installing(release)
 
@@ -266,6 +288,11 @@ final class UpdateService {
             guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
                 throw UpdateError.invalidPackage("Файл приложения в DMG не содержит исполняемого бинарного файла")
             }
+
+            _ = try runProcess(
+                executable: "/usr/bin/codesign",
+                arguments: ["--verify", "--deep", "--strict", "--verbose=2", appInMount.path]
+            )
 
             let stagingDirectory = directory.appendingPathComponent("Staging", isDirectory: true)
             if FileManager.default.fileExists(atPath: stagingDirectory.path) {
@@ -341,6 +368,33 @@ final class UpdateService {
             }
         }
         downloadProgress = 1
+    }
+
+    private func verifyChecksum(of fileURL: URL, for release: WhispRelease) async throws {
+        guard let checksumURL = release.checksumURL else {
+            throw UpdateError.checksumUnavailable
+        }
+
+        var request = URLRequest(url: checksumURL)
+        request.setValue("Whisp/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw UpdateError.checksumUnavailable
+        }
+
+        let checksumText = String(data: data, encoding: .utf8) ?? ""
+        let pattern = "(?i)\\b[0-9a-f]{64}\\b"
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: checksumText, options: [], range: NSRange(location: 0, length: (checksumText as NSString).length)) else {
+            throw UpdateError.checksumUnavailable
+        }
+        let expected = (checksumText as NSString).substring(with: match.range).lowercased()
+        let actual = SHA256.hash(data: try Data(contentsOf: fileURL))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        guard actual == expected else {
+            throw UpdateError.checksumMismatch
+        }
     }
 
     private nonisolated static func downloadDMGStream(
@@ -517,6 +571,10 @@ final class UpdateService {
             .compactMap { release -> (AppVersion, WhispRelease)? in
                 guard let version = AppVersion(release.tagName), version > currentVersion,
                       let asset = release.assets.first(where: { $0.name.hasSuffix(".dmg") }) else { return nil }
+                let checksumAsset = release.assets.first {
+                    let name = $0.name.lowercased()
+                    return name.hasSuffix(".sha256") || name.contains("checksum")
+                }
                 let cleanVersion = String(release.tagName.drop(while: { $0 == "v" || $0 == "V" }))
                 return (version, WhispRelease(
                     version: cleanVersion,
@@ -524,6 +582,7 @@ final class UpdateService {
                     notes: release.body ?? "",
                     pageURL: release.htmlURL,
                     downloadURL: asset.browserDownloadURL,
+                    checksumURL: checksumAsset?.browserDownloadURL,
                     isPrerelease: release.prerelease
                 ))
             }
@@ -537,6 +596,8 @@ private enum UpdateError: LocalizedError {
     case privateRepository
     case rateLimited
     case downloadFailed
+    case checksumUnavailable
+    case checksumMismatch
     case invalidPackage(String)
     case processFailed(String)
 
@@ -546,6 +607,8 @@ private enum UpdateError: LocalizedError {
         case .privateRepository: "Репозиторий Whisp пока приватный. Автообновление заработает после открытия репозитория."
         case .rateLimited: "GitHub временно ограничил проверку обновлений. Попробуйте позже."
         case .downloadFailed: "Не удалось скачать DMG обновления"
+        case .checksumUnavailable: "У релиза нет доступной SHA-256 проверки DMG"
+        case .checksumMismatch: "SHA-256 DMG не совпадает с checksum релиза"
         case .invalidPackage(let reason): "Образ обновления повреждён: \(reason)"
         case .processFailed(let reason): "Ошибка выполнения команды обновления: \(reason)"
         }
