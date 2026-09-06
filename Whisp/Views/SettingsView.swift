@@ -4,6 +4,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
     case gemini = "Gemini"
     case audio = "Звук"
     case storage = "Хранилище"
+    case appearance = "Вид"
     case subjects = "Предметы"
     case hotkeys = "Клавиши"
     case updates = "Обновления"
@@ -13,6 +14,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .gemini: "sparkles"
         case .audio: "waveform.badge.mic"
         case .storage: "externaldrive"
+        case .appearance: "circle.lefthalf.filled"
         case .subjects: "books.vertical"
         case .hotkeys: "keyboard"
         case .updates: "arrow.triangle.2.circlepath"
@@ -131,6 +133,7 @@ struct SettingsView: View {
         case .gemini: geminiPage
         case .audio: audioPage
         case .storage: storagePage
+        case .appearance: appearancePage
         case .subjects: subjectsPage
         case .hotkeys: hotkeysPage
         case .updates: updatesPage
@@ -720,9 +723,11 @@ struct SettingsView: View {
         case .gemini: "Модели, ключ и сетевое подключение"
         case .audio: "Источники записи"
         case .storage: "Obsidian и локальные файлы"
+        case .appearance: "Тема, размер текста и масштаб интерфейса"
         case .subjects: "Список дисциплин для классификации"
         case .hotkeys: "Управление в активном окне Whisp"
         case .updates: "Версия приложения и новые выпуски"
+        case .appearance: "Светлая, тёмная или системная тема"
         }
     }
 
@@ -766,6 +771,29 @@ struct SettingsView: View {
                 providerConfigurations[provider.rawValue] = configuration
             }
         )
+    }
+
+    private var appearancePage: some View {
+        SettingsCard(
+            title: "Внешний вид",
+            caption: "Выберите спокойную светлую или тёмную сцену для работы с лекциями.",
+            icon: "circle.lefthalf.filled"
+        ) {
+            Picker("Тема", selection: $store.settings.appearance) {
+                ForEach(WhispAppearance.allCases) { appearance in
+                    Label(appearance.title, systemImage: appearance.icon).tag(appearance)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            Label(
+                "Системная тема следует за macOS. Настройка применяется сразу, включая окно настроек.",
+                systemImage: "info.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
     }
 
     private func providerAPIKeyBinding(_ provider: ProviderPreset) -> Binding<String> {
@@ -826,8 +854,8 @@ private struct SettingsCard<Content: View>: View {
         }
         .padding(19)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 15).stroke(WhispPalette.hairline))
+        .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(WhispPalette.hairline))
     }
 }
 

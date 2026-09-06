@@ -152,6 +152,48 @@ struct AnalysisResult: Codable, Hashable, Sendable {
     }
 }
 
+struct QuizProgress: Codable, Hashable, Sendable {
+    var answeredCorrectly: [Int] = []
+    var needsReview: [Int] = []
+    var revealedQuestions: [Int] = []
+    var revealedFlashcards: [Int] = []
+    var lastStudiedAt: Date?
+
+    var answeredQuestionIDs: Set<Int> {
+        Set(answeredCorrectly).union(needsReview)
+    }
+
+    var answeredQuestionCount: Int { answeredQuestionIDs.count }
+
+    mutating func markQuestion(_ id: Int, correct: Bool) {
+        answeredCorrectly.removeAll { $0 == id }
+        needsReview.removeAll { $0 == id }
+        if correct { answeredCorrectly.append(id) }
+        else { needsReview.append(id) }
+        answeredCorrectly.sort()
+        needsReview.sort()
+        lastStudiedAt = Date()
+    }
+
+    mutating func setQuestionRevealed(_ id: Int, revealed: Bool) {
+        revealedQuestions.removeAll { $0 == id }
+        if revealed { revealedQuestions.append(id) }
+        revealedQuestions.sort()
+        lastStudiedAt = Date()
+    }
+
+    mutating func setFlashcardRevealed(_ id: Int, revealed: Bool) {
+        revealedFlashcards.removeAll { $0 == id }
+        if revealed { revealedFlashcards.append(id) }
+        revealedFlashcards.sort()
+        lastStudiedAt = Date()
+    }
+
+    mutating func reset() {
+        self = QuizProgress()
+    }
+}
+
 struct LectureSession: Identifiable, Codable, Hashable, Sendable {
     var id = UUID()
     var createdAt = Date()
@@ -174,9 +216,11 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
     var notesMarkdown = ""
     var studentNotesMarkdown = ""
     var quizMarkdown = ""
+    var quizProgress = QuizProgress()
     var lastError: String?
     var syncedAt: Date?
     var remotePath: String?
+    var remoteETag: String?
     var userEditedFinal = false
     var userEditedNotes = false
     var userEditedStudentNotes = false
@@ -203,9 +247,11 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
         notesMarkdown: String = "",
         studentNotesMarkdown: String = "",
         quizMarkdown: String = "",
+        quizProgress: QuizProgress = QuizProgress(),
         lastError: String? = nil,
         syncedAt: Date? = nil,
         remotePath: String? = nil,
+        remoteETag: String? = nil,
         userEditedFinal: Bool = false,
         userEditedNotes: Bool = false,
         userEditedStudentNotes: Bool = false
@@ -231,9 +277,11 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
         self.notesMarkdown = notesMarkdown
         self.studentNotesMarkdown = studentNotesMarkdown
         self.quizMarkdown = quizMarkdown
+        self.quizProgress = quizProgress
         self.lastError = lastError
         self.syncedAt = syncedAt
         self.remotePath = remotePath
+        self.remoteETag = remoteETag
         self.userEditedFinal = userEditedFinal
         self.userEditedNotes = userEditedNotes
         self.userEditedStudentNotes = userEditedStudentNotes
@@ -262,9 +310,11 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
         notesMarkdown = try container.decodeIfPresent(String.self, forKey: .notesMarkdown) ?? ""
         studentNotesMarkdown = try container.decodeIfPresent(String.self, forKey: .studentNotesMarkdown) ?? ""
         quizMarkdown = try container.decodeIfPresent(String.self, forKey: .quizMarkdown) ?? ""
+        quizProgress = try container.decodeIfPresent(QuizProgress.self, forKey: .quizProgress) ?? QuizProgress()
         lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
         syncedAt = try container.decodeIfPresent(Date.self, forKey: .syncedAt)
         remotePath = try container.decodeIfPresent(String.self, forKey: .remotePath)
+        remoteETag = try container.decodeIfPresent(String.self, forKey: .remoteETag)
         userEditedFinal = try container.decodeIfPresent(Bool.self, forKey: .userEditedFinal) ?? false
         userEditedNotes = try container.decodeIfPresent(Bool.self, forKey: .userEditedNotes) ?? false
         userEditedStudentNotes = try container.decodeIfPresent(Bool.self, forKey: .userEditedStudentNotes) ?? false
@@ -324,6 +374,30 @@ struct WebDAVConfiguration: Codable, Hashable, Sendable {
     var rootFolder = ""
     var username = ""
     var password = ""
+}
+
+enum WhispAppearance: String, CaseIterable, Identifiable, Codable, Sendable {
+    case system
+    case light
+    case dark
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .system: "Системная"
+        case .light: "Светлая"
+        case .dark: "Тёмная"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .system: "circle.lefthalf.filled"
+        case .light: "sun.max"
+        case .dark: "moon"
+        }
+    }
 }
 
 /// A Gemini-compatible endpoint. The API key is deliberately kept in `KeychainStore`,
@@ -473,10 +547,11 @@ struct WhispSettings: Codable, Sendable {
     var hotkeyRecord = "⌥⌘R"
     var hotkeyFinish = "⌥⌘."
     var preferredMicrophoneID: UInt32?
+    var appearance: WhispAppearance = .system
 
     private enum CodingKeys: String, CodingKey {
         case subjects, customVocabulary, localRetentionDays, geminiModel, geminiLiveModel, analysisModel
-        case activeProviderID, providerConfigurations, hotkeyRecord, hotkeyFinish, preferredMicrophoneID
+        case activeProviderID, providerConfigurations, hotkeyRecord, hotkeyFinish, preferredMicrophoneID, appearance
     }
 
     init() {}
@@ -496,6 +571,7 @@ struct WhispSettings: Codable, Sendable {
         hotkeyRecord = try values.decodeIfPresent(String.self, forKey: .hotkeyRecord) ?? "⌥⌘R"
         hotkeyFinish = try values.decodeIfPresent(String.self, forKey: .hotkeyFinish) ?? "⌥⌘."
         preferredMicrophoneID = try values.decodeIfPresent(UInt32.self, forKey: .preferredMicrophoneID)
+        appearance = try values.decodeIfPresent(WhispAppearance.self, forKey: .appearance) ?? .system
     }
 
     static let defaultSubjects = [
