@@ -221,6 +221,19 @@ jobs:
             --notes-file dist/release-notes.md \
             "${RELEASE_FLAGS[@]}"
 
+      - name: Finalize changelog
+        if: success()
+        shell: bash
+        run: |
+          python3 scripts/finalize_changelog.py "$VERSION" --date "$(date -u +%Y-%m-%d)"
+          if git diff --quiet -- CHANGELOG.md; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "docs: finalize changelog for v$VERSION [skip ci]"
+          git push origin "HEAD:$GITHUB_REF_NAME"
       - name: Delete temporary keychain
         if: always()
         shell: bash

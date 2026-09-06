@@ -8,6 +8,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 import next_version
 import release_notes
+import finalize_changelog
 
 
 CHANGELOG = """# История
@@ -54,6 +55,12 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn("Первая альфа", result)
         self.assertIn("Кандидат", result)
         self.assertNotIn("Стабильный релиз", result)
+
+    def test_finalize_moves_unreleased_once(self):
+        result = finalize_changelog.finalize_changelog(CHANGELOG, "0.1.2-alpha.2", "2026-01-04")
+        self.assertIn("## [0.1.2-alpha.2] - 2026-01-04", result)
+        self.assertIn("## [Unreleased]", result)
+        self.assertNotIn("### Добавлено\\n\\n- Новая функция.", result.split("## [0.1.2-alpha.2]", 1)[0])
 
     @patch("next_version.tags", return_value=["v0.1.1", "v0.1.2-alpha.1"])
     def test_next_alpha_increments_existing_alpha(self, _tags):
