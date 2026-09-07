@@ -35,13 +35,14 @@ struct MainView: View {
                 .disabled(model.isRecording)
 
                 Toggle(isOn: $isInspectorPresented) {
-                    Label("Инспектор", systemImage: "sidebar.trailing")
+                    Image(systemName: "sidebar.trailing")
                 }
                 .toggleStyle(.button)
-                .buttonStyle(.borderless)
+                .buttonStyle(.glass)
                 .controlSize(.small)
                 .labelStyle(.iconOnly)
                 .tint(isInspectorPresented ? WhispPalette.accent : .primary)
+                .frame(width: 28, height: 28)
                 .help(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
                 .disabled(model.displayedSession == nil)
             }
