@@ -24,7 +24,16 @@ final class AppModel {
     let player = AudioPlayerController()
     let updateService = UpdateService()
 
-    var sessions: [LectureSession] = []
+    @ObservationIgnored private var librarySearchIndex = LibrarySearchIndex()
+    @ObservationIgnored private var librarySearchIndexNeedsRebuild = true
+
+    var sessions: [LectureSession] = [] {
+        didSet {
+            librarySearchIndexNeedsRebuild = true
+            librarySearchVersion &+= 1
+        }
+    }
+    private(set) var librarySearchVersion = 0
     var currentSession: LectureSession?
     var selectedSessionID: UUID?
     var statusMessage = "Готово к записи"
@@ -36,11 +45,14 @@ final class AppModel {
     var processingStartTime: Date?
     var showStopConfirmation = false
     var showSettings = false
+    var showOnboarding = false
     var recoverableSession: LectureSession?
     var showRecoveryPrompt = false
     var showBackfillPrompt = false
     var showBackfillComparison = false
     var showSyncConflict = false
+    var showPostUpdateScreen = false
+    private(set) var previousAppVersion = ""
     var syncConflictPath = ""
     var backfillBefore = ""
     var backfillAfter = ""
@@ -70,6 +82,8 @@ final class AppModel {
     private var persistRequested = false
     private var currentMixURL: URL?
     private var processingTask: Task<Void, Never>?
+    private let lastLaunchedVersionKey = "lastLaunchedVersion"
+    private let onboardingCompletedKey = "onboardingCompleted"
 
     init() {
         audioCapture.onSamples = { [weak self] samples, source in
@@ -128,6 +142,24 @@ final class AppModel {
     var displayedSession: LectureSession? {
         if let currentSession { return currentSession }
         return sessions.first { $0.id == selectedSessionID }
+    }
+
+    func matchingSessionIDs(for query: String) -> Set<UUID> {
+        if librarySearchIndexNeedsRebuild {
+            librarySearchIndex.rebuild(sessions: sessions)
+            librarySearchIndexNeedsRebuild = false
+        }
+        return librarySearchIndex.matchingIDs(for: query)
+    }
+
+    func completeOnboarding() {
+        UserDefaults.standard.set(true, forKey: onboardingCompletedKey)
+        showOnboarding = false
+        showStartScreen()
+    }
+
+    func skipOnboarding() {
+        completeOnboarding()
     }
 
     func showStartScreen() {
@@ -201,10 +233,20 @@ final class AppModel {
 
     func launch() async {
         guard !isRunningTests else { return }
-        showSettings = settingsStore.activeProviderAPIKeys.isEmpty || settingsStore.activeProviderEndpoint == nil
+        preparePostUpdateScreen()
+        let onboardingCompleted = UserDefaults.standard.bool(forKey: onboardingCompletedKey)
+        showOnboarding = false
+        showSettings = false
         refreshInputDevices()
         do {
             sessions = try await store.loadAll()
+            let needsInitialSetup = !onboardingCompleted
+                && sessions.isEmpty
+                && settingsStore.activeProviderAPIKeys.isEmpty
+                && settingsStore.activeProviderEndpoint == nil
+            showOnboarding = needsInitialSetup
+            showSettings = !needsInitialSetup
+                && (settingsStore.activeProviderAPIKeys.isEmpty || settingsStore.activeProviderEndpoint == nil)
             if let uploading = sessions.first(where: { $0.status == .uploading }) {
                 currentSession = uploading
                 selectedSessionID = uploading.id
@@ -227,6 +269,24 @@ final class AppModel {
                 await updateService.checkForUpdates(silent: true)
             }
         }
+    }
+
+    func dismissPostUpdateScreen() {
+        showPostUpdateScreen = false
+    }
+
+    private func preparePostUpdateScreen() {
+        let currentVersion = updateService.currentVersion
+        let defaults = UserDefaults.standard
+        let previousVersion = defaults.string(forKey: lastLaunchedVersionKey)
+
+        if let previousVersion = previousVersion,
+           UpdateService.isUpgrade(from: previousVersion, to: currentVersion) {
+            self.previousAppVersion = previousVersion
+            showPostUpdateScreen = true
+        }
+
+        defaults.set(currentVersion, forKey: lastLaunchedVersionKey)
     }
 
     func startRecording(captureSystemAudio: Bool = true) async {

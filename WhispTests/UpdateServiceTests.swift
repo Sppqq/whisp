@@ -15,6 +15,14 @@ final class UpdateServiceTests: XCTestCase {
         XCTAssertNil(AppVersion(""))
     }
 
+    func testPostUpdateScreenOnlyAppearsForARealUpgrade() {
+        XCTAssertTrue(UpdateService.isUpgrade(from: "1.1.10", to: "1.1.11"))
+        XCTAssertTrue(UpdateService.isUpgrade(from: "1.1.11-alpha.2", to: "1.1.11"))
+        XCTAssertFalse(UpdateService.isUpgrade(from: "1.1.11", to: "1.1.11"))
+        XCTAssertFalse(UpdateService.isUpgrade(from: nil, to: "1.1.11"))
+        XCTAssertFalse(UpdateService.isUpgrade(from: "latest", to: "1.1.11"))
+    }
+
     func testUpdateStateEquality() {
         let release = WhispRelease(
             version: "1.2.0",

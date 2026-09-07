@@ -560,6 +560,13 @@ final class UpdateService {
         if case .available = state { state = .idle }
     }
 
+    nonisolated static func isUpgrade(from previousVersion: String?, to currentVersion: String) -> Bool {
+        guard let previousVersion = previousVersion,
+              let previous = AppVersion(previousVersion),
+              let current = AppVersion(currentVersion) else { return false }
+        return current > previous
+    }
+
     private static func newestRelease(
         from releases: [GitHubRelease],
         newerThan current: String,
