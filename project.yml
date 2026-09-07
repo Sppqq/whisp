@@ -25,7 +25,8 @@ targets:
         excludes:
           - Resources/Info.plist
           - Resources/Whisp.entitlements
-    resources:
+      # XcodeGen auto-classifies the Markdown file as a bundle resource.
+      # Keeping it in sources avoids silently dropping a root-level resource.
       - path: CHANGELOG.md
     info:
       path: Whisp/Resources/Info.plist
