@@ -2,12 +2,10 @@ import Foundation
 
 actor WebDAVClient {
     enum WebDAVError: LocalizedError {
-        case invalidURL, writeNotSupported, unexpectedStatus(Int, String), verificationFailed(String)
+        case invalidURL, unexpectedStatus(Int, String), verificationFailed(String)
         var errorDescription: String? {
             switch self {
             case .invalidURL: "Некорректный адрес WebDAV"
-            case .writeNotSupported:
-                "WebDAV доступен для чтения, но сервер не разрешает запись методом PUT. Проверьте права удалённого хранилища; для rclone отключите режим --read-only."
             case .unexpectedStatus(let code, let message): "WebDAV вернул \(code): \(message)"
             case .verificationFailed(let path): "Не удалось проверить загруженный файл: \(path)"
             }
@@ -28,7 +26,6 @@ actor WebDAVClient {
     func checkConnection() async throws {
         let root = configuration.rootFolder.trimmingCharacters(in: .whitespacesAndNewlines)
         let url = try remoteURL(path: root)
-        try await checkWriteCapability(at: url)
         var request = authenticatedRequest(url: url, method: "PROPFIND")
         request.setValue("0", forHTTPHeaderField: "Depth")
         request.httpBody = Data("<?xml version=\"1.0\"?><propfind xmlns=\"DAV:\"><prop><displayname/></prop></propfind>".utf8)
@@ -39,6 +36,11 @@ actor WebDAVClient {
     func upload(session lecture: LectureSession, localDirectory: URL) async throws -> String {
         try await checkConnection()
         var remotePath = lecture.remotePath ?? WhispFormatting.lecturePath(for: lecture, root: configuration.rootFolder)
+        if remotePath.split(separator: "/").contains(where: { $0.utf8.count > 180 }) {
+            // Rebuild paths saved by older versions that limited characters
+            // rather than UTF-8 bytes and could exceed the filesystem limit.
+            remotePath = WhispFormatting.lecturePath(for: lecture, root: configuration.rootFolder)
+        }
         var pathAlreadyExists = false
         if lecture.remotePath == nil {
             pathAlreadyExists = try await exists(path: remotePath)
@@ -453,28 +455,6 @@ actor WebDAVClient {
            let value = http.value(forHTTPHeaderField: "Content-Length"),
            let actual = Int(value), actual != expectedLength {
             throw WebDAVError.verificationFailed(url.lastPathComponent)
-        }
-    }
-
-    private func checkWriteCapability(at url: URL) async throws {
-        let request = authenticatedRequest(url: url, method: "OPTIONS")
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { return }
-
-        // OPTIONS is optional for WebDAV clients. If it is not implemented,
-        // let PROPFIND below perform the connectivity check and let PUT be the
-        // final authority for servers that do not advertise Allow.
-        if [405, 501].contains(http.statusCode) { return }
-        try validate(response, data: data, accepted: [200, 204], request: request)
-
-        guard let allow = http.value(forHTTPHeaderField: "Allow") else { return }
-        let methods = Set(
-            allow.split(separator: ",").map {
-                String($0).trimmingCharacters(in: .whitespaces).uppercased()
-            }
-        )
-        if !methods.contains("PUT") {
-            throw WebDAVError.writeNotSupported
         }
     }
 
