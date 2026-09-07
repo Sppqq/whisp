@@ -42,6 +42,7 @@ struct OnboardingView: View {
                 if step > 0 {
                     Button("Назад") { step -= 1 }
                         .keyboardShortcut(.cancelAction)
+                        .buttonStyle(.glass)
                 }
 
                 Button(step == 2 ? "Перейти к первой записи" : "Продолжить") {
@@ -54,13 +55,14 @@ struct OnboardingView: View {
                         step += 1
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(WhispPalette.accent)
+                .buttonStyle(.glassProminent)
                 .keyboardShortcut(.defaultAction)
             }
-            .padding(24)
+            .padding(16)
+            .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
+            .padding(18)
         }
-        .frame(width: 680, height: 520)
+        .frame(width: 720, height: 560)
         .background(WhispPalette.canvas)
         .tint(WhispPalette.accent)
         .onAppear {
@@ -78,7 +80,7 @@ struct OnboardingView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("Лекция превращается в материал для учёбы")
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+                    .font(.system(size: 30, weight: .semibold))
                 Text("Whisp сохранит запись, подготовит расшифровку и поможет быстро проверить главное перед зачётом.")
                     .font(.body)
                     .foregroundStyle(.secondary)
@@ -102,7 +104,7 @@ struct OnboardingView: View {
             Spacer()
 
             Text("Подключите расшифровку")
-                .font(.system(size: 27, weight: .semibold, design: .rounded))
+                .font(.system(size: 27, weight: .semibold))
             Text("Для облачной расшифровки нужен ключ активного провайдера. На первом запуске используется Gemini. Ключ хранится локально в выбранном хранилище Whisp.")
                 .font(.body)
                 .foregroundStyle(.secondary)
@@ -123,7 +125,7 @@ struct OnboardingView: View {
                             Label("Проверить подключение", systemImage: "checkmark.shield")
                         }
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.glass)
                     .disabled(isTesting || geminiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     if !testMessage.isEmpty {
@@ -156,7 +158,7 @@ struct OnboardingView: View {
             Spacer()
 
             Text("Проверьте источник звука")
-                .font(.system(size: 27, weight: .semibold, design: .rounded))
+                .font(.system(size: 27, weight: .semibold))
             Text("Вы сможете изменить эти параметры позже. Для обычной лекции достаточно микрофона; запись системного звука нужна, если преподаватель или видео звучат через Mac.")
                 .font(.body)
                 .foregroundStyle(.secondary)
@@ -180,7 +182,7 @@ struct OnboardingView: View {
                 .frame(maxWidth: .infinity)
             }
             .padding(16)
-            .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
 
             Label("Перед отправкой в облако вы увидите и сможете отредактировать результат.", systemImage: "eye")
                 .font(.caption)

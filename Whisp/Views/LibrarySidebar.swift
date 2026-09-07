@@ -23,7 +23,6 @@ struct LibrarySidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            searchBar
             subjectFilters
 
             if model.isRestoringFromWebDAV {
@@ -93,7 +92,12 @@ struct LibrarySidebar: View {
             .padding(.horizontal, 17)
             .padding(.vertical, 14)
         }
-        .background(WhispPalette.sidebar)
+        .background(.clear)
+        .searchable(
+            text: $searchText,
+            placement: .sidebar,
+            prompt: "Поиск лекций"
+        )
         .task(id: searchTaskID) {
             let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty else {
@@ -112,102 +116,67 @@ struct LibrarySidebar: View {
     }
 
     private var header: some View {
-        HStack(spacing: 11) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(WhispPalette.accent)
-                Image(systemName: "waveform")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 34, height: 34)
-
+        HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
-                Text("Whisp")
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-                Text("лекции и конспекты")
+                Label("Whisp", systemImage: "waveform")
+                    .font(.headline.weight(.semibold))
+                Text("Лекции и конспекты")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
             Spacer()
 
-            Menu {
-                Button {
-                    Task { await model.restoreFromWebDAV() }
+            WhispGlassGroup {
+                Menu {
+                    Button {
+                        Task { await model.restoreFromWebDAV() }
+                    } label: {
+                        Label("Загрузить лекции из WebDAV...", systemImage: "icloud.and.arrow.down")
+                    }
+                    .disabled(model.isBusy)
+
+                    Button {
+                        model.showBatchRegenerateSheet = true
+                    } label: {
+                        Label("Перегенерировать все конспекты...", systemImage: "sparkles.rectangle.stack")
+                    }
+                    .disabled(model.isBusy)
+
+                    Divider()
+
+                    Button {
+                        model.revealInFinder()
+                    } label: {
+                        Label("Показать папки в Finder", systemImage: "folder")
+                    }
+
+                    Button {
+                        model.openInObsidian()
+                    } label: {
+                        Label("Открыть в Obsidian", systemImage: "arrow.up.forward.app")
+                    }
                 } label: {
-                    Label("Загрузить лекции из WebDAV...", systemImage: "icloud.and.arrow.down")
+                    Image(systemName: "ellipsis")
+                        .frame(width: 26, height: 26)
                 }
-                .disabled(model.isBusy)
+                .buttonStyle(.glass)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help("Действия с лекциями")
 
-                Button {
-                    model.showBatchRegenerateSheet = true
-                } label: {
-                    Label("Перегенерировать все конспекты...", systemImage: "sparkles.rectangle.stack")
+                Button { model.showStartScreen() } label: {
+                    Image(systemName: "plus")
+                        .frame(width: 26, height: 26)
                 }
-                .disabled(model.isBusy)
-
-                Divider()
-
-                Button {
-                    model.revealInFinder()
-                } label: {
-                    Label("Показать папки в Finder", systemImage: "folder")
-                }
-
-                Button {
-                    model.openInObsidian()
-                } label: {
-                    Label("Открыть в Obsidian", systemImage: "arrow.up.forward.app")
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .frame(width: 26, height: 26)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .background(WhispPalette.quietFill, in: RoundedRectangle(cornerRadius: 7))
-            .help("Действия с лекциями")
-
-            Button { model.showStartScreen() } label: {
-                Image(systemName: "plus").frame(width: 26, height: 26)
-            }
-            .buttonStyle(.plain)
-            .background(WhispPalette.quietFill, in: RoundedRectangle(cornerRadius: 7))
-            .help("Новая лекция или импорт")
-            .accessibilityLabel("Новая лекция или импорт")
-            .disabled(model.isRecording)
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 16)
-        .padding(.bottom, 10)
-    }
-
-    private var searchBar: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextField("Название, предмет, тег или текст", text: $searchText)
-                .textFieldStyle(.plain)
-                .font(.caption)
-                .accessibilityLabel("Поиск по библиотеке")
-            if !searchText.isEmpty {
-                Button { searchText = "" } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Очистить поиск")
+                .buttonStyle(.glassProminent)
+                .help("Новая лекция или импорт")
+                .accessibilityLabel("Новая лекция или импорт")
+                .disabled(model.isRecording)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 9)
-        .background(WhispPalette.quietFill, in: RoundedRectangle(cornerRadius: 7))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(WhispPalette.hairline, lineWidth: 1))
         .padding(.horizontal, 14)
-        .padding(.bottom, 8)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
     }
 
     @ViewBuilder
@@ -215,20 +184,27 @@ struct LibrarySidebar: View {
         let subjects = ["Все"] + Array(Set(model.sessions.map(\.subject).filter { $0 != "Не определено" && !$0.isEmpty })).sorted()
         if subjects.count > 1 {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    ForEach(subjects, id: \.self) { subject in
-                        Button { selectedSubject = subject } label: {
-                            Text(subject)
-                                .font(.caption2.weight(selectedSubject == subject ? .semibold : .regular))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(selectedSubject == subject ? WhispPalette.accent.opacity(0.15) : WhispPalette.quietFill, in: Capsule())
-                                .foregroundStyle(selectedSubject == subject ? WhispPalette.accent : .primary)
+                WhispGlassGroup {
+                    HStack(spacing: 5) {
+                        ForEach(subjects, id: \.self) { subject in
+                            Button { selectedSubject = subject } label: {
+                                Text(subject)
+                                    .font(.caption2.weight(selectedSubject == subject ? .semibold : .regular))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .foregroundStyle(selectedSubject == subject ? WhispPalette.accent : .primary)
+                            }
+                            .buttonStyle(.plain)
+                            .glassEffect(
+                                selectedSubject == subject
+                                    ? .regular.tint(WhispPalette.accent.opacity(0.12))
+                                    : .regular,
+                                in: .capsule
+                            )
                         }
-                        .buttonStyle(.plain)
                     }
+                    .padding(.horizontal, 14)
                 }
-                .padding(.horizontal, 14)
             }
             .padding(.bottom, 6)
         }
@@ -246,7 +222,7 @@ struct LibrarySidebar: View {
                     searchText = ""
                     selectedSubject = "Все"
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
             }
 
             if model.sessions.isEmpty {
@@ -256,7 +232,7 @@ struct LibrarySidebar: View {
                     Label(model.isRestoringFromWebDAV ? "Загрузка..." : "Загрузить из WebDAV", systemImage: "icloud.and.arrow.down")
                         .font(.caption)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 .controlSize(.small)
                 .disabled(model.isBusy)
             }

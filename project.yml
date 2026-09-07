@@ -2,12 +2,12 @@ name: Whisp
 options:
   bundleIdPrefix: app.whisp
   deploymentTarget:
-    macOS: "15.0"
+    macOS: "26.0"
 settings:
   base:
     SWIFT_VERSION: "5.0"
     SWIFT_STRICT_CONCURRENCY: targeted
-    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
     MARKETING_VERSION: "1.1.9"
     CURRENT_PROJECT_VERSION: "1"
     ARCHS: arm64

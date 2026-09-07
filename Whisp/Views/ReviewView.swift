@@ -143,7 +143,9 @@ struct ReviewView: View {
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 12)
-            .background(WhispPalette.panel)
+            .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 8)
 
             playerBar
 
@@ -350,14 +352,18 @@ struct ReviewView: View {
                 } label: {
                     Label("Экспорт", systemImage: "square.and.arrow.up")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
                 .controlSize(.large)
                 .help("Экспорт конспекта, аудиозаписи или печать")
 
                 Button { Task { await model.syncCurrent() } } label: { Label("Сохранить в Obsidian", systemImage: "icloud.and.arrow.up") }
-                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .buttonStyle(.glassProminent).controlSize(.large)
                     .disabled(model.currentSession?.status == .processing)
-            }.padding(18)
+            }
+            .padding(14)
+            .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
+            .padding(.horizontal, 18)
+            .padding(.bottom, 16)
         }
         .task { await model.loadPlayback(source: audioSource) }
         .onChange(of: audioSource) { Task { await model.loadPlayback(source: audioSource) } }
@@ -419,7 +425,7 @@ struct ReviewView: View {
             Button { model.player.toggle() } label: {
                 Image(systemName: model.player.isPlaying ? "pause.fill" : "play.fill").frame(width: 20)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.glassProminent)
             .controlSize(.small)
 
             Button {
@@ -453,7 +459,7 @@ struct ReviewView: View {
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .frame(width: 46)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.glass)
             .controlSize(.small)
             .help("Скорость воспроизведения")
 
@@ -463,7 +469,12 @@ struct ReviewView: View {
                     Label("Системный звук", systemImage: "waveform").tag(AudioSource.system)
                 }
             }.labelsHidden().frame(width: 120)
-        }.padding(.horizontal, 22).padding(.bottom, 12)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 10)
+        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 18)
+        .padding(.bottom, 8)
     }
 
     private var transcriptModeBanner: some View {
@@ -496,8 +507,10 @@ struct ReviewView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(isRaw ? WhispPalette.quietFill : WhispPalette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(WhispPalette.hairline))
+        .glassEffect(
+            .regular.tint(isRaw ? nil : WhispPalette.accent.opacity(0.08)),
+            in: .rect(cornerRadius: WhispMetrics.controlCornerRadius)
+        )
         .padding(.horizontal, 22)
         .padding(.bottom, 8)
     }

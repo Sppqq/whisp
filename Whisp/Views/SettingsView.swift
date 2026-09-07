@@ -1,6 +1,6 @@
 import SwiftUI
 
-private enum SettingsPage: String, CaseIterable, Identifiable {
+private enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
     case gemini = "Gemini"
     case audio = "Звук"
     case storage = "Хранилище"
@@ -25,7 +25,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @Bindable var model: AppModel
     @Bindable var store: SettingsStore
-    @State private var page: SettingsPage = .gemini
+    @State private var page: SettingsPage? = .gemini
     @State private var geminiKey = ""
     @State private var geminiKeys: [String] = []
     @State private var newKey = ""
@@ -45,48 +45,55 @@ struct SettingsView: View {
         self._store = Bindable(wrappedValue: model.settingsStore)
     }
 
+    private var selectedPage: SettingsPage { page ?? .gemini }
+
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Настройки Whisp").font(.title2.weight(.semibold))
-                    Text(pageSubtitle).font(.caption).foregroundStyle(.secondary)
+        NavigationSplitView {
+            List(SettingsPage.allCases, selection: $page) { item in
+                Label(item.rawValue, systemImage: item.icon)
+                    .tag(item)
+            }
+            .listStyle(.sidebar)
+            .navigationTitle("Whisp")
+            .navigationSplitViewColumnWidth(min: 180, ideal: 205, max: 240)
+        } detail: {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(selectedPage.rawValue)
+                            .font(.largeTitle.weight(.semibold))
+                        Text(pageSubtitle)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    pageContent
                 }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 5) {
+                .padding(30)
+                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
+            .background(WhispPalette.canvas)
+            .navigationTitle("Настройки")
+        }
+        .navigationSplitViewStyle(.balanced)
+        .background(WhispPalette.canvas)
+        .tint(WhispPalette.accent)
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                VStack(alignment: .trailing, spacing: 2) {
                     Text(appVersionLabel)
                         .font(.caption.monospacedDigit().weight(.medium))
                         .foregroundStyle(.secondary)
                     if !testResult.isEmpty {
                         Text(testResult)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(isSuccessfulTestResult ? Color.green : Color.red)
-                            .lineLimit(2).frame(maxWidth: 260, alignment: .trailing)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(isSuccessfulTestResult ? WhispPalette.success : .red)
+                            .lineLimit(1)
                     }
                 }
-            }.padding(.horizontal, 26).padding(.top, 22).padding(.bottom, 17)
-
-            HStack(spacing: 4) {
-                ForEach(SettingsPage.allCases) { item in
-                    Button {
-                        withAnimation(.easeOut(duration: 0.18)) { page = item; testResult = "" }
-                    } label: {
-                        Label(item.rawValue, systemImage: item.icon)
-                            .font(.caption.weight(.medium))
-                            .padding(.horizontal, 11).padding(.vertical, 7)
-                            .background(page == item ? Color.primary.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 8))
-                    }.buttonStyle(.plain)
-                }
-                Spacer()
-            }.padding(.horizontal, 22).padding(.bottom, 14)
-
-            Divider()
-            ScrollView {
-                pageContent.padding(26).frame(maxWidth: 660)
             }
         }
-        .background(WhispPalette.canvas)
-        .tint(WhispPalette.accent)
         .onAppear {
             geminiKeys = store.geminiAPIKeys
             geminiKey = store.geminiAPIKey
@@ -103,6 +110,7 @@ struct SettingsView: View {
             model.refreshInputDevices()
         }
         .onChange(of: geminiKeys) { invalidateGeminiStatus() }
+        .onChange(of: page) { testResult = "" }
         .onChange(of: store.settings.activeProviderID) {
             invalidateGeminiStatus()
             guard let provider = store.activeProviderPreset, provider != .gemini else { return }
@@ -129,7 +137,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var pageContent: some View {
-        switch page {
+        switch selectedPage {
         case .gemini: geminiPage
         case .audio: audioPage
         case .storage: storagePage
@@ -719,7 +727,7 @@ struct SettingsView: View {
     }
 
     private var pageSubtitle: String {
-        switch page {
+        switch selectedPage {
         case .gemini: "Модели, ключ и сетевое подключение"
         case .audio: "Источники записи"
         case .storage: "Obsidian и локальные файлы"
@@ -853,8 +861,7 @@ private struct SettingsCard<Content: View>: View {
         }
         .padding(19)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(WhispPalette.hairline))
+        .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
     }
 }
 

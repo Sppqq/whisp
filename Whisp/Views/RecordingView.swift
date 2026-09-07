@@ -37,8 +37,7 @@ struct RecordingView: View {
                     .font(.system(size: 15, weight: .medium))
                     .frame(width: 30, height: 30)
             }
-            .buttonStyle(.plain)
-            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            .buttonStyle(.glass)
             .help("Настройки")
 
             HStack(spacing: 10) {
@@ -57,9 +56,7 @@ struct RecordingView: View {
 
             RecordingStatePill(model: model)
         }
-        .padding(.horizontal, 24).padding(.vertical, 17)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .bottom) { Divider().opacity(0.5) }
+        .padding(.horizontal, 28).padding(.vertical, 18)
     }
 
     private var transcript: some View {
@@ -103,8 +100,7 @@ struct RecordingView: View {
             }
         }
         .frame(maxWidth: 920)
-        .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(WhispPalette.hairline))
+        .background(WhispPalette.content)
         .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 14)
         .overlay {
             if model.currentSession?.rawTranscript.isEmpty == true { listeningState }
@@ -149,18 +145,19 @@ struct RecordingView: View {
                     Label(model.isPaused ? "Продолжить" : "Пауза", systemImage: model.isPaused ? "play.fill" : "pause.fill")
                         .frame(minWidth: 102)
                 }
-                .buttonStyle(.borderedProminent).controlSize(.large).tint(WhispPalette.accent)
+                .buttonStyle(.glassProminent).controlSize(.large)
 
                 Button(role: .destructive) { model.showStopConfirmation = true } label: {
                     Label("Завершить", systemImage: "stop.fill").frame(minWidth: 102)
                 }
-                .buttonStyle(.bordered).controlSize(.large)
+                .buttonStyle(.glass).controlSize(.large)
             }
             Text(model.statusMessage).font(.caption).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 26).padding(.top, 15).padding(.bottom, 17)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) { Divider().opacity(0.5) }
+        .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
+        .padding(.horizontal, 18)
+        .padding(.bottom, 18)
     }
 
     private var selectedMicrophoneName: String {
@@ -202,7 +199,7 @@ private struct RecordingStatePill: View {
             }
             .foregroundStyle(.primary)
             .padding(.horizontal, 11).padding(.vertical, 7)
-            .background(color.opacity(0.12), in: Capsule())
+            .glassEffect(.regular.tint(color.opacity(0.12)).interactive(), in: .capsule)
         }
         .menuStyle(.borderlessButton)
         .help("Открыть состояние Gemini, Whisper, прокси и WebDAV")
