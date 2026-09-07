@@ -490,7 +490,7 @@ struct ReviewView: View {
 
             Spacer()
 
-            Text(isRaw ? "ИСТОЧНИК" : "ГОТОВЫЙ ТЕКСТ")
+            Text("ГОТОВЫЙ ТЕКСТ")
                 .font(.system(size: 9, weight: .semibold, design: .monospaced))
                 .tracking(0.7)
                 .foregroundStyle(tint)
@@ -498,7 +498,7 @@ struct ReviewView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .glassEffect(
-            .regular.tint(isRaw ? nil : WhispPalette.accent.opacity(0.08)),
+            .regular.tint(WhispPalette.accent.opacity(0.08)),
             in: .rect(cornerRadius: WhispMetrics.controlCornerRadius)
         )
         .padding(.horizontal, 22)
