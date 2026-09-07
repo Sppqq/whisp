@@ -66,6 +66,12 @@ class ReleaseNotesTests(unittest.TestCase):
     def test_next_alpha_increments_existing_alpha(self, _tags):
         self.assertEqual(next_version.next_version("alpha", "patch"), "0.1.2-alpha.2")
 
+    def test_prerelease_fallback_is_limited_to_changes_since_last_tag(self):
+        workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        self.assertIn("git describe --tags", workflow)
+        self.assertIn("$PREVIOUS_TAG..$GITHUB_SHA", workflow)
+        self.assertNotIn("git log --format='- %s' -20", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

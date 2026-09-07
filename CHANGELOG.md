@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Исправлено
+
+- Исправлен fallback changelog prerelease: при пустом `Unreleased` GitHub Release больше не получает старые коммиты из общей истории.
+
 ## [1.1.13-alpha.7] - 2026-09-07
 
 ### Исправлено
