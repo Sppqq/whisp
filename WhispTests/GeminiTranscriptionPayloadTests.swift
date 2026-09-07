@@ -39,6 +39,26 @@ final class GeminiTranscriptionPayloadTests: XCTestCase {
         XCTAssertTrue(try GeminiTranscriptionPayload.parse(Data(json.utf8), model: "test").isEmpty)
     }
 
+    func testCompletedEmptyInteractionIsAllowedAsSilentChunk() throws {
+        let json = #"{"status":"completed","output_text":"","steps":[]}"#
+        XCTAssertTrue(try GeminiTranscriptionPayload.parse(Data(json.utf8), model: "test").isEmpty)
+    }
+
+    func testTranscriptionResponseErrorsAreRetryable() {
+        XCTAssertTrue(GeminiAPIError(
+            code: -1,
+            status: "TRANSCRIPTION",
+            message: "empty",
+            retryAfter: nil
+        ).isRetryableTranscriptionResponse)
+        XCTAssertFalse(GeminiAPIError(
+            code: 401,
+            status: "API_KEY",
+            message: "invalid key",
+            retryAfter: nil
+        ).isRetryableTranscriptionResponse)
+    }
+
     func testTimestampValidation() {
         XCTAssertEqual(GeminiTranscriptionPayload.seconds("1.250s"), 1.25)
         XCTAssertEqual(GeminiTranscriptionPayload.seconds(0.0), 0)

@@ -267,17 +267,25 @@ actor GeminiAPIClient {
             try Task.checkCancellation()
             do {
                 return try await performTranscribe(audioURL: audioURL, model: model, onStatus: onStatus)
-            } catch let error as GeminiAPIError where error.isRateLimitOrQuota {
+            } catch let error as GeminiAPIError where error.isRateLimitOrQuota || error.isRetryableTranscriptionResponse {
                 lastError = error
                 if attempt == maxAttempts { throw error }
 
                 if let rotation = rotateToNextKey() {
-                    await onStatus?("Лимит квоты на ключе #\(rotation.previousIndex). Переключаемся на ключ #\(rotation.index) из \(rotation.total)...")
+                    if error.isRateLimitOrQuota {
+                        await onStatus?("Лимит квоты на ключе #\(rotation.previousIndex). Переключаемся на ключ #\(rotation.index) из \(rotation.total)...")
+                    } else {
+                        await onStatus?("Gemini вернул неполный ответ. Повторяем фрагмент на ключе #\(rotation.index) из \(rotation.total)...")
+                    }
                     try? await Task.sleep(for: .milliseconds(500))
                 } else {
-                    let delay = max(3.0, (error.retryAfter ?? 10.0) + 1.0)
+                    let delay = error.isRateLimitOrQuota ? max(3.0, (error.retryAfter ?? 10.0) + 1.0) : 1.0
                     let delayFormatted = String(format: "%.1f", delay)
-                    await onStatus?("Превышен лимит запросов Google API. Ожидание \(delayFormatted) сек перед повтором...")
+                    if error.isRateLimitOrQuota {
+                        await onStatus?("Превышен лимит запросов Google API. Ожидание \(delayFormatted) сек перед повтором...")
+                    } else {
+                        await onStatus?("Gemini вернул неполный ответ. Повтор через \(delayFormatted) сек...")
+                    }
                     try await Task.sleep(for: .seconds(delay))
                 }
             }
