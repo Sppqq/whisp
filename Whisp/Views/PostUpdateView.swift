@@ -112,25 +112,27 @@ struct PostUpdateView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if releaseChanges.isEmpty {
-                Text("Полный changelog этой сборки не найден в приложении.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(releaseChanges.indices, id: \.self) { index in
-                        let change = releaseChanges[index]
-                        PostUpdateChangeRow(change: change)
+            Group {
+                if releaseChanges.isEmpty {
+                    Text("Полный changelog этой сборки не найден в приложении.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(releaseChanges.indices, id: \.self) { index in
+                            let change = releaseChanges[index]
+                            PostUpdateChangeRow(change: change)
 
-                        if index < releaseChanges.count - 1 {
-                            Divider()
-                                .padding(.leading, 36)
+                            if index < releaseChanges.count - 1 {
+                                Divider()
+                                    .padding(.leading, 36)
+                            }
                         }
                     }
+                    .padding(.horizontal, 14)
                 }
-                .padding(.horizontal, 14)
             }
             .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(WhispPalette.hairline))
