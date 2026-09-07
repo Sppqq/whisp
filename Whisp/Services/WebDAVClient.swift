@@ -24,12 +24,13 @@ actor WebDAVClient {
     }
 
     func checkConnection() async throws {
-        let url = try baseURL()
+        let root = configuration.rootFolder.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = try remoteURL(path: root)
         var request = authenticatedRequest(url: url, method: "PROPFIND")
         request.setValue("0", forHTTPHeaderField: "Depth")
         request.httpBody = Data("<?xml version=\"1.0\"?><propfind xmlns=\"DAV:\"><prop><displayname/></prop></propfind>".utf8)
         let (data, response) = try await session.data(for: request)
-        try validate(response, data: data, accepted: [200, 207])
+        try validate(response, data: data, accepted: [200, 207], request: request)
     }
 
     func upload(session lecture: LectureSession, localDirectory: URL) async throws -> String {
@@ -101,7 +102,7 @@ actor WebDAVClient {
         let url = try remoteURL(path: remotePath)
         let request = authenticatedRequest(url: url, method: "GET")
         let (data, response) = try await session.data(for: request)
-        try validate(response, data: data, accepted: [200])
+        try validate(response, data: data, accepted: [200], request: request)
         return data
     }
 
@@ -379,7 +380,7 @@ actor WebDAVClient {
         let url = try remoteURL(path: path)
         let request = authenticatedRequest(url: url, method: "DELETE")
         let (data, response) = try await session.data(for: request)
-        try validate(response, data: data, accepted: [200, 204, 404])
+        try validate(response, data: data, accepted: [200, 204, 404], request: request)
     }
 
     private func exists(path: String) async throws -> Bool {
@@ -388,7 +389,7 @@ actor WebDAVClient {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { return false }
         if http.statusCode == 404 { return false }
-        try validate(response, data: data, accepted: [200, 207])
+        try validate(response, data: data, accepted: [200, 207], request: request)
         return true
     }
 
@@ -400,58 +401,42 @@ actor WebDAVClient {
             var request = authenticatedRequest(url: url, method: "MKCOL")
             request.httpBody = Data()
             let (data, response) = try await session.data(for: request)
-            try validate(response, data: data, accepted: [201, 204, 301, 405])
+            try validate(response, data: data, accepted: [201, 204, 301, 405], request: request)
         }
     }
 
+    /// Upload directly to the final path. MOVE is optional in practice and
+    /// simple WebDAV servers often answer 405 for temporary-file promotion.
     private func atomicUpload(fileURL: URL, remotePath: String) async throws {
         let finalURL = try remoteURL(path: remotePath)
-        let temporaryURL = try remoteURL(path: remotePath + ".whisp-uploading")
-        var put = authenticatedRequest(url: temporaryURL, method: "PUT")
+        let put = authenticatedRequest(url: finalURL, method: "PUT")
         let (_, response) = try await session.upload(for: put, fromFile: fileURL)
-        try validate(response, data: nil, accepted: [200, 201, 204])
-        try await move(from: temporaryURL, to: finalURL, fallbackFile: fileURL)
+        try validate(response, data: nil, accepted: [200, 201, 204], request: put)
         try await verify(url: finalURL, expectedLength: (try FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? NSNumber)?.intValue)
     }
 
     private func atomicUpload(data: Data, remotePath: String, expectedETag: String? = nil) async throws {
         let finalURL = try remoteURL(path: remotePath)
-        let temporaryURL = try remoteURL(path: remotePath + ".whisp-uploading")
-        var put = authenticatedRequest(url: temporaryURL, method: "PUT")
+        var put = authenticatedRequest(url: finalURL, method: "PUT")
         put.httpBody = data
+        if let expectedETag {
+            put.setValue(expectedETag, forHTTPHeaderField: "If-Match")
+        }
         let (responseData, response) = try await session.data(for: put)
-        try validate(response, data: responseData, accepted: [200, 201, 204])
-        try await move(from: temporaryURL, to: finalURL, fallbackData: data, expectedETag: expectedETag)
+        try validate(response, data: responseData, accepted: [200, 201, 204], request: put)
         try await verify(url: finalURL, expectedLength: data.count)
     }
 
-    private func move(from source: URL, to destination: URL, fallbackData: Data? = nil, fallbackFile: URL? = nil, expectedETag: String? = nil) async throws {
-        var move = authenticatedRequest(url: source, method: "MOVE")
-        move.setValue(destination.absoluteString, forHTTPHeaderField: "Destination")
-        move.setValue("T", forHTTPHeaderField: "Overwrite")
-        if let expectedETag { move.setValue(expectedETag, forHTTPHeaderField: "If-Match") }
-        let (data, response) = try await session.data(for: move)
-        if let http = response as? HTTPURLResponse, [200, 201, 204].contains(http.statusCode) { return }
-        if let http = response as? HTTPURLResponse, http.statusCode == 412 { throw WebDAVError.unexpectedStatus(412, "Удалённая версия изменилась во время синхронизации") }
-
-        if let fallbackFile {
-            var put = authenticatedRequest(url: destination, method: "PUT")
-            let (_, fallbackResponse) = try await session.upload(for: put, fromFile: fallbackFile)
-            try validate(fallbackResponse, data: nil, accepted: [200, 201, 204])
-        } else if let fallbackData {
-            var put = authenticatedRequest(url: destination, method: "PUT")
-            put.httpBody = fallbackData
-            let (fallbackBody, fallbackResponse) = try await session.data(for: put)
-            try validate(fallbackResponse, data: fallbackBody, accepted: [200, 201, 204])
-        } else {
-            try validate(response, data: data, accepted: [200, 201, 204])
-        }
-    }
-
     private func verify(url: URL, expectedLength: Int?) async throws {
-        var request = authenticatedRequest(url: url, method: "HEAD")
+        let request = authenticatedRequest(url: url, method: "HEAD")
         let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse else {
+            throw WebDAVError.verificationFailed(url.lastPathComponent)
+        }
+        // HEAD is optional on a few lightweight WebDAV implementations. The
+        // successful PUT above is enough to accept the upload in that case.
+        if [405, 501].contains(http.statusCode) { return }
+        guard (200..<300).contains(http.statusCode) else {
             throw WebDAVError.verificationFailed(url.lastPathComponent)
         }
         if let expectedLength,
@@ -484,11 +469,15 @@ actor WebDAVClient {
         return request
     }
 
-    private func validate(_ response: URLResponse, data: Data?, accepted: [Int]) throws {
+    private func validate(_ response: URLResponse, data: Data?, accepted: [Int], request: URLRequest? = nil) throws {
         guard let http = response as? HTTPURLResponse else { return }
         guard accepted.contains(http.statusCode) else {
             let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            throw WebDAVError.unexpectedStatus(http.statusCode, String(body.prefix(240)))
+            let method = request?.httpMethod ?? "HTTP"
+            let path = request?.url?.path ?? ""
+            let allow = http.value(forHTTPHeaderField: "Allow").map { "; Allow: \($0)" } ?? ""
+            let operation = "[\(method) \(path)\(allow)]"
+            throw WebDAVError.unexpectedStatus(http.statusCode, "\(String(body.prefix(240))) \(operation)")
         }
     }
 }

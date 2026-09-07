@@ -25,6 +25,8 @@ targets:
         excludes:
           - Resources/Info.plist
           - Resources/Whisp.entitlements
+    resources:
+      - path: CHANGELOG.md
     info:
       path: Whisp/Resources/Info.plist
       properties:
