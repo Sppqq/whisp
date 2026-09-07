@@ -24,24 +24,26 @@ struct MainView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                WhispGlassGroup {
-                    Button {
-                        model.showStartScreen()
-                    } label: {
-                        Label("Новая лекция", systemImage: "plus")
-                    }
-                    .buttonStyle(.glassProminent)
-                    .keyboardShortcut("n", modifiers: .command)
-                    .disabled(model.isRecording)
-
-                    Button {
-                        isInspectorPresented.toggle()
-                    } label: {
-                        Label("Инспектор", systemImage: "sidebar.trailing")
-                    }
-                    .buttonStyle(.glass)
-                    .disabled(model.displayedSession == nil)
+                Button {
+                    model.showStartScreen()
+                } label: {
+                    Label("Новая лекция", systemImage: "plus")
                 }
+                .buttonStyle(.glassProminent)
+                .controlSize(.small)
+                .keyboardShortcut("n", modifiers: .command)
+                .disabled(model.isRecording)
+
+                Toggle(isOn: $isInspectorPresented) {
+                    Label("Инспектор", systemImage: "sidebar.trailing")
+                }
+                .toggleStyle(.button)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .labelStyle(.iconOnly)
+                .tint(isInspectorPresented ? WhispPalette.accent : .primary)
+                .help(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
+                .disabled(model.displayedSession == nil)
             }
         }
         .alert("Завершить лекцию?", isPresented: $model.showStopConfirmation) {
