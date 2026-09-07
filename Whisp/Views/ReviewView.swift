@@ -96,7 +96,6 @@ struct ReviewView: View {
                     Text("Разбор").tag("notes")
                     Text("К зачёту").tag("quiz")
                     Label("Стенограмма", systemImage: "text.quote").tag("final")
-                    Label("Сырой звук", systemImage: "waveform").tag("raw")
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -149,7 +148,7 @@ struct ReviewView: View {
 
             playerBar
 
-            if tab == "final" || tab == "raw" {
+            if tab == "final" {
                 transcriptModeBanner
             }
 
@@ -279,11 +278,6 @@ struct ReviewView: View {
                             }
                         }
                     }
-                case "raw": transcriptEditor(
-                    segments: model.currentSession?.rawTranscript ?? [],
-                    binding: Binding(get: { model.currentSession?.rawMarkdown ?? "" }, set: { model.updateReview(raw: $0) }),
-                    inRawTranscript: true
-                )
                 default: transcriptEditor(
                     segments: model.currentSession?.finalTranscript ?? [],
                     binding: Binding(get: { model.currentSession?.finalMarkdown ?? "" }, set: { model.updateReview(final: $0) }),
@@ -394,7 +388,6 @@ struct ReviewView: View {
         case "student": return model.currentSession?.studentNotesMarkdown ?? ""
         case "notes": return model.currentSession?.notesMarkdown ?? ""
         case "quiz": return model.currentSession?.quizMarkdown ?? ""
-        case "raw": return model.currentSession?.rawMarkdown ?? ""
         default: return model.currentSession?.finalMarkdown ?? ""
         }
     }
@@ -478,13 +471,10 @@ struct ReviewView: View {
     }
 
     private var transcriptModeBanner: some View {
-        let isRaw = tab == "raw"
-        let tint = isRaw ? Color.secondary : WhispPalette.accent
-        let title = isRaw ? "Сырой звук" : "Стенограмма"
-        let detail = isRaw
-            ? "Исходная расшифровка для сверки с записью"
-            : "Очищенный текст лекции для чтения и правок"
-        let icon = isRaw ? "waveform" : "text.quote"
+        let tint = WhispPalette.accent
+        let title = "Стенограмма"
+        let detail = "Очищенный текст лекции для чтения и правок"
+        let icon = "text.quote"
 
         return HStack(spacing: 10) {
             Image(systemName: icon)
