@@ -4,9 +4,10 @@ import UniformTypeIdentifiers
 struct MainView: View {
     @Bindable var model: AppModel
     @State private var isInspectorPresented = false
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             LibrarySidebar(model: model)
                 .navigationSplitViewColumnWidth(min: 240, ideal: 270, max: 340)
         } detail: {
@@ -18,11 +19,26 @@ struct MainView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .tint(WhispPalette.accent)
+        .buttonStyle(.glass)
         .inspector(isPresented: $isInspectorPresented) {
             SessionInspectorView(model: model)
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 340)
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    withAnimation {
+                        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.glass)
+                .help(columnVisibility == .detailOnly ? "Показать библиотеку" : "Скрыть библиотеку")
+                .accessibilityLabel(columnVisibility == .detailOnly ? "Показать библиотеку" : "Скрыть библиотеку")
+            }
+
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     model.showStartScreen()
@@ -35,6 +51,9 @@ struct MainView: View {
                 Toggle(isOn: $isInspectorPresented) {
                     Label("Инспектор", systemImage: "sidebar.trailing")
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                 .help(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
                 .disabled(model.displayedSession == nil)
             }
@@ -192,7 +211,7 @@ struct MainView: View {
                         Label("Показать процесс", systemImage: "waveform.badge.magnifyingglass")
                             .font(.caption)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.glass)
                     .controlSize(.small)
                 }
                 .padding(.horizontal, 16)
@@ -240,7 +259,7 @@ private struct FailedSessionView: View {
                 Button("Проверить подключение Gemini") {
                     Task { _ = await model.testAllGeminiKeys() }
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.glass)
                 .font(.caption)
             }
             HStack(spacing: 10) {
@@ -343,7 +362,7 @@ private struct ProcessingView: View {
                 }
                 .padding(10)
                 .frame(width: 520, alignment: .leading)
-                .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 10))
+                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
             }
 
             if !recentSegments.isEmpty {
@@ -357,8 +376,7 @@ private struct ProcessingView: View {
                     }
                 }
                 .padding(14).frame(width: 520, alignment: .leading)
-                .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WhispPalette.hairline))
+                .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
@@ -374,7 +392,7 @@ private struct ProcessingView: View {
                         .font(.caption2.monospacedDigit())
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(WhispPalette.hairline, in: Capsule())
+                        .glassEffect(.regular, in: .capsule)
                         .foregroundStyle(.tertiary)
 
                     Spacer()
@@ -387,7 +405,7 @@ private struct ProcessingView: View {
                         Label("Копировать", systemImage: "doc.on.doc")
                             .font(.caption2)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.glass)
 
                     Button {
                         withAnimation(.snappy(duration: 0.2)) {
@@ -398,11 +416,11 @@ private struct ProcessingView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.glass)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(WhispPalette.panel)
+                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
 
                 if isLogExpanded {
                     Divider()
@@ -439,9 +457,7 @@ private struct ProcessingView: View {
                 }
             }
             .frame(width: 520)
-            .background(WhispPalette.elevated)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(WhispPalette.hairline))
+            .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
 
             HStack(spacing: 12) {
                 Button(role: .destructive) {
@@ -450,7 +466,7 @@ private struct ProcessingView: View {
                     Label("Отменить обработку", systemImage: "xmark.circle")
                         .font(.callout)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
                 .controlSize(.regular)
             }
             .padding(.top, 2)
@@ -540,6 +556,7 @@ private struct StartView: View {
                             }
                             .labelsHidden()
                             .frame(maxWidth: .infinity)
+                            .whispGlassControl()
                         }
 
                         VStack(alignment: .leading, spacing: 8) {
@@ -553,6 +570,7 @@ private struct StartView: View {
                             }
                             .labelsHidden()
                             .pickerStyle(.segmented)
+                            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                             Text(captureMode == .microphone
                                  ? "Записывается только микрофон."
                                  : "Микрофон и звук приложений сохранятся отдельными дорожками.")
@@ -677,7 +695,7 @@ struct BatchRegenerateSheet: View {
                             .font(.title3)
                             .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.glass)
                 }
             }
             .padding(.horizontal, 24)
@@ -720,8 +738,7 @@ struct BatchRegenerateSheet: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.orange.opacity(0.25), lineWidth: 1))
+            .glassEffect(.regular.tint(Color.orange.opacity(0.12)), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
 
             HStack(spacing: 12) {
                 metricCard(title: "Найдено лекций", value: "\(eligibleSessions.count)", icon: "books.vertical")
@@ -735,7 +752,7 @@ struct BatchRegenerateSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .background(WhispPalette.panel, in: RoundedRectangle(cornerRadius: 8))
+            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
 
             Spacer()
 
@@ -746,7 +763,7 @@ struct BatchRegenerateSheet: View {
 
                 HStack {
                     TextField("ПЕРЕГЕНЕРИРОВАТЬ", text: $confirmationInput)
-                        .textFieldStyle(.roundedBorder)
+                        .whispGlassField()
                         .font(.system(.body, design: .monospaced))
 
                     if isConfirmed {
@@ -772,7 +789,7 @@ struct BatchRegenerateSheet: View {
                 } label: {
                     Label("Начать перегенерацию...", systemImage: "sparkles")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 .tint(Color.red)
                 .disabled(!isConfirmed || eligibleSessions.isEmpty)
             }
@@ -805,7 +822,7 @@ struct BatchRegenerateSheet: View {
                 }
             }
             .padding(14)
-            .background(WhispPalette.panel, in: RoundedRectangle(cornerRadius: 10))
+            .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
 
             HStack(spacing: 16) {
                 HStack(spacing: 6) {
@@ -845,8 +862,7 @@ struct BatchRegenerateSheet: View {
                         .padding(8)
                     }
                     .frame(maxHeight: .infinity)
-                    .background(Color(nsColor: .textBackgroundColor).opacity(0.8), in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(WhispPalette.hairline, lineWidth: 1))
+                    .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                     .onChange(of: model.batchLogs.count) {
                         if let last = model.batchLogs.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
@@ -864,7 +880,7 @@ struct BatchRegenerateSheet: View {
                 } label: {
                     Label("Остановить", systemImage: "stop.fill")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
             }
         }
         .padding(24)
@@ -884,6 +900,6 @@ struct BatchRegenerateSheet: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .background(WhispPalette.panel, in: RoundedRectangle(cornerRadius: 8))
+        .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
     }
 }

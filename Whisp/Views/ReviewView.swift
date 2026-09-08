@@ -17,7 +17,7 @@ struct ReviewView: View {
                 TextField("Название пары", text: Binding(
                     get: { model.currentSession?.title ?? "" },
                     set: { model.updateReview(title: $0) }
-                )).font(.title2.bold()).textFieldStyle(.plain)
+                )).font(.title2.bold()).whispGlassField()
                 if hasManualEdits {
                     Label("Есть ручные правки", systemImage: "pencil.circle.fill")
                         .font(.caption)
@@ -30,7 +30,9 @@ struct ReviewView: View {
                 )) {
                     Text("Не определено").tag("Не определено")
                     ForEach(model.activeSubjects, id: \.self) { Text($0).tag($0) }
-                }.frame(width: 260)
+                }
+                .frame(width: 260)
+                .whispGlassControl()
             }.padding(.horizontal, 22).padding(.top, 20).padding(.bottom, 8)
 
             // Tags & Key Concepts Bar
@@ -43,7 +45,7 @@ struct ReviewView: View {
                                 .font(.caption2.weight(.medium))
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
-                                .background(WhispPalette.accent.opacity(0.12), in: Capsule())
+                                .glassEffect(.regular.tint(WhispPalette.accent.opacity(0.12)), in: .capsule)
                                 .foregroundStyle(WhispPalette.accent)
                         }
                     }
@@ -53,7 +55,7 @@ struct ReviewView: View {
                                 .font(.caption2)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
-                                .background(Color.primary.opacity(0.06), in: Capsule())
+                                .glassEffect(.regular, in: .capsule)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -73,7 +75,7 @@ struct ReviewView: View {
                         .foregroundStyle(.secondary)
                     ForEach(alternatives.prefix(3), id: \.self) { subject in
                         Button(subject) { model.updateReview(subject: subject) }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.glass)
                             .controlSize(.small)
                     }
                     Spacer()
@@ -87,7 +89,9 @@ struct ReviewView: View {
                     Label("Часть лекции распознана локально", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
                     Spacer()
                     Button("Проверить Gemini") { Task { await model.backfillNow() } }
-                }.padding(12).background(Color.orange.opacity(0.12))
+                }
+                .padding(12)
+                .glassEffect(.regular.tint(Color.orange.opacity(0.12)), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
             }
 
             VStack(alignment: .leading, spacing: 12) {
@@ -99,6 +103,7 @@ struct ReviewView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
 
                 HStack(spacing: 10) {
                     if tab != "quiz" || quizViewMode == "markdown" {
@@ -109,6 +114,7 @@ struct ReviewView: View {
                         .pickerStyle(.segmented)
                         .labelsHidden()
                         .frame(width: 170)
+                        .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                     }
 
                     Button {
@@ -122,7 +128,7 @@ struct ReviewView: View {
                     } label: {
                         Label(copied ? "Скопировано" : "Копировать", systemImage: copied ? "checkmark" : "doc.on.doc")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.glass)
                     .controlSize(.small)
                     .help("Скопировать Markdown в буфер обмена")
 
@@ -134,7 +140,7 @@ struct ReviewView: View {
                         } label: {
                             Label(model.currentSession?.analysis == nil ? "Создать" : "Перегенерировать", systemImage: "sparkles")
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.glass)
                         .controlSize(.small)
                         .disabled(model.isGeneratingNotes)
                         .help("Перегенерировать конспекты через Gemini")
@@ -162,7 +168,7 @@ struct ReviewView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(WhispPalette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 4)
             }
@@ -185,11 +191,11 @@ struct ReviewView: View {
                                 Button("Сгенерировать конспекты") {
                                     Task { await model.regenerateAnalysis(forceOverwriteNotes: true) }
                                 }
-                                .buttonStyle(.borderedProminent)
+                                .buttonStyle(.glassProminent)
                                 .controlSize(.small)
                             }
                             .padding(10)
-                            .background(WhispPalette.canvas.opacity(0.7))
+                            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                         }
                         editor(binding: Binding(get: { model.currentSession?.studentNotesMarkdown ?? "" }, set: { model.updateReview(studentNotes: $0) }))
                     }
@@ -205,11 +211,11 @@ struct ReviewView: View {
                                 Button("Сгенерировать конспекты") {
                                     Task { await model.regenerateAnalysis(forceOverwriteNotes: true) }
                                 }
-                                .buttonStyle(.borderedProminent)
+                                .buttonStyle(.glassProminent)
                                 .controlSize(.small)
                             }
                             .padding(10)
-                            .background(WhispPalette.canvas.opacity(0.7))
+                            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                         }
                         editor(binding: Binding(get: { model.currentSession?.notesMarkdown ?? "" }, set: { model.updateReview(notes: $0) }))
                     }
@@ -242,7 +248,7 @@ struct ReviewView: View {
                                             .padding(.horizontal, 10)
                                             .padding(.vertical, 6)
                                     }
-                                    .buttonStyle(.borderedProminent)
+                                    .buttonStyle(.glassProminent)
                                     .controlSize(.large)
                                     .padding(.top, 10)
                                 }
@@ -266,19 +272,20 @@ struct ReviewView: View {
                                     .pickerStyle(.segmented)
                                     .labelsHidden()
                                     .frame(width: 200)
+                                    .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
 
                                     Button {
                                         Task { await model.generateQuiz() }
                                     } label: {
                                         Label("Перегенерировать", systemImage: "arrow.clockwise")
                                     }
-                                    .buttonStyle(.bordered)
+                                    .buttonStyle(.glass)
                                     .controlSize(.small)
                                     .disabled(model.isGeneratingQuiz)
                                 }
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
-                                .background(WhispPalette.canvas.opacity(0.7))
+                                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
 
                                 if quizViewMode == "interactive" {
                                     InteractiveQuizView(
@@ -314,7 +321,7 @@ struct ReviewView: View {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.glass)
                     .help("Отменить обработку")
                 }
                 Text(model.statusMessage).font(.caption).foregroundStyle(.secondary)
@@ -381,6 +388,7 @@ struct ReviewView: View {
         .task { await model.loadPlayback(source: audioSource) }
         .onChange(of: audioSource) { Task { await model.loadPlayback(source: audioSource) } }
         .background(WhispPalette.canvas)
+        .buttonStyle(.glass)
         .sheet(item: $editingSegment) { segment in
             TranscriptSegmentEditor(
                 segment: segment,
@@ -430,7 +438,7 @@ struct ReviewView: View {
             } label: {
                 Image(systemName: "gobackward.15")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.glass)
             .font(.system(size: 13))
             .help("Назад на 15 секунд")
 
@@ -445,7 +453,7 @@ struct ReviewView: View {
             } label: {
                 Image(systemName: "goforward.15")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.glass)
             .font(.system(size: 13))
             .help("Вперёд на 15 секунд")
 
@@ -480,7 +488,10 @@ struct ReviewView: View {
                 if model.currentSession?.captureSystemAudio == true {
                     Label("Системный звук", systemImage: "waveform").tag(AudioSource.system)
                 }
-            }.labelsHidden().frame(width: 120)
+            }
+            .labelsHidden()
+            .frame(width: 120)
+            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 10)
@@ -500,7 +511,7 @@ struct ReviewView: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(tint)
                 .frame(width: 30, height: 30)
-                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .glassEffect(.regular.tint(tint.opacity(0.12)), in: .rect(cornerRadius: 8))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.caption.weight(.semibold))
@@ -541,7 +552,7 @@ struct ReviewView: View {
                                 .foregroundStyle(.secondary)
                                 .font(.caption)
                             TextField("Поиск по стенограмме...", text: $transcriptFilter)
-                                .textFieldStyle(.plain)
+                                .whispGlassField()
                                 .font(.caption)
                             if !transcriptFilter.isEmpty {
                                 Button {
@@ -551,13 +562,12 @@ struct ReviewView: View {
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.glass)
                             }
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(Color(nsColor: .controlBackgroundColor))
-                        .overlay(Divider(), alignment: .bottom)
+                        .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
 
                         let filtered = transcriptFilter.trimmingCharacters(in: .whitespaces).isEmpty
                             ? segments
@@ -592,7 +602,7 @@ struct ReviewView: View {
                                                 .monospacedDigit()
                                         }
                                     }
-                                    .buttonStyle(.link)
+                                    .buttonStyle(.glass)
                                     .font(.caption.weight(isCurrent ? .bold : .regular))
                                     .help("Перейти к \(WhispFormatting.timestamp(segment.start)) в аудиозаписи")
                                     .accessibilityLabel("Перейти к \(WhispFormatting.timestamp(segment.start)) в аудиозаписи")
@@ -696,18 +706,17 @@ private struct TranscriptSegmentEditor: View {
             }
 
             TextField("Спикер (необязательно)", text: $speaker)
-                .textFieldStyle(.roundedBorder)
+                .whispGlassField()
 
             TextEditor(text: $text)
                 .font(.body)
                 .padding(8)
                 .scrollContentBackground(.hidden)
-                .background(WhispPalette.quietFill, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(WhispPalette.hairline))
+                .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
 
             HStack {
                 Button("Объединить со следующей", action: onMerge)
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.glass)
                     .foregroundStyle(WhispPalette.accent)
                     .disabled(!canMerge)
                 Spacer()
@@ -716,7 +725,7 @@ private struct TranscriptSegmentEditor: View {
                 Button("Сохранить") {
                     onSave(text, speaker)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -954,7 +963,7 @@ struct InteractiveQuizView: View {
                             .tint(WhispPalette.accent)
                     }
                     .padding(12)
-                    .background(WhispPalette.quietFill, in: RoundedRectangle(cornerRadius: 10))
+                    .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                 }
 
                 // Questions Section
@@ -975,7 +984,7 @@ struct InteractiveQuizView: View {
                                     progress = updated
                                 }
                             }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(.glass)
                             .font(.caption)
                             .foregroundStyle(WhispPalette.accent)
                         }
@@ -1005,7 +1014,7 @@ struct InteractiveQuizView: View {
                                         Label(isRevealed ? "Скрыть ответ" : "Показать ответ", systemImage: isRevealed ? "eye.slash" : "eye")
                                             .font(.caption)
                                     }
-                                    .buttonStyle(.bordered)
+                                    .buttonStyle(.glass)
                                     .controlSize(.small)
                                 }
 
@@ -1025,11 +1034,7 @@ struct InteractiveQuizView: View {
                                     }
                                     .padding(12)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .strokeBorder(Color.green.opacity(0.2), lineWidth: 1)
-                                    )
+                                    .glassEffect(.regular.tint(Color.green.opacity(0.1)), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
                                     .transition(.opacity.combined(with: .move(edge: .top)))
                                 }
 
@@ -1044,7 +1049,7 @@ struct InteractiveQuizView: View {
                                     } label: {
                                         Label("Знаю", systemImage: "checkmark")
                                     }
-                                    .buttonStyle(.bordered)
+                                    .buttonStyle(.glass)
                                     .controlSize(.small)
                                     .tint(.green)
 
@@ -1055,7 +1060,7 @@ struct InteractiveQuizView: View {
                                     } label: {
                                         Label("Повторить", systemImage: "arrow.counterclockwise")
                                     }
-                                    .buttonStyle(.bordered)
+                                    .buttonStyle(.glass)
                                     .controlSize(.small)
                                     .tint(.orange)
 
@@ -1067,7 +1072,7 @@ struct InteractiveQuizView: View {
                                 }
                             }
                             .padding(14)
-                            .background(WhispPalette.panel, in: RoundedRectangle(cornerRadius: 10))
+                            .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
                         }
                     }
                 }
@@ -1090,7 +1095,7 @@ struct InteractiveQuizView: View {
                                     progress = updated
                                 }
                             }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(.glass)
                             .font(.caption)
                             .foregroundStyle(WhispPalette.accent)
                         }
@@ -1123,7 +1128,7 @@ struct InteractiveQuizView: View {
                                 }
                                 .padding(12)
                                 .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
-                                .background(WhispPalette.panel, in: RoundedRectangle(cornerRadius: 8))
+                                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -1188,7 +1193,7 @@ struct InteractiveQuizView: View {
                             }
                             .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(WhispPalette.panel.opacity(0.72), in: RoundedRectangle(cornerRadius: 10))
+                            .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
                         }
                     }
                 }
@@ -1213,7 +1218,7 @@ struct BackfillComparisonView: View {
             HStack {
                 Button("Отмена") { model.showBackfillComparison = false }
                 Spacer()
-                Button("Принять Gemini") { Task { await model.acceptBackfill() } }.buttonStyle(.borderedProminent)
+                Button("Принять Gemini") { Task { await model.acceptBackfill() } }.buttonStyle(.glassProminent)
             }
         }.padding(22)
     }

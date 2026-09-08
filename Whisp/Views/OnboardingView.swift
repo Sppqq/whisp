@@ -35,7 +35,7 @@ struct OnboardingView: View {
                 Button("Пропустить настройку") {
                     model.skipOnboarding()
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.glass)
 
                 Spacer()
 
@@ -65,6 +65,7 @@ struct OnboardingView: View {
         .frame(width: 720, height: 560)
         .background(WhispPalette.canvas)
         .tint(WhispPalette.accent)
+        .buttonStyle(.glass)
         .onAppear {
             geminiKey = model.settingsStore.geminiAPIKey
         }
@@ -112,7 +113,7 @@ struct OnboardingView: View {
 
             if model.settingsStore.usesGemini {
                 SecureField("Gemini API key", text: $geminiKey)
-                    .textFieldStyle(.roundedBorder)
+                    .whispGlassField()
                     .onChange(of: geminiKey) { _, _ in testMessage = "" }
 
                 HStack(spacing: 12) {
@@ -180,6 +181,7 @@ struct OnboardingView: View {
                 }
                 .labelsHidden()
                 .frame(maxWidth: .infinity)
+                .whispGlassControl()
             }
             .padding(16)
             .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))

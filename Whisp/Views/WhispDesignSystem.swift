@@ -2,9 +2,9 @@ import SwiftUI
 
 /// Native macOS 26+ visual language for Whisp.
 ///
-/// Liquid Glass is intentionally reserved for navigation, controls and
-/// transient functional surfaces. The lecture text itself stays calm and
-/// legible on a standard content material.
+/// Liquid Glass is the shared visual language for navigation, controls and
+/// functional surfaces. Long-form lecture text stays on a calm content layer
+/// so the material remains legible instead of becoming a wall of reflections.
 enum WhispPalette {
     static let accent = Color.accentColor
     static let recording = Color.red
@@ -26,6 +26,7 @@ enum WhispMetrics {
     static let controlCornerRadius: CGFloat = 12
     static let surfaceCornerRadius: CGFloat = 16
     static let contentWidth: CGFloat = 760
+    static let glassFieldHeight: CGFloat = 34
 }
 
 struct WhispGlassSurface<Content: View>: View {
@@ -86,5 +87,25 @@ struct WhispGlassDivider: View {
             .fill(WhispPalette.hairline)
             .frame(height: 1)
             .allowsHitTesting(false)
+    }
+}
+
+extension View {
+    /// Applies the same interactive Liquid Glass treatment to form controls.
+    /// Keeping this in one modifier prevents a mixture of rounded borders,
+    /// opaque fills and glass controls across the settings and review flows.
+    func whispGlassControl(cornerRadius: CGFloat = WhispMetrics.controlCornerRadius) -> some View {
+        glassEffect(
+            .regular.interactive(),
+            in: .rect(cornerRadius: cornerRadius)
+        )
+    }
+
+    /// A plain text field with the app-wide Liquid Glass field treatment.
+    func whispGlassField() -> some View {
+        textFieldStyle(.plain)
+            .padding(.horizontal, 10)
+            .frame(minHeight: WhispMetrics.glassFieldHeight)
+            .whispGlassControl()
     }
 }

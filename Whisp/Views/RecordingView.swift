@@ -20,6 +20,9 @@ struct RecordingView: View {
                 Toggle("Следить за текстом", isOn: $followsTranscript)
                     .toggleStyle(.switch)
                     .controlSize(.small)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                     .help("Выключите, чтобы читать предыдущие реплики без автоматической прокрутки")
             }
             .padding(.horizontal, 30)
@@ -28,6 +31,7 @@ struct RecordingView: View {
             controlDock
         }
         .background(WhispPalette.canvas)
+        .buttonStyle(.glass)
     }
 
     private var header: some View {

@@ -50,8 +50,7 @@ struct PostUpdateView: View {
                     .foregroundStyle(.secondary)
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(WhispPalette.quietFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(WhispPalette.hairline))
+                    .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
                 }
                 .padding(24)
             }
@@ -64,13 +63,14 @@ struct PostUpdateView: View {
                     onDismiss()
                     dismiss()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 .controlSize(.large)
             }
             .padding(18)
         }
         .background(WhispPalette.canvas)
         .tint(WhispPalette.accent)
+        .buttonStyle(.glass)
         .frame(minWidth: 760, minHeight: 560)
     }
 
@@ -80,7 +80,7 @@ struct PostUpdateView: View {
                 .font(.system(size: 32, weight: .medium))
                 .foregroundStyle(WhispPalette.accent)
                 .frame(width: 56, height: 56)
-                .background(WhispPalette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .whispGlassControl(cornerRadius: WhispMetrics.surfaceCornerRadius)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Обновление завершено")
@@ -134,8 +134,7 @@ struct PostUpdateView: View {
                     .padding(.horizontal, 14)
                 }
             }
-            .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(WhispPalette.hairline))
+            .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
         }
     }
 
@@ -250,7 +249,7 @@ private struct PostUpdateHighlight: View {
                 .font(.system(size: 19, weight: .medium))
                 .foregroundStyle(tint)
                 .frame(width: 36, height: 36)
-                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.headline)
@@ -264,7 +263,6 @@ private struct PostUpdateHighlight: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, minHeight: 164, alignment: .topLeading)
-        .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(WhispPalette.hairline))
+        .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
     }
 }

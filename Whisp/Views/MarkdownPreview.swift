@@ -208,14 +208,14 @@ private struct MarkdownPreviewBlockView: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(WhispPalette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            .glassEffect(.regular.tint(WhispPalette.accent.opacity(0.1)), in: .rect(cornerRadius: WhispMetrics.controlCornerRadius))
         case .attachment(let name):
             Label(MarkdownDisplayFormatting.cleanWikiText(name), systemImage: "paperclip")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(WhispPalette.panel, in: RoundedRectangle(cornerRadius: 9))
+                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
         case .divider:
             Divider().opacity(0.55).padding(.vertical, 4)
         }

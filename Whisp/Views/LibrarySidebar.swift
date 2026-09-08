@@ -36,7 +36,7 @@ struct LibrarySidebar: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(WhispPalette.accent.opacity(0.12))
+                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
             }
 
             List(selection: $model.selectedSessionID) {
@@ -85,7 +85,7 @@ struct LibrarySidebar: View {
                     Label("Настройки", systemImage: "gearshape")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.glass)
                 Spacer()
                 Text("⌘,").font(.caption.monospaced()).foregroundStyle(.tertiary)
             }
@@ -93,6 +93,8 @@ struct LibrarySidebar: View {
             .padding(.vertical, 14)
         }
         .background(.clear)
+        .buttonStyle(.glass)
+        .toolbar(removing: .sidebarToggle)
         .searchable(
             text: $searchText,
             placement: .sidebar,
@@ -195,7 +197,7 @@ struct LibrarySidebar: View {
                                     .padding(.vertical, 3)
                                     .foregroundStyle(selectedSubject == subject ? WhispPalette.accent : .primary)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.glass)
                             .glassEffect(
                                 selectedSubject == subject
                                     ? .regular.tint(WhispPalette.accent.opacity(0.12))

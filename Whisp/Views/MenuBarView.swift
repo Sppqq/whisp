@@ -22,6 +22,8 @@ struct MenuBarView: View {
                 if model.isRecording { model.showStopConfirmation = true; NSApp.activate(ignoringOtherApps: true) }
                 else { NSApp.terminate(nil) }
             }
-        }.padding(4)
+        }
+        .padding(4)
+        .buttonStyle(.glass)
     }
 }
