@@ -29,20 +29,12 @@ struct MainView: View {
                 } label: {
                     Label("Новая лекция", systemImage: "plus")
                 }
-                .buttonStyle(.glassProminent)
-                .controlSize(.small)
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(model.isRecording)
 
                 Toggle(isOn: $isInspectorPresented) {
-                    Image(systemName: "sidebar.trailing")
+                    Label("Инспектор", systemImage: "sidebar.trailing")
                 }
-                .toggleStyle(.button)
-                .buttonStyle(.glass)
-                .controlSize(.small)
-                .labelStyle(.iconOnly)
-                .tint(isInspectorPresented ? WhispPalette.accent : .primary)
-                .frame(width: 28, height: 28)
                 .help(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
                 .disabled(model.displayedSession == nil)
             }

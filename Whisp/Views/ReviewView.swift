@@ -136,6 +136,7 @@ struct ReviewView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .disabled(model.isGeneratingNotes)
                         .help("Перегенерировать конспекты через Gemini")
                     }
                 }
@@ -148,6 +149,24 @@ struct ReviewView: View {
 
             playerBar
 
+            if model.isGeneratingNotes {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(model.statusMessage)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(WhispPalette.accent)
+                    Spacer()
+                    Text("\(Int(model.processingProgress * 100))%")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(WhispPalette.accent)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(WhispPalette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                .padding(.horizontal, 18)
+                .padding(.vertical, 4)
+            }
+
             if tab == "final" {
                 transcriptModeBanner
             }
@@ -156,7 +175,7 @@ struct ReviewView: View {
                 switch tab {
                 case "student":
                     VStack(spacing: 0) {
-                        if model.currentSession?.analysis == nil || (model.currentSession?.lastError != nil) {
+                        if !model.isGeneratingNotes && (model.currentSession?.analysis == nil || (model.currentSession?.lastError != nil)) {
                             HStack {
                                 Image(systemName: "sparkles")
                                     .foregroundStyle(WhispPalette.accent)
@@ -176,7 +195,7 @@ struct ReviewView: View {
                     }
                 case "notes":
                     VStack(spacing: 0) {
-                        if model.currentSession?.analysis == nil || (model.currentSession?.lastError != nil) {
+                        if !model.isGeneratingNotes && (model.currentSession?.analysis == nil || (model.currentSession?.lastError != nil)) {
                             HStack {
                                 Image(systemName: "sparkles")
                                     .foregroundStyle(WhispPalette.accent)

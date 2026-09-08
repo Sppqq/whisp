@@ -127,51 +127,52 @@ struct LibrarySidebar: View {
             Spacer()
 
             WhispGlassGroup {
-                Menu {
-                    Button {
-                        Task { await model.restoreFromWebDAV() }
-                    } label: {
-                        Label("Загрузить лекции из WebDAV...", systemImage: "icloud.and.arrow.down")
-                    }
-                    .disabled(model.isBusy)
+                HStack(spacing: 8) {
+                    Menu {
+                        Button {
+                            Task { await model.restoreFromWebDAV() }
+                        } label: {
+                            Label("Загрузить лекции из WebDAV...", systemImage: "icloud.and.arrow.down")
+                        }
+                        .disabled(model.isBusy)
 
-                    Button {
-                        model.showBatchRegenerateSheet = true
-                    } label: {
-                        Label("Перегенерировать все конспекты...", systemImage: "sparkles.rectangle.stack")
-                    }
-                    .disabled(model.isBusy)
+                        Button {
+                            model.showBatchRegenerateSheet = true
+                        } label: {
+                            Label("Перегенерировать все конспекты...", systemImage: "sparkles.rectangle.stack")
+                        }
+                        .disabled(model.isBusy)
 
-                    Divider()
+                        Divider()
 
-                    Button {
-                        model.revealInFinder()
-                    } label: {
-                        Label("Показать папки в Finder", systemImage: "folder")
-                    }
+                        Button {
+                            model.revealInFinder()
+                        } label: {
+                            Label("Показать папки в Finder", systemImage: "folder")
+                        }
 
-                    Button {
-                        model.openInObsidian()
+                        Button {
+                            model.openInObsidian()
+                        } label: {
+                            Label("Открыть в Obsidian", systemImage: "arrow.up.forward.app")
+                        }
                     } label: {
-                        Label("Открыть в Obsidian", systemImage: "arrow.up.forward.app")
+                        Image(systemName: "ellipsis")
+                            .frame(width: 26, height: 26)
                     }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .frame(width: 26, height: 26)
+                    .buttonStyle(.glass)
+                    .menuIndicator(.hidden)
+                    .help("Действия с лекциями")
+
+                    Button { model.showStartScreen() } label: {
+                        Image(systemName: "plus")
+                            .frame(width: 26, height: 26)
+                    }
+                    .buttonStyle(.glass)
+                    .help("Новая лекция или импорт")
+                    .accessibilityLabel("Новая лекция или импорт")
+                    .disabled(model.isRecording)
                 }
-                .buttonStyle(.glass)
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .help("Действия с лекциями")
-
-                Button { model.showStartScreen() } label: {
-                    Image(systemName: "plus")
-                        .frame(width: 26, height: 26)
-                }
-                .buttonStyle(.glassProminent)
-                .help("Новая лекция или импорт")
-                .accessibilityLabel("Новая лекция или импорт")
-                .disabled(model.isRecording)
             }
         }
         .padding(.horizontal, 14)
@@ -185,7 +186,7 @@ struct LibrarySidebar: View {
         if subjects.count > 1 {
             ScrollView(.horizontal, showsIndicators: false) {
                 WhispGlassGroup {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 8) {
                         ForEach(subjects, id: \.self) { subject in
                             Button { selectedSubject = subject } label: {
                                 Text(subject)
