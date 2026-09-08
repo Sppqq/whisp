@@ -108,7 +108,7 @@ struct SettingsView: View {
                 .accessibilityLabel(columnVisibility == .detailOnly ? "Показать боковую панель" : "Скрыть боковую панель")
             }
 
-            ToolbarItem(placement: .automatic) {
+            ToolbarItem(placement: .primaryAction) {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(appVersionLabel)
                         .font(.caption.monospacedDigit().weight(.medium))
@@ -318,6 +318,7 @@ struct SettingsView: View {
                                 .font(.system(.caption, design: .monospaced))
                                 .frame(height: 80)
                                 .padding(4)
+                                .scrollContentBackground(.hidden)
                                 .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                             HStack {
                                 Button("Применить список") {
@@ -401,9 +402,10 @@ struct SettingsView: View {
                                 .whispGlassField()
                             HStack {
                                 TextField("Модель расшифровки", text: $provider.transcriptionModel)
+                                    .whispGlassField()
                                 TextField("Модель для конспекта", text: $provider.analysisModel)
+                                    .whispGlassField()
                             }
-                            .whispGlassField()
                             SecureField("API key", text: Binding(
                                 get: { customProviderKeys[provider.id.uuidString] ?? "" },
                                 set: { customProviderKeys[provider.id.uuidString] = $0 }
@@ -448,7 +450,7 @@ struct SettingsView: View {
                         .whispGlassField()
                     TextField("Порт", value: $store.proxy.port, format: .number.grouping(.never))
                         .frame(width: 92)
-                        .whispGlassControl()
+                        .whispGlassField()
                 }
                 HStack {
                     TextField("Логин", text: $store.proxy.username)
@@ -472,9 +474,10 @@ struct SettingsView: View {
                         .whispGlassField()
                     HStack {
                         TextField("Модель расшифровки", text: providerConfigurationBinding(provider, keyPath: \.transcriptionModel))
+                            .whispGlassField()
                         TextField("Модель для конспекта", text: providerConfigurationBinding(provider, keyPath: \.analysisModel))
+                            .whispGlassField()
                     }
-                    .whispGlassField()
                     SecureField("API key", text: providerAPIKeyBinding(provider))
                     .whispGlassField()
 
@@ -645,12 +648,12 @@ struct SettingsView: View {
             LabeledContent("Старт, пауза, продолжение") {
                 TextField("⌥⌘R", text: $store.settings.hotkeyRecord)
                     .frame(width: 150)
-                    .whispGlassControl()
+                    .whispGlassField()
             }
             LabeledContent("Завершение") {
                 TextField("⌥⌘.", text: $store.settings.hotkeyFinish)
                     .frame(width: 150)
-                    .whispGlassControl()
+                    .whispGlassField()
             }
             HStack {
                 Text("Используйте символы ⌘, ⌥, ⌃, ⇧ и одну клавишу.").font(.caption).foregroundStyle(.secondary)

@@ -255,7 +255,7 @@ struct ReviewView: View {
                                 Spacer()
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(Color(nsColor: .textBackgroundColor))
+                            .background(WhispPalette.content)
                         } else {
                             VStack(spacing: 0) {
                                 HStack(spacing: 12) {
@@ -441,12 +441,14 @@ struct ReviewView: View {
             .buttonStyle(.glass)
             .font(.system(size: 13))
             .help("Назад на 15 секунд")
+            .accessibilityLabel("Назад на 15 секунд")
 
             Button { model.player.toggle() } label: {
                 Image(systemName: model.player.isPlaying ? "pause.fill" : "play.fill").frame(width: 20)
             }
             .buttonStyle(.glassProminent)
             .controlSize(.small)
+            .accessibilityLabel(model.player.isPlaying ? "Пауза" : "Воспроизвести")
 
             Button {
                 model.player.skip(by: 15)
@@ -456,6 +458,7 @@ struct ReviewView: View {
             .buttonStyle(.glass)
             .font(.system(size: 13))
             .help("Вперёд на 15 секунд")
+            .accessibilityLabel("Вперёд на 15 секунд")
 
             Text(WhispFormatting.timestamp(model.player.currentTime)).monospacedDigit().font(.caption)
             Slider(value: Binding(get: { model.player.currentTime }, set: { model.player.seek(to: $0) }), in: 0...max(1, model.player.duration))
@@ -643,6 +646,9 @@ struct ReviewView: View {
                                 }
                                 .id(segment.id)
                             }
+                            .listStyle(.inset)
+                            .scrollContentBackground(.hidden)
+                            .background(WhispPalette.content)
                             .onChange(of: model.player.currentTime) { _, newTime in
                                 guard model.player.isPlaying else { return }
                                 if let current = filtered.first(where: { newTime >= $0.start && newTime <= $0.end }) {
@@ -670,7 +676,7 @@ struct ReviewView: View {
                     .font(.system(.body, design: .monospaced))
                     .padding(12)
                     .scrollContentBackground(.hidden)
-                    .background(Color(nsColor: .textBackgroundColor))
+                    .background(WhispPalette.content)
             }
         }
     }
@@ -710,9 +716,7 @@ private struct TranscriptSegmentEditor: View {
 
             TextEditor(text: $text)
                 .font(.body)
-                .padding(8)
-                .scrollContentBackground(.hidden)
-                .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
+                .whispGlassEditor()
 
             HStack {
                 Button("Объединить со следующей", action: onMerge)
@@ -1200,7 +1204,7 @@ struct InteractiveQuizView: View {
             }
             .padding(20)
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(WhispPalette.content)
     }
 }
 
@@ -1208,18 +1212,63 @@ struct InteractiveQuizView: View {
 
 struct BackfillComparisonView: View {
     @Bindable var model: AppModel
+
     var body: some View {
-        VStack(spacing: 14) {
-            Text("Сравнение дорасшифровки").font(.title.bold())
-            HSplitView {
-                VStack(alignment: .leading) { Text("До: Whisper").font(.headline); TextEditor(text: .constant(model.backfillBefore)).font(.system(.caption, design: .monospaced)) }
-                VStack(alignment: .leading) { Text("После: Gemini").font(.headline); TextEditor(text: .constant(model.backfillAfter)).font(.system(.caption, design: .monospaced)) }
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(WhispPalette.accent)
+                    .frame(width: 38, height: 38)
+                    .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Сравнение дорасшифровки")
+                        .font(.title3.weight(.semibold))
+                    Text("Проверьте фрагменты Whisper перед заменой на результат Gemini.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
             }
+            .padding(20)
+
+            WhispGlassDivider()
+
+            HSplitView {
+                comparisonPane(title: "До: локальный Whisper", text: model.backfillBefore)
+                comparisonPane(title: "После: Gemini", text: model.backfillAfter)
+            }
+            .padding(18)
+
+            WhispGlassDivider()
+
             HStack {
                 Button("Отмена") { model.showBackfillComparison = false }
+                    .buttonStyle(.glass)
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Принять Gemini") { Task { await model.acceptBackfill() } }.buttonStyle(.glassProminent)
+                Button("Принять Gemini") { Task { await model.acceptBackfill() } }
+                    .buttonStyle(.glassProminent)
+                    .keyboardShortcut(.defaultAction)
             }
-        }.padding(22)
+            .padding(18)
+        }
+        .frame(minWidth: 900, minHeight: 600)
+        .background(WhispPalette.canvas)
+        .tint(WhispPalette.accent)
+        .buttonStyle(.glass)
+    }
+
+    private func comparisonPane(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+            TextEditor(text: .constant(text))
+                .font(.system(.caption, design: .monospaced))
+                .whispGlassEditor(cornerRadius: WhispMetrics.controlCornerRadius)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }

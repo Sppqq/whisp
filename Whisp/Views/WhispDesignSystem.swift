@@ -27,6 +27,10 @@ enum WhispMetrics {
     static let surfaceCornerRadius: CGFloat = 16
     static let contentWidth: CGFloat = 760
     static let glassFieldHeight: CGFloat = 34
+    static let windowMinWidth: CGFloat = 1_120
+    static let windowMinHeight: CGFloat = 720
+    static let settingsMinWidth: CGFloat = 900
+    static let settingsMinHeight: CGFloat = 700
 }
 
 struct WhispGlassSurface<Content: View>: View {
@@ -107,5 +111,13 @@ extension View {
             .padding(.horizontal, 10)
             .frame(minHeight: WhispMetrics.glassFieldHeight)
             .whispGlassControl()
+    }
+
+    /// A multiline field that keeps the native editor background transparent
+    /// so it can sit cleanly on top of a Liquid Glass surface.
+    func whispGlassEditor(cornerRadius: CGFloat = WhispMetrics.controlCornerRadius) -> some View {
+        scrollContentBackground(.hidden)
+            .padding(8)
+            .whispGlassControl(cornerRadius: cornerRadius)
     }
 }

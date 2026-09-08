@@ -28,7 +28,7 @@ struct MarkdownPreview: View {
             .padding(.vertical, 28)
             .frame(maxWidth: .infinity, alignment: .center)
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(WhispPalette.content)
         .textSelection(.enabled)
     }
 }

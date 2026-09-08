@@ -7,7 +7,7 @@ struct WhispApp: App {
     var body: some Scene {
         WindowGroup("Whisp", id: "main") {
             MainView(model: model)
-                .frame(minWidth: 1_120, minHeight: 720)
+                .frame(minWidth: WhispMetrics.windowMinWidth, minHeight: WhispMetrics.windowMinHeight)
                 .preferredColorScheme(preferredColorScheme)
                 .task { await model.launch() }
         }
@@ -16,7 +16,7 @@ struct WhispApp: App {
 
         Settings {
             SettingsView(model: model)
-                .frame(width: 900, height: 700)
+                .frame(minWidth: WhispMetrics.settingsMinWidth, minHeight: WhispMetrics.settingsMinHeight)
                 .preferredColorScheme(preferredColorScheme)
         }
     }

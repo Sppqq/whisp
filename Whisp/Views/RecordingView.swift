@@ -43,6 +43,7 @@ struct RecordingView: View {
             }
             .buttonStyle(.glass)
             .help("Настройки")
+            .accessibilityLabel("Настройки")
 
             HStack(spacing: 10) {
                 Circle()
@@ -207,6 +208,8 @@ private struct RecordingStatePill: View {
         }
         .menuStyle(.borderlessButton)
         .help("Открыть состояние Gemini, Whisper, прокси и WebDAV")
+        .accessibilityLabel("Состояние сервисов")
+        .accessibilityValue(title)
     }
 }
 
@@ -260,7 +263,7 @@ private struct LevelMeter: View {
                 Capsule().fill(Color.primary.opacity(0.08)).overlay(alignment: .leading) {
                     Capsule()
                         .fill(value > 0.82 ? Color.red : WhispPalette.accent)
-                        .frame(width: max(3, geometry.size.width * CGFloat(value)))
+                        .frame(width: max(3, geometry.size.width * min(max(CGFloat(value), 0), 1)))
                         .animation(.linear(duration: 0.08), value: value)
                 }
             }.frame(width: 112, height: 5)

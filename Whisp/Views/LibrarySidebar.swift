@@ -165,6 +165,7 @@ struct LibrarySidebar: View {
                     .buttonStyle(.glass)
                     .menuIndicator(.hidden)
                     .help("Действия с лекциями")
+                    .accessibilityLabel("Действия с лекциями")
 
                     Button { model.showStartScreen() } label: {
                         Image(systemName: "plus")
@@ -190,20 +191,7 @@ struct LibrarySidebar: View {
                 WhispGlassGroup {
                     HStack(spacing: 8) {
                         ForEach(subjects, id: \.self) { subject in
-                            Button { selectedSubject = subject } label: {
-                                Text(subject)
-                                    .font(.caption2.weight(selectedSubject == subject ? .semibold : .regular))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .foregroundStyle(selectedSubject == subject ? WhispPalette.accent : .primary)
-                            }
-                            .buttonStyle(.glass)
-                            .glassEffect(
-                                selectedSubject == subject
-                                    ? .regular.tint(WhispPalette.accent.opacity(0.12))
-                                    : .regular,
-                                in: .capsule
-                            )
+                            subjectFilterButton(subject)
                         }
                     }
                     .padding(.horizontal, 14)
@@ -216,9 +204,18 @@ struct LibrarySidebar: View {
     @ViewBuilder
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(model.sessions.isEmpty ? "Нет сохранённых лекций" : "Нет подходящих лекций")
+            Label(
+                model.sessions.isEmpty ? "Нет сохранённых лекций" : "Нет подходящих лекций",
+                systemImage: model.sessions.isEmpty ? "rectangle.stack" : "magnifyingglass"
+            )
+            .font(.callout.weight(.semibold))
+
+            Text(model.sessions.isEmpty
+                 ? "Начните новую запись или загрузите лекции из WebDAV."
+                 : "Измените запрос или сбросьте фильтры, чтобы увидеть другие лекции.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             if !model.sessions.isEmpty {
                 Button("Сбросить фильтры") {
@@ -240,7 +237,32 @@ struct LibrarySidebar: View {
                 .disabled(model.isBusy)
             }
         }
-        .padding(.vertical, 8)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+            .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
+    }
+
+    @ViewBuilder
+    private func subjectFilterButton(_ subject: String) -> some View {
+        if selectedSubject == subject {
+            Button { selectedSubject = subject } label: {
+                Text(subject)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+            }
+            .buttonStyle(.glassProminent)
+            .controlSize(.small)
+        } else {
+            Button { selectedSubject = subject } label: {
+                Text(subject)
+                    .font(.caption2)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+            }
+            .buttonStyle(.glass)
+            .controlSize(.small)
+        }
     }
 }
 
@@ -250,9 +272,10 @@ private struct LectureRow: View {
 
     private var statusColor: Color {
         switch session.status {
-        case .synced: .green
+        case .synced: WhispPalette.success
         case .failed: .red
-        case .awaitingBackfill: .orange
+        case .awaitingBackfill: WhispPalette.warning
+        case .recording, .paused: WhispPalette.recording
         default: WhispPalette.accent
         }
     }

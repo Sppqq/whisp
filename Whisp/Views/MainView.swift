@@ -48,14 +48,25 @@ struct MainView: View {
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(model.isRecording)
 
-                Toggle(isOn: $isInspectorPresented) {
-                    Label("Инспектор", systemImage: "sidebar.trailing")
+                if isInspectorPresented {
+                    Button {
+                        isInspectorPresented = false
+                    } label: {
+                        Label("Инспектор", systemImage: "sidebar.trailing")
+                    }
+                    .buttonStyle(.glassProminent)
+                    .help("Скрыть инспектор")
+                    .disabled(model.displayedSession == nil)
+                } else {
+                    Button {
+                        isInspectorPresented = true
+                    } label: {
+                        Label("Инспектор", systemImage: "sidebar.trailing")
+                    }
+                    .buttonStyle(.glass)
+                    .help("Показать инспектор")
+                    .disabled(model.displayedSession == nil)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
-                .help(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
-                .disabled(model.displayedSession == nil)
             }
         }
         .alert("Завершить лекцию?", isPresented: $model.showStopConfirmation) {
@@ -129,7 +140,8 @@ struct MainView: View {
             BackfillComparisonView(model: model).frame(minWidth: 1_000, minHeight: 650)
         }
         .sheet(isPresented: $model.showSettings) {
-            SettingsView(model: model).frame(width: 900, height: 700)
+            SettingsView(model: model)
+                .frame(minWidth: WhispMetrics.settingsMinWidth, minHeight: WhispMetrics.settingsMinHeight)
         }
         .sheet(isPresented: $model.showOnboarding) {
             OnboardingView(model: model)
@@ -244,10 +256,14 @@ private struct FailedSessionView: View {
     var body: some View {
         VStack(spacing: 18) {
             ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.red.opacity(0.09))
                 Image(systemName: "exclamationmark.waveform")
                     .font(.system(size: 30, weight: .light)).foregroundStyle(.red)
-            }.frame(width: 78, height: 78)
+            }
+            .frame(width: 78, height: 78)
+            .glassEffect(
+                .regular.tint(Color.red.opacity(0.12)),
+                in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius)
+            )
             Text("Не удалось обработать запись").font(.title2.weight(.semibold))
             Text(model.currentSession?.lastError ?? "Не удалось получить аудио")
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -262,27 +278,37 @@ private struct FailedSessionView: View {
                 .buttonStyle(.glass)
                 .font(.caption)
             }
-            HStack(spacing: 10) {
-                if model.needsScreenCapturePermission {
-                    Button("Открыть настройки macOS") { model.openScreenCaptureSettings() }
-                }
-                if model.needsMicrophonePermission {
-                    Button("Открыть настройки микрофона") { model.openMicrophoneSettings() }
-                }
-                Button(model.currentSession?.finalTranscript.isEmpty == false || model.currentSession?.rawTranscript.isEmpty == false ? "Повторить только конспект" : "Повторить обработку") { Task { await model.retryFailedStage() } }
-                    .buttonStyle(.glassProminent)
-                Button("Новая запись / импорт") { model.showStartScreen() }
-                    .buttonStyle(.glass)
-                Button(role: .destructive) {
-                    if let id = model.currentSession?.id {
-                        model.deleteSession(id)
-                    }
-                } label: {
-                    Label("Удалить", systemImage: "trash")
-                }
-                .buttonStyle(.glass)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { recoveryActions }
+                VStack(alignment: .leading, spacing: 8) { recoveryActions }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(40)
+    }
+
+    @ViewBuilder
+    private var recoveryActions: some View {
+        if model.needsScreenCapturePermission {
+            Button("Открыть настройки macOS") { model.openScreenCaptureSettings() }
+                .buttonStyle(.glass)
+        }
+        if model.needsMicrophonePermission {
+            Button("Открыть настройки микрофона") { model.openMicrophoneSettings() }
+                .buttonStyle(.glass)
+        }
+        Button(model.currentSession?.finalTranscript.isEmpty == false || model.currentSession?.rawTranscript.isEmpty == false ? "Повторить только конспект" : "Повторить обработку") {
+            Task { await model.retryFailedStage() }
+        }
+        .buttonStyle(.glassProminent)
+        Button("Новая запись / импорт") { model.showStartScreen() }
+            .buttonStyle(.glass)
+        Button(role: .destructive) {
+            if let id = model.currentSession?.id {
+                model.deleteSession(id)
+            }
+        } label: {
+            Label("Удалить", systemImage: "trash")
+        }
+        .buttonStyle(.glass)
     }
 }
 
@@ -638,17 +664,50 @@ private struct StartView: View {
 
 private struct SessionSummaryView: View {
     let session: LectureSession
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text(session.subject).font(.caption.weight(.semibold)).foregroundStyle(WhispPalette.accent)
-                Text(session.title).font(.system(size: 36, weight: .bold)).tracking(-0.8)
-                Label(session.status.title, systemImage: session.status == .synced ? "checkmark.icloud" : "clock")
-                    .font(.callout).foregroundStyle(.secondary)
-                Divider()
-                Text(session.notesMarkdown).textSelection(.enabled).frame(maxWidth: 760, alignment: .leading)
-            }.padding(48).frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(session.subject)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(WhispPalette.accent)
+                    Text(session.title)
+                        .font(.title.weight(.bold))
+                        .tracking(-0.5)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 16)
+
+                Label(
+                    session.status.title,
+                    systemImage: session.status == .synced ? "checkmark.icloud" : "clock"
+                )
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+
+            if session.notesMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ContentUnavailableView(
+                    "Конспект ещё не создан",
+                    systemImage: "doc.text",
+                    description: Text("Выберите лекцию после завершения обработки, чтобы открыть её материалы.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                MarkdownPreview(markdown: session.notesMarkdown)
+            }
         }
+        .background(WhispPalette.canvas)
     }
 }
 
@@ -670,13 +729,15 @@ struct BatchRegenerateSheet: View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(WhispPalette.accent)
                     Image(systemName: "sparkles.rectangle.stack.fill")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(WhispPalette.accent)
                 }
                 .frame(width: 40, height: 40)
+                .glassEffect(
+                    .regular.tint(WhispPalette.accent.opacity(0.12)),
+                    in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
+                )
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Массовая перегенерация конспектов")

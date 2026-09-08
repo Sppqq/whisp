@@ -15,9 +15,18 @@ struct OnboardingView: View {
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(WhispPalette.accent)
                 Spacer()
-                Text("Шаг \(step + 1) из 3")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text("Шаг \(step + 1) из 3")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        ForEach(0..<3, id: \.self) { index in
+                            Capsule()
+                                .fill(index <= step ? WhispPalette.accent : WhispPalette.quietFill)
+                                .frame(width: 24, height: 4)
+                        }
+                    }
+                }
             }
             .padding(.horizontal, 30)
             .padding(.top, 24)
@@ -112,7 +121,7 @@ struct OnboardingView: View {
                 .lineSpacing(4)
 
             if model.settingsStore.usesGemini {
-                SecureField("Gemini API key", text: $geminiKey)
+                SecureField("Ключ Gemini API", text: $geminiKey)
                     .whispGlassField()
                     .onChange(of: geminiKey) { _, _ in testMessage = "" }
 
@@ -164,6 +173,19 @@ struct OnboardingView: View {
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .lineSpacing(4)
+
+            if model.inputDevices.isEmpty {
+                HStack(spacing: 10) {
+                    Label("Микрофоны не найдены или доступ ещё не выдан", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(WhispPalette.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Обновить") { model.refreshInputDevices() }
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Микрофон")
