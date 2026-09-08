@@ -48,25 +48,7 @@ struct MainView: View {
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(model.isRecording)
 
-                if isInspectorPresented {
-                    Button {
-                        isInspectorPresented = false
-                    } label: {
-                        Label("Инспектор", systemImage: "sidebar.trailing")
-                    }
-                    .buttonStyle(.glassProminent)
-                    .help("Скрыть инспектор")
-                    .disabled(model.displayedSession == nil)
-                } else {
-                    Button {
-                        isInspectorPresented = true
-                    } label: {
-                        Label("Инспектор", systemImage: "sidebar.trailing")
-                    }
-                    .buttonStyle(.glass)
-                    .help("Показать инспектор")
-                    .disabled(model.displayedSession == nil)
-                }
+                inspectorToolbarButton(isPresented: isInspectorPresented)
             }
         }
         .alert("Завершить лекцию?", isPresented: $model.showStopConfirmation) {
@@ -149,6 +131,25 @@ struct MainView: View {
         .sheet(isPresented: $model.showBatchRegenerateSheet) {
             BatchRegenerateSheet(model: model)
         }
+    }
+
+    private func inspectorToolbarButton(isPresented: Bool) -> some View {
+        Button {
+            isInspectorPresented = !isPresented
+        } label: {
+            Label("Инспектор", systemImage: "sidebar.trailing")
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+        }
+        // The native glass button style adds a toolbar-specific lower lip on
+        // macOS 26. A plain button with an explicit glass capsule keeps the
+        // same material without the extra "chin" under the control.
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .foregroundStyle(isPresented ? WhispPalette.accent : Color.primary)
+        .help(isPresented ? "Скрыть инспектор" : "Показать инспектор")
+        .accessibilityLabel(isPresented ? "Скрыть инспектор" : "Показать инспектор")
+        .disabled(model.displayedSession == nil)
     }
 
     @ViewBuilder private var updateProgressOverlay: some View {

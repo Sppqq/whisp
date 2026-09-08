@@ -161,6 +161,14 @@ final class SettingsStore {
         return activeProvider?.analysisModel.nonEmpty ?? settings.analysisModel
     }
 
+    /// The current Gemini analysis model is experimental, so keep a compatible
+    /// fallback for note generation when it is unavailable or out of quota.
+    var activeAnalysisFallbackModel: String? {
+        guard activeProviderTransport == .gemini,
+              activeAnalysisModel == "gemini-3.8-flash" else { return nil }
+        return GeminiAPIClient.defaultAnalysisFallbackModel
+    }
+
     var activeProviderEndpoint: URL? {
         if let preset = activeProviderPreset {
             if preset == .gemini { return GeminiAPIClient.defaultBaseURL }

@@ -14,6 +14,7 @@ actor GeminiAPIClient {
     private let session: URLSession
     private let proxyDelegate: ProxyAuthenticationDelegate?
     static let defaultBaseURL = URL(string: "https://generativelanguage.googleapis.com")!
+    static let defaultAnalysisFallbackModel = "gemini-3.7-flash"
     private let baseURL: URL
     private let transport: ProviderTransport
 
@@ -192,8 +193,38 @@ actor GeminiAPIClient {
     func generateText(
         prompt: String,
         model: String,
+        fallbackModel: String? = nil,
         responseSchema: [String: Any]? = nil,
         onStatus: (@Sendable (String) async -> Void)? = nil
+    ) async throws -> String {
+        do {
+            return try await generateTextWithRetries(
+                prompt: prompt,
+                model: model,
+                responseSchema: responseSchema,
+                onStatus: onStatus
+            )
+        } catch let error as GeminiAPIError where shouldUseModelFallback(
+            primaryModel: model,
+            fallbackModel: fallbackModel,
+            error: error
+        ) {
+            let fallback = fallbackModel!
+            await onStatus?("Модель \(model) недоступна. Переключаемся на резервную \(fallback)...")
+            return try await generateTextWithRetries(
+                prompt: prompt,
+                model: fallback,
+                responseSchema: responseSchema,
+                onStatus: onStatus
+            )
+        }
+    }
+
+    private func generateTextWithRetries(
+        prompt: String,
+        model: String,
+        responseSchema: [String: Any]?,
+        onStatus: (@Sendable (String) async -> Void)?
     ) async throws -> String {
         let maxAttempts = max(5, apiKeys.count * 3)
         var lastError: Error?
@@ -201,7 +232,6 @@ actor GeminiAPIClient {
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
             let key = currentAPIKey()
-            let effectiveModel = (attempt > apiKeys.count && model == "gemini-3.8-flash") ? "gemini-2.5-flash" : model
             do {
                 let data: Data
                 switch transport {
@@ -215,7 +245,7 @@ actor GeminiAPIClient {
                         "contents": [["role": "user", "parts": [["text": prompt]]]],
                         "generationConfig": generation
                     ]
-                    data = try await sendJSON(body, path: "v1beta/models/\(effectiveModel):generateContent", apiKeyOverride: key)
+                    data = try await sendJSON(body, path: "v1beta/models/\(model):generateContent", apiKeyOverride: key)
                 case .openAICompatible:
                     var body: [String: Any] = [
                         "model": model,
@@ -252,6 +282,29 @@ actor GeminiAPIClient {
             }
         }
         throw lastError ?? GeminiAPIError(code: 429, status: "RESOURCE_EXHAUSTED", message: "Превышен лимит запросов к Gemini", retryAfter: 10)
+    }
+
+    private func shouldUseModelFallback(
+        primaryModel: String,
+        fallbackModel: String?,
+        error: GeminiAPIError
+    ) -> Bool {
+        guard transport == .gemini,
+              let fallbackModel,
+              !fallbackModel.isEmpty,
+              fallbackModel != primaryModel else { return false }
+
+        if error.isRateLimitOrQuota || error.code == 400 || error.code == 404 {
+            return true
+        }
+
+        let message = error.message.lowercased()
+        return message.contains("model") && (
+            message.contains("not found") ||
+            message.contains("unsupported") ||
+            message.contains("does not exist") ||
+            message.contains("invalid")
+        )
     }
 
     func transcribe(

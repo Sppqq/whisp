@@ -3,10 +3,17 @@ import Foundation
 actor LectureAnalysisService {
     private let client: GeminiAPIClient
     private let model: String
+    private let fallbackModel: String?
 
-    init(client: GeminiAPIClient, model: String) {
+    init(client: GeminiAPIClient, model: String, fallbackModel: String? = nil) {
         self.client = client
         self.model = model
+        if let candidate = fallbackModel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !candidate.isEmpty, candidate != model {
+            self.fallbackModel = candidate
+        } else {
+            self.fallbackModel = nil
+        }
     }
 
     struct LecturePart: Sendable {
@@ -97,19 +104,29 @@ actor LectureAnalysisService {
             await onPartCompleted?(part.index, part.total, formattedPart)
         }
 
-        let combinedStudentNotebook = generatedParts.joined(separator: "\n\n")
-        let combinedDetailedNotes = """
-        ## Кратко
+        let combinedPartNotes = generatedParts.joined(separator: "\n\n")
+        await onStatus?("Собираем части в единый конспект через \(model)...")
 
-        \(metadata.summary)
+        let consolidatedNotes: String
+        do {
+            consolidatedNotes = try await consolidateNotes(
+                title: metadata.title,
+                subject: metadata.subject,
+                summary: metadata.summary,
+                parts: generatedParts,
+                onStatus: onStatus
+            )
+        } catch {
+            // The progressive parts are already useful. If the editorial pass
+            // fails, keep them instead of turning a successful analysis into an
+            // empty note.
+            await onStatus?("Финальная сборка не удалась — сохраняем готовые части конспекта.")
+            consolidatedNotes = combinedPartNotes
+        }
 
-        ## Подробный разбор лекции
-
-        \(combinedStudentNotebook)
-        """
-
-        partialResult.studentNotebook = WhispFormatting.formatMarkdownNotes(combinedStudentNotebook)
-        partialResult.detailedNotes = WhispFormatting.formatMarkdownNotes(combinedDetailedNotes)
+        let formattedNotes = WhispFormatting.formatMarkdownNotes(consolidatedNotes)
+        partialResult.studentNotebook = formattedNotes
+        partialResult.detailedNotes = formattedNotes
 
         await onStatus?("Конспект готов")
         return partialResult
@@ -222,7 +239,7 @@ actor LectureAnalysisService {
             "required": ["title", "subject", "confidence", "alternatives", "tags", "keyConcepts", "summary"]
         ]
 
-        let text = try await client.generateText(prompt: prompt, model: model, responseSchema: schema, onStatus: onStatus)
+        let text = try await generateText(prompt: prompt, responseSchema: schema, onStatus: onStatus)
         do {
             return try JSONDecoder().decode(MetadataEnvelope.self, from: Data(text.utf8))
         } catch {
@@ -286,6 +303,55 @@ actor LectureAnalysisService {
         \(part.text)
         """
 
-        return try await client.generateText(prompt: prompt, model: model, responseSchema: nil, onStatus: onStatus)
+        return try await generateText(prompt: prompt, responseSchema: nil, onStatus: onStatus)
+    }
+
+    private func consolidateNotes(
+        title: String,
+        subject: String,
+        summary: String,
+        parts: [String],
+        onStatus: (@Sendable (String) async -> Void)?
+    ) async throws -> String {
+        let source = parts.enumerated().map { index, part in
+            "### Часть \(index + 1)\n\(part)"
+        }.joined(separator: "\n\n")
+
+        let prompt = """
+        Ты — старший редактор конспекта русской лекции для базы знаний Obsidian.
+        Ниже переданы части одного и того же конспекта, созданные по отдельности.
+        Объедини их в ОДИН цельный, последовательный и нормальный текст.
+
+        Тема: «\(title)». Предмет: \(subject).
+        Краткая суть для ориентира: \(summary)
+
+        Правила финальной сборки:
+        - Не добавляй факты, которых нет в исходных частях.
+        - Удали повторы, дублирующиеся заголовки и обрывки фраз на границах частей.
+        - Сохрани все важные определения, формулы, шаги решений, классификации и примеры.
+        - Сохрани полезные LaTeX-формулы и wiki-ссылки Obsidian.
+        - Выстрой материал в логичном порядке, чтобы текст читался как единый конспект, а не как склейка фрагментов.
+        - Не пиши мета-текст вроде «в первой части», «вторая часть», «нейросеть» или «лектор рассказал».
+        - Верни только готовый Markdown-конспект без вступления и заключения от себя.
+
+        ИСХОДНЫЕ ЧАСТИ:
+        \(source)
+        """
+
+        return try await generateText(prompt: prompt, responseSchema: nil, onStatus: onStatus)
+    }
+
+    private func generateText(
+        prompt: String,
+        responseSchema: [String: Any]?,
+        onStatus: (@Sendable (String) async -> Void)?
+    ) async throws -> String {
+        try await client.generateText(
+            prompt: prompt,
+            model: model,
+            fallbackModel: fallbackModel,
+            responseSchema: responseSchema,
+            onStatus: onStatus
+        )
     }
 }

@@ -129,7 +129,10 @@ struct LibrarySidebar: View {
             Spacer()
 
             WhispGlassGroup {
-                HStack(spacing: 8) {
+                // Keep secondary actions immediately to the left of the primary
+                // blue "new lecture" action; this order is also mirrored for
+                // keyboard and VoiceOver navigation.
+                HStack(spacing: 6) {
                     Menu {
                         Button {
                             Task { await model.restoreFromWebDAV() }
@@ -163,17 +166,21 @@ struct LibrarySidebar: View {
                             .frame(width: 26, height: 26)
                     }
                     .buttonStyle(.glass)
+                    .controlSize(.small)
                     .menuIndicator(.hidden)
                     .help("Действия с лекциями")
                     .accessibilityLabel("Действия с лекциями")
+                    .accessibilitySortPriority(1)
 
                     Button { model.showStartScreen() } label: {
                         Image(systemName: "plus")
                             .frame(width: 26, height: 26)
                     }
-                    .buttonStyle(.glass)
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.small)
                     .help("Новая лекция или импорт")
                     .accessibilityLabel("Новая лекция или импорт")
+                    .accessibilitySortPriority(2)
                     .disabled(model.isRecording)
                 }
             }

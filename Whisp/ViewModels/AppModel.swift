@@ -1162,10 +1162,16 @@ final class AppModel {
 
                 if forceOverwriteNotes || !session.userEditedStudentNotes {
                     session.studentNotesMarkdown = ""
+                }
+                if forceOverwriteNotes || !session.userEditedNotes {
                     session.notesMarkdown = ""
                 }
 
-                let analysis = try await LectureAnalysisService(client: try providerClient(), model: settingsStore.activeAnalysisModel)
+                let analysis = try await LectureAnalysisService(
+                    client: try providerClient(),
+                    model: settingsStore.activeAnalysisModel,
+                    fallbackModel: settingsStore.activeAnalysisFallbackModel
+                )
                     .analyze(
                         segments: session.finalTranscript,
                         subjects: activeSubjects,
@@ -1199,9 +1205,17 @@ final class AppModel {
                                         } else {
                                             current.studentNotesMarkdown += "\n\n" + partText
                                         }
-                                        current.notesMarkdown = current.studentNotesMarkdown
                                     }
-                                    let partProgress = 0.75 + (Double(currentPart) / Double(max(1, totalParts))) * 0.25
+                                    if forceOverwriteNotes || !current.userEditedNotes {
+                                        if current.notesMarkdown.isEmpty {
+                                            current.notesMarkdown = partText
+                                        } else {
+                                            current.notesMarkdown += "\n\n" + partText
+                                        }
+                                    }
+                                    // Leave room for the final editorial pass after
+                                    // all progressive parts have been generated.
+                                    let partProgress = 0.75 + (Double(currentPart) / Double(max(1, totalParts))) * 0.20
                                     self.processingProgress = min(1.0, partProgress)
                                     self.sessions[idx] = current
                                     if self.currentSession?.id == targetID { self.currentSession = current }
@@ -1217,6 +1231,21 @@ final class AppModel {
                 session.analysis = analysis
                 session.title = WhispFormatting.datedTitle(title: analysis.title, date: session.startedAt ?? session.createdAt)
                 session.subject = analysis.confidence >= 0.65 ? analysis.subject : "Не определено"
+                if forceOverwriteNotes || !session.userEditedStudentNotes {
+                    session.studentNotesMarkdown = analysis.studentNotebook
+                }
+                if forceOverwriteNotes || !session.userEditedNotes {
+                    session.notesMarkdown = """
+                    ## Кратко
+
+                    \(analysis.summary)
+
+                    ## Подробный разбор лекции
+
+                    \(analysis.detailedNotes)
+                    """
+                }
+                processingProgress = max(processingProgress, 0.98)
                 session.lastError = nil
                 if forceOverwriteNotes {
                     session.userEditedNotes = false
