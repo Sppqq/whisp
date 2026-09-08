@@ -52,10 +52,15 @@ actor WebDAVClient {
         }
         try await ensureDirectories(remotePath)
         let lessonName = WhispFormatting.safePathComponent(lecture.title)
-        let markdown = MarkdownExporter.render(session: lecture)
+        let availableAudio = Set(["Микрофон.m4a", "Системный звук.m4a"].filter {
+            FileManager.default.fileExists(atPath: localDirectory.appending(path: $0).path)
+        })
+        let markdown = MarkdownExporter.render(session: lecture, availableAudio: availableAudio)
+        let hasStudentNotes = !lecture.studentNotesMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || lecture.analysis != nil
+        let hasNotes = !lecture.notesMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || lecture.analysis != nil
         var files: [(String, Data)] = [
-            ("\(lessonName).md", Data((lecture.studentNotesMarkdown.isEmpty ? markdown.studentNotebook : lecture.studentNotesMarkdown).utf8)),
-            ("\(lessonName) — Разбор нейросетью.md", Data((lecture.notesMarkdown.isEmpty ? markdown.notes : lecture.notesMarkdown).utf8)),
+            ("\(lessonName).md", Data((hasStudentNotes ? markdown.studentNotebook : "").utf8)),
+            ("\(lessonName) — Разбор нейросетью.md", Data((hasNotes ? markdown.notes : "").utf8)),
             ("\(lessonName) — Стенограмма.md", Data((lecture.finalMarkdown.isEmpty ? markdown.final : lecture.finalMarkdown).utf8)),
             ("\(lessonName) — Сырой звук.md", Data((lecture.rawMarkdown.isEmpty ? markdown.raw : lecture.rawMarkdown).utf8))
         ]

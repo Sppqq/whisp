@@ -29,4 +29,24 @@ final class MarkdownExporterTests: XCTestCase {
         XCTAssertTrue(bundle.notes.contains("# Тест — Разбор нейросетью"))
         XCTAssertFalse(bundle.notes.contains("tags:"))
     }
+
+    func testStoredNotesKeepObsidianPropertiesAndSkipMissingAudio() {
+        var session = LectureSession()
+        session.title = "Сохранённая лекция"
+        session.subject = "Математика"
+        session.captureSystemAudio = true
+        session.studentNotesMarkdown = "## Единый конспект\n\nТекст без frontmatter."
+        session.notesMarkdown = "## Кратко\n\nКраткое содержание."
+
+        let bundle = MarkdownExporter.render(session: session, availableAudio: [])
+
+        XCTAssertTrue(bundle.studentNotebook.hasPrefix("---\ntype: lecture"))
+        XCTAssertTrue(bundle.studentNotebook.contains("subject: \"Математика\""))
+        XCTAssertTrue(bundle.studentNotebook.contains("## Единый конспект"))
+        XCTAssertTrue(bundle.studentNotebook.contains("audio: []"))
+        XCTAssertFalse(bundle.studentNotebook.contains("![[Микрофон.m4a]]"))
+        XCTAssertFalse(bundle.studentNotebook.contains("![[Системный звук.m4a]]"))
+        XCTAssertTrue(bundle.notes.hasPrefix("---\ntype: transcript"))
+        XCTAssertTrue(bundle.notes.contains("## Кратко"))
+    }
 }
