@@ -50,7 +50,7 @@ struct PostUpdateView: View {
                     .foregroundStyle(.secondary)
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
+                    .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
                 }
                 .padding(24)
             }
@@ -79,7 +79,7 @@ struct PostUpdateView: View {
                 .font(.system(size: 32, weight: .medium))
                 .foregroundStyle(WhispPalette.accent)
                 .frame(width: 56, height: 56)
-                .whispGlassControl(cornerRadius: WhispMetrics.surfaceCornerRadius)
+                .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Обновление завершено")
@@ -133,7 +133,7 @@ struct PostUpdateView: View {
                     .padding(.horizontal, 14)
                 }
             }
-            .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
+            .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
         }
     }
 
@@ -248,7 +248,7 @@ private struct PostUpdateHighlight: View {
                 .font(.system(size: 19, weight: .medium))
                 .foregroundStyle(tint)
                 .frame(width: 36, height: 36)
-                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                .background(tint.opacity(0.10), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.headline)
@@ -262,6 +262,6 @@ private struct PostUpdateHighlight: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, minHeight: 164, alignment: .topLeading)
-        .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
+        .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
     }
 }

@@ -68,7 +68,7 @@ struct WhispGlassGroup<Content: View>: View {
     }
 
     var body: some View {
-        GlassEffectContainer(spacing: 10) {
+        GlassEffectContainer(spacing: 8) {
             content
         }
     }
@@ -103,6 +103,10 @@ extension View {
     /// them.
     func whispQuietSurface(cornerRadius: CGFloat = WhispMetrics.controlCornerRadius) -> some View {
         background(WhispPalette.quietFill, in: .rect(cornerRadius: cornerRadius))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(WhispPalette.hairline, lineWidth: 1)
+            }
     }
 
     /// Applies the same interactive Liquid Glass treatment to form controls.

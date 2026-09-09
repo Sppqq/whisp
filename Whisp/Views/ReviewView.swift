@@ -10,6 +10,7 @@ struct ReviewView: View {
     @State private var transcriptFilter = ""
     @State private var editingSegment: TranscriptSegment?
     @State private var editingSegmentIsRaw = false
+    @State private var isDatePickerPresented = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,38 +35,92 @@ struct ReviewView: View {
                         }
                     }
 
-                    Picker("Предмет", selection: Binding(
-                        get: { model.currentSession?.subject ?? "Не определено" },
-                        set: { model.updateReview(subject: $0) }
-                    )) {
-                        Text("Не определено").tag("Не определено")
-                        ForEach(model.activeSubjects, id: \.self) { Text($0).tag($0) }
-                    }
-                    .frame(width: 210)
-                    .whispGlassControl()
-
-                    HStack(spacing: 6) {
-                        Image(systemName: "calendar")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        DatePicker(
-                            "Дата лекции",
-                            selection: Binding(
-                                get: { model.currentSession?.startedAt ?? model.currentSession?.createdAt ?? Date() },
-                                set: { model.updateReview(date: $0) }
-                            ),
-                            displayedComponents: .date
-                        )
+                    Menu {
+                        Picker("Предмет", selection: Binding(
+                            get: { model.currentSession?.subject ?? "Не определено" },
+                            set: { model.updateReview(subject: $0) }
+                        )) {
+                            Text("Не определено").tag("Не определено")
+                            ForEach(model.activeSubjects, id: \.self) { Text($0).tag($0) }
+                        }
+                        .pickerStyle(.inline)
                         .labelsHidden()
-                        .datePickerStyle(.field)
-                        .frame(width: 110)
-                        .clipped()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "book.closed")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(model.currentSession?.subject ?? "Не определено")
+                                .font(.caption.weight(.medium))
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Image(systemName: "chevron.down")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(width: 170, height: WhispMetrics.glassFieldHeight)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.horizontal, 10)
-                    .frame(minHeight: WhispMetrics.glassFieldHeight)
-                    .frame(width: 160)
+                    .menuStyle(.borderlessButton)
+                    .whispGlassControl()
+                    .help("Предмет лекции")
+
+                    Button {
+                        isDatePickerPresented.toggle()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "calendar")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(selectedLectureDateText)
+                                .font(.caption.monospacedDigit())
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Image(systemName: "chevron.down")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(width: 145, height: WhispMetrics.glassFieldHeight)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                     .whispGlassControl()
                     .help("Дата лекции — можно выбрать дату вчерашней или более старой записи")
+                    .popover(isPresented: $isDatePickerPresented, arrowEdge: .bottom) {
+                        VStack(spacing: 10) {
+                            DatePicker(
+                                "Дата лекции",
+                                selection: Binding(
+                                    get: { model.currentSession?.startedAt ?? model.currentSession?.createdAt ?? Date() },
+                                    set: { model.updateReview(date: $0) }
+                                ),
+                                displayedComponents: .date
+                            )
+                            .datePickerStyle(.graphical)
+                            .labelsHidden()
+
+                            HStack {
+                                Button("Сегодня") {
+                                    model.updateReview(date: Date())
+                                }
+                                .buttonStyle(.plain)
+                                .font(.caption)
+                                .foregroundStyle(WhispPalette.accent)
+
+                                Spacer()
+
+                                Button("Готово") {
+                                    isDatePickerPresented = false
+                                }
+                                .buttonStyle(.glassProminent)
+                                .controlSize(.small)
+                            }
+                            .padding(.horizontal, 4)
+                        }
+                        .padding(12)
+                    }
                 }
 
                 metadataStrip
@@ -179,7 +234,7 @@ struct ReviewView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 4)
             }
@@ -439,6 +494,11 @@ struct ReviewView: View {
         }
     }
 
+    private var selectedLectureDateText: String {
+        let date = model.currentSession?.startedAt ?? model.currentSession?.createdAt ?? Date()
+        return WhispFormatting.lectureDate(date)
+    }
+
     private var metadataStrip: some View {
         Group {
             if let analysis = model.currentSession?.analysis,
@@ -599,10 +659,7 @@ struct ReviewView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .glassEffect(
-            .regular.tint(WhispPalette.accent.opacity(0.08)),
-            in: .rect(cornerRadius: WhispMetrics.controlCornerRadius)
-        )
+        .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
         .padding(.horizontal, 22)
         .padding(.bottom, 8)
     }
@@ -1037,7 +1094,7 @@ struct InteractiveQuizView: View {
                             .tint(WhispPalette.accent)
                     }
                     .padding(12)
-                    .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                    .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
                 }
 
                 // Questions Section
@@ -1147,9 +1204,9 @@ struct InteractiveQuizView: View {
                                             .foregroundStyle(progress.answeredCorrectly.contains(item.id) ? .green : .orange)
                                     }
                                 }
-                            }
-                            .padding(14)
-                            .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
+                             }
+                             .padding(14)
+                             .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
                         }
                     }
                 }
@@ -1270,7 +1327,7 @@ struct InteractiveQuizView: View {
                             }
                             .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
+                            .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
                         }
                     }
                 }

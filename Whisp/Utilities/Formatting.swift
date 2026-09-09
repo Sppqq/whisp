@@ -40,10 +40,19 @@ enum WhispFormatting {
         return result.isEmpty ? "Без названия" : result
     }
 
-    static func datedTitle(title: String, date: Date) -> String {
+    static let lectureDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
         formatter.dateFormat = "dd.MM.yyyy"
-        let datePrefix = formatter.string(from: date)
+        return formatter
+    }()
+
+    static func lectureDate(_ date: Date) -> String {
+        lectureDateFormatter.string(from: date)
+    }
+
+    static func datedTitle(title: String, date: Date) -> String {
+        let datePrefix = lectureDate(date)
 
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.range(of: #"^\d{2}\.\d{2}\.\d{4}"#, options: .regularExpression) != nil {

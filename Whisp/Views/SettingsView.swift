@@ -933,7 +933,7 @@ private struct SettingsCard<Content: View>: View {
         }
         .padding(19)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
+        .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
     }
 }
 

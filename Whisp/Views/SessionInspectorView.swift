@@ -144,7 +144,7 @@ struct SessionInspectorView: View {
             content()
         }
         .padding(14)
-        .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.controlCornerRadius))
+        .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
     }
 
     private func inspectorRow(_ title: String, value: String) -> some View {

@@ -36,7 +36,7 @@ struct LibrarySidebar: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
             }
 
             List(selection: $model.selectedSessionID) {

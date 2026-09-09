@@ -16,6 +16,7 @@ struct MainView: View {
                 detail
                 updateProgressOverlay
             }
+            .navigationTitle("")
         }
         .navigationSplitViewStyle(.balanced)
         .tint(WhispPalette.accent)
