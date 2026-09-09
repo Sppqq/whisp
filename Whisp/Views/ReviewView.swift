@@ -22,7 +22,7 @@ struct ReviewView: View {
                     .font(.title2.bold())
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, minWidth: 0)
+                    .frame(minWidth: 0, maxWidth: .infinity)
                     .whispGlassField()
                     .overlay(alignment: .trailing) {
                         if hasManualEdits {
