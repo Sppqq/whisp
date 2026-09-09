@@ -13,58 +13,40 @@ struct ReviewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 14) {
-                TextField("Название пары", text: Binding(
-                    get: { model.currentSession?.title ?? "" },
-                    set: { model.updateReview(title: $0) }
-                )).font(.title2.bold()).whispGlassField()
-                if hasManualEdits {
-                    Label("Есть ручные правки", systemImage: "pencil.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(WhispPalette.accent)
-                        .help("Ручные изменения сохраняются автоматически")
-                }
-                Picker("Предмет", selection: Binding(
-                    get: { model.currentSession?.subject ?? "Не определено" },
-                    set: { model.updateReview(subject: $0) }
-                )) {
-                    Text("Не определено").tag("Не определено")
-                    ForEach(model.activeSubjects, id: \.self) { Text($0).tag($0) }
-                }
-                .frame(width: 260)
-                .whispGlassControl()
-            }.padding(.horizontal, 22).padding(.top, 20).padding(.bottom, 8)
-
-            // Tags & Key Concepts Bar
-            if let analysis = model.currentSession?.analysis {
-                ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    if !analysis.tags.isEmpty {
-                        ForEach(analysis.tags.prefix(4), id: \.self) { tag in
-                            Text("#\(tag)")
-                                .font(.caption2.weight(.medium))
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .glassEffect(.regular.tint(WhispPalette.accent.opacity(0.12)), in: .capsule)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    TextField("Название пары", text: Binding(
+                        get: { model.currentSession?.title ?? "" },
+                        set: { model.updateReview(title: $0) }
+                    ))
+                    .font(.title2.bold())
+                    .whispGlassField()
+                    .overlay(alignment: .trailing) {
+                        if hasManualEdits {
+                            Image(systemName: "pencil.circle.fill")
+                                .font(.caption)
                                 .foregroundStyle(WhispPalette.accent)
+                                .padding(.trailing, 11)
+                                .help("Есть ручные правки — изменения сохраняются автоматически")
                         }
                     }
-                    if !analysis.keyConcepts.isEmpty {
-                        ForEach(analysis.keyConcepts.prefix(3), id: \.self) { concept in
-                            Text("[[\(concept)]]")
-                                .font(.caption2)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .glassEffect(.regular, in: .capsule)
-                                .foregroundStyle(.secondary)
-                        }
+
+                    Picker("Предмет", selection: Binding(
+                        get: { model.currentSession?.subject ?? "Не определено" },
+                        set: { model.updateReview(subject: $0) }
+                    )) {
+                        Text("Не определено").tag("Не определено")
+                        ForEach(model.activeSubjects, id: \.self) { Text($0).tag($0) }
                     }
-                    Spacer()
+                    .frame(width: 230)
+                    .whispGlassControl()
                 }
-                .padding(.horizontal, 22)
-                .padding(.bottom, 8)
-                }
+
+                metadataStrip
             }
+            .padding(.horizontal, 22)
+            .padding(.top, 18)
+            .padding(.bottom, 8)
 
             if model.currentSession?.subject == "Не определено",
                let alternatives = model.currentSession?.analysis?.alternatives,
@@ -119,7 +101,7 @@ struct ReviewView: View {
                         }
                         .pickerStyle(.segmented)
                         .labelsHidden()
-                        .frame(width: 170)
+                        .frame(width: 154)
                         .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                     }
 
@@ -429,6 +411,48 @@ struct ReviewView: View {
         case "quiz": return model.currentSession?.quizMarkdown ?? ""
         default: return model.currentSession?.finalMarkdown ?? ""
         }
+    }
+
+    private var metadataStrip: some View {
+        Group {
+            if let analysis = model.currentSession?.analysis,
+               !(analysis.tags.isEmpty && analysis.keyConcepts.isEmpty) {
+                HStack(spacing: 10) {
+                    Label("МЕТАДАННЫЕ", systemImage: "tag")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .tracking(0.5)
+                        .foregroundStyle(.secondary)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(analysis.tags.prefix(4), id: \.self) { tag in
+                                metadataChip("#\(tag)", accent: true)
+                            }
+                            ForEach(analysis.keyConcepts.prefix(3), id: \.self) { concept in
+                                metadataChip("[[\(concept)]]")
+                            }
+                        }
+                        .padding(.vertical, 1)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+            }
+        }
+    }
+
+    private func metadataChip(_ text: String, accent: Bool = false) -> some View {
+        Text(text)
+            .font(.caption2.weight(accent ? .medium : .regular))
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(
+                accent ? WhispPalette.accent.opacity(0.10) : WhispPalette.content.opacity(0.7),
+                in: .capsule
+            )
+            .foregroundStyle(accent ? WhispPalette.accent : .secondary)
     }
 
     private var readingTimeText: String {
