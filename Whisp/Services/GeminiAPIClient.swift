@@ -14,7 +14,13 @@ actor GeminiAPIClient {
     private let session: URLSession
     private let proxyDelegate: ProxyAuthenticationDelegate?
     static let defaultBaseURL = URL(string: "https://generativelanguage.googleapis.com")!
-    static let defaultAnalysisFallbackModel = "gemini-3.7-flash"
+    static let defaultAnalysisModel = "gemini-3.8-flash"
+    static let defaultAnalysisFallbackModels = [
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite"
+    ]
+    static let modelFallbackFailureThreshold = 3
     private let baseURL: URL
     private let transport: ProviderTransport
 
@@ -194,39 +200,78 @@ actor GeminiAPIClient {
         prompt: String,
         model: String,
         fallbackModel: String? = nil,
+        fallbackModels: [String] = [],
         responseSchema: [String: Any]? = nil,
         onStatus: (@Sendable (String) async -> Void)? = nil
     ) async throws -> String {
-        do {
-            return try await generateTextWithRetries(
-                prompt: prompt,
-                model: model,
-                responseSchema: responseSchema,
-                onStatus: onStatus
-            )
-        } catch let error as GeminiAPIError where shouldUseModelFallback(
-            primaryModel: model,
-            fallbackModel: fallbackModel,
-            error: error
-        ) {
-            let fallback = fallbackModel!
-            await onStatus?("Модель \(model) недоступна. Переключаемся на резервную \(fallback)...")
-            return try await generateTextWithRetries(
-                prompt: prompt,
-                model: fallback,
-                responseSchema: responseSchema,
-                onStatus: onStatus
-            )
+        var requestedFallbackModels = fallbackModel.map { [$0] } ?? []
+        requestedFallbackModels.append(contentsOf: fallbackModels)
+
+        var candidateModels = [model]
+        var seenModels = Set([model])
+        for candidate in requestedFallbackModels {
+            let cleaned = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty, seenModels.insert(cleaned).inserted else { continue }
+            candidateModels.append(cleaned)
         }
+
+        // A fallback chain deliberately gets a small, fixed failure budget per
+        // model. Calls without a fallback keep the previous retry policy.
+        let maxAttemptsPerModel = candidateModels.count > 1
+            ? Self.modelFallbackFailureThreshold
+            : nil
+        var lastError: GeminiAPIError?
+
+        for (index, candidateModel) in candidateModels.enumerated() {
+            do {
+                return try await generateTextWithRetries(
+                    prompt: prompt,
+                    model: candidateModel,
+                    responseSchema: responseSchema,
+                    maxAttemptsOverride: maxAttemptsPerModel,
+                    onStatus: onStatus
+                )
+            } catch let error as GeminiAPIError {
+                lastError = error
+                let nextModel = candidateModels.indices.contains(index + 1)
+                    ? candidateModels[index + 1]
+                    : nil
+                guard let nextModel,
+                      shouldUseModelFallback(
+                          primaryModel: candidateModel,
+                          fallbackModel: nextModel,
+                          error: error
+                      ) else {
+                    throw error
+                }
+
+                if error.isRateLimitOrQuota {
+                    await onStatus?(
+                        "После \(Self.modelFallbackFailureThreshold) неудачных попыток на \(candidateModel) " +
+                        "переключаемся на \(nextModel)..."
+                    )
+                } else {
+                    await onStatus?("Модель \(candidateModel) недоступна. Переключаемся на \(nextModel)...")
+                }
+            }
+        }
+
+        throw lastError ?? GeminiAPIError(
+            code: 429,
+            status: "RESOURCE_EXHAUSTED",
+            message: "Превышен лимит запросов к Gemini",
+            retryAfter: 10
+        )
     }
 
     private func generateTextWithRetries(
         prompt: String,
         model: String,
         responseSchema: [String: Any]?,
+        maxAttemptsOverride: Int? = nil,
         onStatus: (@Sendable (String) async -> Void)?
     ) async throws -> String {
-        let maxAttempts = max(5, apiKeys.count * 3)
+        let maxAttempts = max(1, maxAttemptsOverride ?? max(5, apiKeys.count * 3))
         var lastError: Error?
 
         for attempt in 1...maxAttempts {

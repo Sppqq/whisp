@@ -27,7 +27,7 @@ final class SettingsStore {
         var loadedSettings = defaults.data(forKey: "settings")
             .flatMap { try? decoder.decode(WhispSettings.self, from: $0) } ?? WhispSettings()
         if loadedSettings.analysisModel == "gemini-3.7-flash" {
-            loadedSettings.analysisModel = "gemini-3.8-flash"
+            loadedSettings.analysisModel = GeminiAPIClient.defaultAnalysisModel
         }
 
         self.defaults = defaults
@@ -161,12 +161,17 @@ final class SettingsStore {
         return activeProvider?.analysisModel.nonEmpty ?? settings.analysisModel
     }
 
-    /// The current Gemini analysis model is experimental, so keep a compatible
-    /// fallback for note generation when it is unavailable or out of quota.
-    var activeAnalysisFallbackModel: String? {
+    /// The default Gemini analysis chain steps down only after the current
+    /// model exhausts its three-attempt failure budget.
+    var activeAnalysisFallbackModels: [String] {
         guard activeProviderTransport == .gemini,
-              activeAnalysisModel == "gemini-3.8-flash" else { return nil }
-        return GeminiAPIClient.defaultAnalysisFallbackModel
+              activeAnalysisModel == GeminiAPIClient.defaultAnalysisModel else { return [] }
+        return GeminiAPIClient.defaultAnalysisFallbackModels
+    }
+
+    /// Compatibility accessor for callers that still need the first fallback.
+    var activeAnalysisFallbackModel: String? {
+        activeAnalysisFallbackModels.first
     }
 
     var activeProviderEndpoint: URL? {

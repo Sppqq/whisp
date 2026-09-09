@@ -1170,7 +1170,7 @@ final class AppModel {
                 let analysis = try await LectureAnalysisService(
                     client: try providerClient(),
                     model: settingsStore.activeAnalysisModel,
-                    fallbackModel: settingsStore.activeAnalysisFallbackModel
+                    fallbackModels: settingsStore.activeAnalysisFallbackModels
                 )
                     .analyze(
                         segments: session.finalTranscript,

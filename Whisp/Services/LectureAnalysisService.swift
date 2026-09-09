@@ -3,16 +3,23 @@ import Foundation
 actor LectureAnalysisService {
     private let client: GeminiAPIClient
     private let model: String
-    private let fallbackModel: String?
+    private let fallbackModels: [String]
 
-    init(client: GeminiAPIClient, model: String, fallbackModel: String? = nil) {
+    init(
+        client: GeminiAPIClient,
+        model: String,
+        fallbackModel: String? = nil,
+        fallbackModels: [String] = []
+    ) {
         self.client = client
         self.model = model
-        if let candidate = fallbackModel?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !candidate.isEmpty, candidate != model {
-            self.fallbackModel = candidate
-        } else {
-            self.fallbackModel = nil
+        var candidates = fallbackModel.map { [$0] } ?? []
+        candidates.append(contentsOf: fallbackModels)
+        var seen = Set<String>()
+        self.fallbackModels = candidates.compactMap { candidate in
+            let cleaned = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty, cleaned != model, seen.insert(cleaned).inserted else { return nil }
+            return cleaned
         }
     }
 
@@ -349,7 +356,7 @@ actor LectureAnalysisService {
         try await client.generateText(
             prompt: prompt,
             model: model,
-            fallbackModel: fallbackModel,
+            fallbackModels: fallbackModels,
             responseSchema: responseSchema,
             onStatus: onStatus
         )
