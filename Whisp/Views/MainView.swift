@@ -29,8 +29,14 @@ struct MainView: View {
                 Button {
                     model.showStartScreen()
                 } label: {
-                    Label("Новая лекция", systemImage: "plus")
+                    Image(systemName: "plus")
+                        .frame(width: 28, height: 28)
                 }
+                .buttonStyle(.glass)
+                .controlSize(.small)
+                .labelStyle(.iconOnly)
+                .help("Новая лекция или импорт")
+                .accessibilityLabel("Новая лекция или импорт")
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(model.isRecording)
 
