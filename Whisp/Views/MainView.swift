@@ -25,20 +25,6 @@ struct MainView: View {
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 340)
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    withAnimation {
-                        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.glass)
-                .help(columnVisibility == .detailOnly ? "Показать библиотеку" : "Скрыть библиотеку")
-                .accessibilityLabel(columnVisibility == .detailOnly ? "Показать библиотеку" : "Скрыть библиотеку")
-            }
-
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     model.showStartScreen()
@@ -48,7 +34,18 @@ struct MainView: View {
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(model.isRecording)
 
-                inspectorToolbarButton(isPresented: isInspectorPresented)
+                Toggle(isOn: $isInspectorPresented) {
+                    Image(systemName: "sidebar.trailing")
+                }
+                .toggleStyle(.button)
+                .buttonStyle(.glass)
+                .controlSize(.small)
+                .labelStyle(.iconOnly)
+                .frame(width: 28, height: 28)
+                .tint(isInspectorPresented ? WhispPalette.accent : .primary)
+                .help(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
+                .accessibilityLabel(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
+                .disabled(model.displayedSession == nil)
             }
         }
         .alert("Завершить лекцию?", isPresented: $model.showStopConfirmation) {
@@ -131,25 +128,6 @@ struct MainView: View {
         .sheet(isPresented: $model.showBatchRegenerateSheet) {
             BatchRegenerateSheet(model: model)
         }
-    }
-
-    private func inspectorToolbarButton(isPresented: Bool) -> some View {
-        Button {
-            isInspectorPresented = !isPresented
-        } label: {
-            Label("Инспектор", systemImage: "sidebar.trailing")
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-        }
-        // The native glass button style adds a toolbar-specific lower lip on
-        // macOS 26. A plain button with an explicit glass capsule keeps the
-        // same material without the extra "chin" under the control.
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
-        .foregroundStyle(isPresented ? WhispPalette.accent : Color.primary)
-        .help(isPresented ? "Скрыть инспектор" : "Показать инспектор")
-        .accessibilityLabel(isPresented ? "Скрыть инспектор" : "Показать инспектор")
-        .disabled(model.displayedSession == nil)
     }
 
     @ViewBuilder private var updateProgressOverlay: some View {

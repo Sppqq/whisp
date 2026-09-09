@@ -148,9 +148,6 @@ struct ReviewView: View {
                 }
             }
             .padding(.horizontal, 22)
-            .padding(.vertical, 12)
-            .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
-            .padding(.horizontal, 18)
             .padding(.vertical, 8)
 
             playerBar
@@ -438,8 +435,10 @@ struct ReviewView: View {
             } label: {
                 Image(systemName: "gobackward.15")
             }
-            .buttonStyle(.glass)
+            .buttonStyle(.plain)
             .font(.system(size: 13))
+            .foregroundStyle(.secondary)
+            .frame(width: 28, height: 28)
             .help("Назад на 15 секунд")
             .accessibilityLabel("Назад на 15 секунд")
 
@@ -455,8 +454,10 @@ struct ReviewView: View {
             } label: {
                 Image(systemName: "goforward.15")
             }
-            .buttonStyle(.glass)
+            .buttonStyle(.plain)
             .font(.system(size: 13))
+            .foregroundStyle(.secondary)
+            .frame(width: 28, height: 28)
             .help("Вперёд на 15 секунд")
             .accessibilityLabel("Вперёд на 15 секунд")
 
@@ -482,7 +483,8 @@ struct ReviewView: View {
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .frame(width: 46)
             }
-            .buttonStyle(.glass)
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
             .controlSize(.small)
             .help("Скорость воспроизведения")
 
@@ -494,7 +496,9 @@ struct ReviewView: View {
             }
             .labelsHidden()
             .frame(width: 120)
-            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+            .pickerStyle(.menu)
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 10)

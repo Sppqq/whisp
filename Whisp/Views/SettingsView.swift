@@ -53,22 +53,10 @@ struct SettingsView: View {
             List(SettingsPage.allCases, selection: $page) { item in
                 Label(item.rawValue, systemImage: item.icon)
                     .tag(item)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .glassEffect(
-                        page == item
-                            ? .regular.tint(WhispPalette.accent.opacity(0.14)).interactive()
-                            : .regular,
-                        in: .rect(cornerRadius: WhispMetrics.controlCornerRadius)
-                    )
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
             }
             .listStyle(.sidebar)
             .navigationTitle("Whisp")
             .navigationSplitViewColumnWidth(min: 180, ideal: 205, max: 240)
-            .toolbar(removing: .sidebarToggle)
         } detail: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
@@ -94,20 +82,6 @@ struct SettingsView: View {
         .tint(WhispPalette.accent)
         .buttonStyle(.glass)
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    withAnimation {
-                        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.glass)
-                .help(columnVisibility == .detailOnly ? "Показать боковую панель" : "Скрыть боковую панель")
-                .accessibilityLabel(columnVisibility == .detailOnly ? "Показать боковую панель" : "Скрыть боковую панель")
-            }
-
             ToolbarItem(placement: .primaryAction) {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(appVersionLabel)

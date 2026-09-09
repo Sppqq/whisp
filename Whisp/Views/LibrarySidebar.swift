@@ -94,7 +94,6 @@ struct LibrarySidebar: View {
         }
         .background(.clear)
         .buttonStyle(.glass)
-        .toolbar(removing: .sidebarToggle)
         .searchable(
             text: $searchText,
             placement: .sidebar,
@@ -128,62 +127,15 @@ struct LibrarySidebar: View {
             }
             Spacer()
 
-            WhispGlassGroup {
-                // Keep secondary actions immediately to the left of the primary
-                // blue "new lecture" action; this order is also mirrored for
-                // keyboard and VoiceOver navigation.
-                HStack(spacing: 6) {
-                    Menu {
-                        Button {
-                            Task { await model.restoreFromWebDAV() }
-                        } label: {
-                            Label("Загрузить лекции из WebDAV...", systemImage: "icloud.and.arrow.down")
-                        }
-                        .disabled(model.isBusy)
-
-                        Button {
-                            model.showBatchRegenerateSheet = true
-                        } label: {
-                            Label("Перегенерировать все конспекты...", systemImage: "sparkles.rectangle.stack")
-                        }
-                        .disabled(model.isBusy)
-
-                        Divider()
-
-                        Button {
-                            model.revealInFinder()
-                        } label: {
-                            Label("Показать папки в Finder", systemImage: "folder")
-                        }
-
-                        Button {
-                            model.openInObsidian()
-                        } label: {
-                            Label("Открыть в Obsidian", systemImage: "arrow.up.forward.app")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .frame(width: 26, height: 26)
-                    }
-                    .buttonStyle(.glass)
-                    .controlSize(.small)
-                    .menuIndicator(.hidden)
-                    .help("Действия с лекциями")
-                    .accessibilityLabel("Действия с лекциями")
-                    .accessibilitySortPriority(1)
-
-                    Button { model.showStartScreen() } label: {
-                        Image(systemName: "plus")
-                            .frame(width: 26, height: 26)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .controlSize(.small)
-                    .help("Новая лекция или импорт")
-                    .accessibilityLabel("Новая лекция или импорт")
-                    .accessibilitySortPriority(2)
-                    .disabled(model.isRecording)
-                }
+            Button { model.showStartScreen() } label: {
+                Image(systemName: "plus")
+                    .frame(width: 26, height: 26)
             }
+            .buttonStyle(.glassProminent)
+            .controlSize(.small)
+            .help("Новая лекция или импорт")
+            .accessibilityLabel("Новая лекция или импорт")
+            .disabled(model.isRecording)
         }
         .padding(.horizontal, 14)
         .padding(.top, 14)
