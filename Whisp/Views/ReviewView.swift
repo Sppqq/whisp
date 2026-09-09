@@ -40,6 +40,26 @@ struct ReviewView: View {
                     }
                     .frame(width: 230)
                     .whispGlassControl()
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "calendar")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        DatePicker(
+                            "Дата лекции",
+                            selection: Binding(
+                                get: { model.currentSession?.startedAt ?? model.currentSession?.createdAt ?? Date() },
+                                set: { model.updateReview(date: $0) }
+                            ),
+                            displayedComponents: .date
+                        )
+                        .labelsHidden()
+                        .datePickerStyle(.compact)
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: WhispMetrics.glassFieldHeight)
+                    .whispGlassControl()
+                    .help("Дата лекции — можно выбрать дату вчерашней или более старой записи")
                 }
 
                 metadataStrip

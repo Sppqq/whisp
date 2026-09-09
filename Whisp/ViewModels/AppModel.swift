@@ -664,10 +664,33 @@ final class AppModel {
         await task.value
     }
 
-    func updateReview(title: String? = nil, subject: String? = nil, raw: String? = nil, final: String? = nil, notes: String? = nil, studentNotes: String? = nil, quiz: String? = nil) {
+    func updateReview(title: String? = nil, subject: String? = nil, date: Date? = nil, raw: String? = nil, final: String? = nil, notes: String? = nil, studentNotes: String? = nil, quiz: String? = nil) {
         guard var session = currentSession else { return }
         if let title { session.title = title }
         if let subject { session.subject = subject }
+        if let date {
+            let previousStart = session.startedAt ?? session.createdAt
+            let shift = date.timeIntervalSince(previousStart)
+            let topic = session.title.replacingOccurrences(
+                of: #"^\d{2}\.\d{2}\.\d{4}\s*—\s*"#,
+                with: "",
+                options: .regularExpression
+            )
+
+            session.startedAt = date
+            session.title = WhispFormatting.datedTitle(title: topic, date: date)
+            if let endedAt = session.endedAt {
+                session.endedAt = endedAt.addingTimeInterval(shift)
+            }
+            session.pauses = session.pauses.map { pause in
+                var shifted = pause
+                shifted.start = pause.start.addingTimeInterval(shift)
+                if let end = pause.end {
+                    shifted.end = end.addingTimeInterval(shift)
+                }
+                return shifted
+            }
+        }
         if let raw { session.rawMarkdown = raw }
         if let final { session.finalMarkdown = final; session.userEditedFinal = true }
         if let notes { session.notesMarkdown = notes; session.userEditedNotes = true }
