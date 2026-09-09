@@ -24,33 +24,40 @@ struct MainView: View {
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 340)
         }
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    model.showStartScreen()
-                } label: {
-                    Image(systemName: "plus")
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.glass)
-                .controlSize(.small)
-                .labelStyle(.iconOnly)
-                .help("Новая лекция или импорт")
-                .accessibilityLabel("Новая лекция или импорт")
-                .keyboardShortcut("n", modifiers: .command)
-                .disabled(model.isRecording)
+            ToolbarItem(placement: .primaryAction) {
+                HStack(spacing: 3) {
+                    Button {
+                        model.showStartScreen()
+                    } label: {
+                        Image(systemName: "plus")
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                    .labelStyle(.iconOnly)
+                    .help("Новая лекция или импорт")
+                    .accessibilityLabel("Новая лекция или импорт")
+                    .keyboardShortcut("n", modifiers: .command)
+                    .disabled(model.isRecording)
 
-                Toggle(isOn: $isInspectorPresented) {
-                    Image(systemName: "sidebar.trailing")
+                    Toggle(isOn: $isInspectorPresented) {
+                        Image(systemName: "sidebar.trailing")
+                    }
+                    .toggleStyle(.button)
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                    .labelStyle(.iconOnly)
+                    .frame(width: 30, height: 30)
+                    .tint(isInspectorPresented ? WhispPalette.accent : .secondary)
+                    .help(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
+                    .accessibilityLabel(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
+                    .disabled(model.displayedSession == nil)
                 }
-                .toggleStyle(.button)
-                .buttonStyle(.glass)
-                .controlSize(.small)
-                .labelStyle(.iconOnly)
-                .frame(width: 28, height: 28)
-                .tint(isInspectorPresented ? WhispPalette.accent : .primary)
-                .help(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
-                .accessibilityLabel(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
-                .disabled(model.displayedSession == nil)
+                .padding(3)
+                .background(WhispPalette.quietFill, in: .capsule)
+                .overlay {
+                    Capsule().stroke(WhispPalette.hairline, lineWidth: 1)
+                }
             }
         }
         .alert("Завершить лекцию?", isPresented: $model.showStopConfirmation) {

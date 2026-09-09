@@ -14,12 +14,15 @@ struct ReviewView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     TextField("Название пары", text: Binding(
                         get: { model.currentSession?.title ?? "" },
                         set: { model.updateReview(title: $0) }
                     ))
                     .font(.title2.bold())
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, minWidth: 0)
                     .whispGlassField()
                     .overlay(alignment: .trailing) {
                         if hasManualEdits {
@@ -38,7 +41,7 @@ struct ReviewView: View {
                         Text("Не определено").tag("Не определено")
                         ForEach(model.activeSubjects, id: \.self) { Text($0).tag($0) }
                     }
-                    .frame(width: 230)
+                    .frame(width: 210)
                     .whispGlassControl()
 
                     HStack(spacing: 6) {
@@ -54,10 +57,13 @@ struct ReviewView: View {
                             displayedComponents: .date
                         )
                         .labelsHidden()
-                        .datePickerStyle(.compact)
+                        .datePickerStyle(.field)
+                        .frame(width: 110)
+                        .clipped()
                     }
                     .padding(.horizontal, 10)
                     .frame(minHeight: WhispMetrics.glassFieldHeight)
+                    .frame(width: 160)
                     .whispGlassControl()
                     .help("Дата лекции — можно выбрать дату вчерашней или более старой записи")
                 }
