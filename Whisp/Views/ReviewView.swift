@@ -73,10 +73,14 @@ struct ReviewView: View {
                     Text("Возможные предметы:")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    ForEach(alternatives.prefix(3), id: \.self) { subject in
-                        Button(subject) { model.updateReview(subject: subject) }
-                            .buttonStyle(.glass)
-                            .controlSize(.small)
+                    WhispGlassGroup {
+                        HStack(spacing: 6) {
+                            ForEach(alternatives.prefix(3), id: \.self) { subject in
+                                Button(subject) { model.updateReview(subject: subject) }
+                                    .buttonStyle(.glass)
+                                    .controlSize(.small)
+                            }
+                        }
                     }
                     Spacer()
                 }
@@ -89,9 +93,11 @@ struct ReviewView: View {
                     Label("Часть лекции распознана локально", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
                     Spacer()
                     Button("Проверить Gemini") { Task { await model.backfillNow() } }
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
                 }
                 .padding(12)
-                .glassEffect(.regular.tint(Color.orange.opacity(0.12)), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
+                .background(Color.orange.opacity(0.08), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
             }
 
             VStack(alignment: .leading, spacing: 12) {
@@ -192,7 +198,7 @@ struct ReviewView: View {
                                 .controlSize(.small)
                             }
                             .padding(10)
-                            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                            .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
                         }
                         editor(binding: Binding(get: { model.currentSession?.studentNotesMarkdown ?? "" }, set: { model.updateReview(studentNotes: $0) }))
                     }
@@ -212,7 +218,7 @@ struct ReviewView: View {
                                 .controlSize(.small)
                             }
                             .padding(10)
-                            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                            .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
                         }
                         editor(binding: Binding(get: { model.currentSession?.notesMarkdown ?? "" }, set: { model.updateReview(notes: $0) }))
                     }
@@ -282,7 +288,7 @@ struct ReviewView: View {
                                 }
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
-                                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                                .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
 
                                 if quizViewMode == "interactive" {
                                     InteractiveQuizView(
@@ -334,58 +340,61 @@ struct ReviewView: View {
 
                 Spacer()
 
-                Menu {
-                    Button {
-                        model.exportMarkdownFile(tabName: tab, customContent: currentContent)
-                    } label: {
-                        Label("Сохранить эту заметку в файл (.md)...", systemImage: "doc.text")
-                    }
+                WhispGlassGroup {
+                    HStack(spacing: 8) {
+                        Menu {
+                            Button {
+                                model.exportMarkdownFile(tabName: tab, customContent: currentContent)
+                            } label: {
+                                Label("Сохранить эту заметку в файл (.md)...", systemImage: "doc.text")
+                            }
 
-                    Button {
-                        model.exportAudioFile(source: audioSource)
-                    } label: {
-                        Label("Экспорт аудиозаписи (.m4a)...", systemImage: "waveform")
-                    }
+                            Button {
+                                model.exportAudioFile(source: audioSource)
+                            } label: {
+                                Label("Экспорт аудиозаписи (.m4a)...", systemImage: "waveform")
+                            }
 
-                    Button {
-                        model.printLecture(content: currentContent)
-                    } label: {
-                        Label("Печать / Экспорт в PDF...", systemImage: "printer")
-                    }
+                            Button {
+                                model.printLecture(content: currentContent)
+                            } label: {
+                                Label("Печать / Экспорт в PDF...", systemImage: "printer")
+                            }
 
-                    Divider()
+                            Divider()
 
-                    Button {
-                        model.revealInFinder()
-                    } label: {
-                        Label("Показать файлы в Finder", systemImage: "folder")
-                    }
+                            Button {
+                                model.revealInFinder()
+                            } label: {
+                                Label("Показать файлы в Finder", systemImage: "folder")
+                            }
 
-                    Button {
-                        model.openInObsidian()
-                    } label: {
-                        Label("Открыть заметку в Obsidian", systemImage: "arrow.up.forward.app")
+                            Button {
+                                model.openInObsidian()
+                            } label: {
+                                Label("Открыть заметку в Obsidian", systemImage: "arrow.up.forward.app")
+                            }
+                        } label: {
+                            Label("Экспорт", systemImage: "square.and.arrow.up")
+                        }
+                        .buttonStyle(.glass)
+                        .controlSize(.large)
+                        .help("Экспорт конспекта, аудиозаписи или печать")
+
+                        Button { Task { await model.syncCurrent() } } label: { Label("Сохранить в Obsidian", systemImage: "icloud.and.arrow.up") }
+                            .buttonStyle(.glassProminent).controlSize(.large)
+                            .disabled(model.currentSession?.status == .processing)
                     }
-                } label: {
-                    Label("Экспорт", systemImage: "square.and.arrow.up")
                 }
-                .buttonStyle(.glass)
-                .controlSize(.large)
-                .help("Экспорт конспекта, аудиозаписи или печать")
-
-                Button { Task { await model.syncCurrent() } } label: { Label("Сохранить в Obsidian", systemImage: "icloud.and.arrow.up") }
-                    .buttonStyle(.glassProminent).controlSize(.large)
-                    .disabled(model.currentSession?.status == .processing)
             }
             .padding(14)
-            .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
+            .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
             .padding(.horizontal, 18)
             .padding(.bottom, 16)
         }
         .task { await model.loadPlayback(source: audioSource) }
         .onChange(of: audioSource) { Task { await model.loadPlayback(source: audioSource) } }
         .background(WhispPalette.canvas)
-        .buttonStyle(.glass)
         .sheet(item: $editingSegment) { segment in
             TranscriptSegmentEditor(
                 segment: segment,
@@ -502,7 +511,7 @@ struct ReviewView: View {
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 10)
-        .glassEffect(.regular, in: .capsule)
+        .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
         .padding(.horizontal, 18)
         .padding(.bottom, 8)
     }
@@ -518,7 +527,7 @@ struct ReviewView: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(tint)
                 .frame(width: 30, height: 30)
-                .glassEffect(.regular.tint(tint.opacity(0.12)), in: .rect(cornerRadius: 8))
+                .background(tint.opacity(0.10), in: .rect(cornerRadius: 8))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.caption.weight(.semibold))
@@ -569,12 +578,12 @@ struct ReviewView: View {
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
-                                .buttonStyle(.glass)
+                                .buttonStyle(.plain)
                             }
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                        .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
 
                         let filtered = transcriptFilter.trimmingCharacters(in: .whitespaces).isEmpty
                             ? segments
@@ -605,12 +614,13 @@ struct ReviewView: View {
                                                     .font(.caption2)
                                                     .foregroundStyle(WhispPalette.accent)
                                             }
-                                            Text(WhispFormatting.timestamp(segment.start))
-                                                .monospacedDigit()
-                                        }
+                                             Text(WhispFormatting.timestamp(segment.start))
+                                                 .monospacedDigit()
+                                         }
                                     }
-                                    .buttonStyle(.glass)
+                                    .buttonStyle(.plain)
                                     .font(.caption.weight(isCurrent ? .bold : .regular))
+                                    .foregroundStyle(isCurrent ? WhispPalette.accent : .secondary)
                                     .help("Перейти к \(WhispFormatting.timestamp(segment.start)) в аудиозаписи")
                                     .accessibilityLabel("Перейти к \(WhispFormatting.timestamp(segment.start)) в аудиозаписи")
 
@@ -991,10 +1001,10 @@ struct InteractiveQuizView: View {
                                     }
                                     progress = updated
                                 }
-                            }
-                            .buttonStyle(.glass)
-                            .font(.caption)
-                            .foregroundStyle(WhispPalette.accent)
+                             }
+                             .buttonStyle(.plain)
+                             .font(.caption)
+                             .foregroundStyle(WhispPalette.accent)
                         }
 
                         ForEach(quiz.questions) { item in
@@ -1021,9 +1031,10 @@ struct InteractiveQuizView: View {
                                     } label: {
                                         Label(isRevealed ? "Скрыть ответ" : "Показать ответ", systemImage: isRevealed ? "eye.slash" : "eye")
                                             .font(.caption)
-                                    }
-                                    .buttonStyle(.glass)
-                                    .controlSize(.small)
+                                     }
+                                     .buttonStyle(.plain)
+                                     .controlSize(.small)
+                                     .foregroundStyle(WhispPalette.accent)
                                 }
 
                                 if isRevealed {
@@ -1040,10 +1051,10 @@ struct InteractiveQuizView: View {
                                             .lineSpacing(4)
                                             .textSelection(.enabled)
                                     }
-                                    .padding(12)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .glassEffect(.regular.tint(Color.green.opacity(0.1)), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
-                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                                     .padding(12)
+                                     .frame(maxWidth: .infinity, alignment: .leading)
+                                     .background(Color.green.opacity(0.08), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
+                                     .transition(.opacity.combined(with: .move(edge: .top)))
                                 }
 
                                 HStack(spacing: 8) {
@@ -1054,23 +1065,25 @@ struct InteractiveQuizView: View {
                                         var updated = progress
                                         updated.markQuestion(item.id, correct: true)
                                         progress = updated
-                                    } label: {
-                                        Label("Знаю", systemImage: "checkmark")
-                                    }
-                                    .buttonStyle(.glass)
-                                    .controlSize(.small)
-                                    .tint(.green)
+                                     } label: {
+                                         Label("Знаю", systemImage: "checkmark")
+                                     }
+                                     .buttonStyle(.plain)
+                                     .controlSize(.small)
+                                     .tint(.green)
+                                     .foregroundStyle(.green)
 
                                     Button {
                                         var updated = progress
                                         updated.markQuestion(item.id, correct: false)
                                         progress = updated
-                                    } label: {
-                                        Label("Повторить", systemImage: "arrow.counterclockwise")
-                                    }
-                                    .buttonStyle(.glass)
-                                    .controlSize(.small)
-                                    .tint(.orange)
+                                     } label: {
+                                         Label("Повторить", systemImage: "arrow.counterclockwise")
+                                     }
+                                     .buttonStyle(.plain)
+                                     .controlSize(.small)
+                                     .tint(.orange)
+                                     .foregroundStyle(.orange)
 
                                     if answeredQuestions.contains(item.id) {
                                         Text(progress.answeredCorrectly.contains(item.id) ? "Отмечено: знаю" : "Отмечено: повторить")
@@ -1102,10 +1115,10 @@ struct InteractiveQuizView: View {
                                     }
                                     progress = updated
                                 }
-                            }
-                            .buttonStyle(.glass)
-                            .font(.caption)
-                            .foregroundStyle(WhispPalette.accent)
+                             }
+                             .buttonStyle(.plain)
+                             .font(.caption)
+                             .foregroundStyle(WhispPalette.accent)
                         }
 
                         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
@@ -1262,7 +1275,6 @@ struct BackfillComparisonView: View {
         .frame(minWidth: 900, minHeight: 600)
         .background(WhispPalette.canvas)
         .tint(WhispPalette.accent)
-        .buttonStyle(.glass)
     }
 
     private func comparisonPane(title: String, text: String) -> some View {

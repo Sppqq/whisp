@@ -70,7 +70,6 @@ struct PostUpdateView: View {
         }
         .background(WhispPalette.canvas)
         .tint(WhispPalette.accent)
-        .buttonStyle(.glass)
         .frame(minWidth: 760, minHeight: 560)
     }
 

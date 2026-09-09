@@ -44,37 +44,40 @@ struct OnboardingView: View {
                 Button("Пропустить настройку") {
                     model.skipOnboarding()
                 }
-                .buttonStyle(.glass)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
 
                 Spacer()
 
-                if step > 0 {
-                    Button("Назад") { step -= 1 }
-                        .keyboardShortcut(.cancelAction)
-                        .buttonStyle(.glass)
-                }
-
-                Button(step == 2 ? "Перейти к первой записи" : "Продолжить") {
-                    if step == 2 {
-                        model.completeOnboarding()
-                    } else {
-                        if step == 1 {
-                            model.settingsStore.geminiAPIKey = geminiKey
+                WhispGlassGroup {
+                    HStack(spacing: 10) {
+                        if step > 0 {
+                            Button("Назад") { step -= 1 }
+                                .keyboardShortcut(.cancelAction)
+                                .buttonStyle(.glass)
                         }
-                        step += 1
+
+                        Button(step == 2 ? "Перейти к первой записи" : "Продолжить") {
+                            if step == 2 {
+                                model.completeOnboarding()
+                            } else {
+                                if step == 1 {
+                                    model.settingsStore.geminiAPIKey = geminiKey
+                                }
+                                step += 1
+                            }
+                        }
+                        .buttonStyle(.glassProminent)
+                        .keyboardShortcut(.defaultAction)
                     }
                 }
-                .buttonStyle(.glassProminent)
-                .keyboardShortcut(.defaultAction)
             }
-            .padding(16)
-            .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
-            .padding(18)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
         }
         .frame(width: 720, height: 560)
         .background(WhispPalette.canvas)
         .tint(WhispPalette.accent)
-        .buttonStyle(.glass)
         .onAppear {
             geminiKey = model.settingsStore.geminiAPIKey
         }
@@ -206,7 +209,7 @@ struct OnboardingView: View {
                 .whispGlassControl()
             }
             .padding(16)
-            .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
+            .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
 
             Label("Перед отправкой в облако вы увидите и сможете отредактировать результат.", systemImage: "eye")
                 .font(.caption)

@@ -31,7 +31,6 @@ struct RecordingView: View {
             controlDock
         }
         .background(WhispPalette.canvas)
-        .buttonStyle(.glass)
     }
 
     private var header: some View {
@@ -145,22 +144,24 @@ struct RecordingView: View {
                 }
             }
 
-            HStack(spacing: 10) {
-                Button { Task { await model.pauseOrResume() } } label: {
-                    Label(model.isPaused ? "Продолжить" : "Пауза", systemImage: model.isPaused ? "play.fill" : "pause.fill")
-                        .frame(minWidth: 102)
-                }
-                .buttonStyle(.glassProminent).controlSize(.large)
+            WhispGlassGroup {
+                HStack(spacing: 10) {
+                    Button { Task { await model.pauseOrResume() } } label: {
+                        Label(model.isPaused ? "Продолжить" : "Пауза", systemImage: model.isPaused ? "play.fill" : "pause.fill")
+                            .frame(minWidth: 102)
+                    }
+                    .buttonStyle(.glassProminent).controlSize(.large)
 
-                Button(role: .destructive) { model.showStopConfirmation = true } label: {
-                    Label("Завершить", systemImage: "stop.fill").frame(minWidth: 102)
+                    Button(role: .destructive) { model.showStopConfirmation = true } label: {
+                        Label("Завершить", systemImage: "stop.fill").frame(minWidth: 102)
+                    }
+                    .buttonStyle(.glass).controlSize(.large)
                 }
-                .buttonStyle(.glass).controlSize(.large)
             }
             Text(model.statusMessage).font(.caption).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 26).padding(.top, 15).padding(.bottom, 17)
-        .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
+        .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
         .padding(.horizontal, 18)
         .padding(.bottom, 18)
     }

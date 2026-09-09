@@ -93,7 +93,6 @@ struct LibrarySidebar: View {
             .padding(.vertical, 14)
         }
         .background(.clear)
-        .buttonStyle(.glass)
         .searchable(
             text: $searchText,
             placement: .sidebar,
@@ -181,7 +180,8 @@ struct LibrarySidebar: View {
                     searchText = ""
                     selectedSubject = "Все"
                 }
-                .buttonStyle(.glass)
+                .buttonStyle(.plain)
+                .foregroundStyle(WhispPalette.accent)
             }
 
             if model.sessions.isEmpty {
@@ -198,7 +198,7 @@ struct LibrarySidebar: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-            .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
+        .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
     }
 
     @ViewBuilder

@@ -59,6 +59,7 @@ struct WhispGlassSurface<Content: View>: View {
     }
 }
 
+/// Groups sibling Liquid Glass controls without adding a background of its own.
 struct WhispGlassGroup<Content: View>: View {
     private let content: Content
 
@@ -95,6 +96,15 @@ struct WhispGlassDivider: View {
 }
 
 extension View {
+    /// A quiet, flat container for status and explanatory content.
+    ///
+    /// Use this when a block contains its own Liquid Glass controls. It keeps
+    /// the controls readable without stacking another glass surface behind
+    /// them.
+    func whispQuietSurface(cornerRadius: CGFloat = WhispMetrics.controlCornerRadius) -> some View {
+        background(WhispPalette.quietFill, in: .rect(cornerRadius: cornerRadius))
+    }
+
     /// Applies the same interactive Liquid Glass treatment to form controls.
     /// Keeping this in one modifier prevents a mixture of rounded borders,
     /// opaque fills and glass controls across the settings and review flows.

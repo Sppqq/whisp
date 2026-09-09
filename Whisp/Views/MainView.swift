@@ -19,7 +19,6 @@ struct MainView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .tint(WhispPalette.accent)
-        .buttonStyle(.glass)
         .inspector(isPresented: $isInspectorPresented) {
             SessionInspectorView(model: model)
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 340)
@@ -213,7 +212,7 @@ struct MainView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .glassEffect(.regular, in: .capsule)
+                .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
             }
@@ -264,8 +263,12 @@ private struct FailedSessionView: View {
                 .font(.caption)
             }
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { recoveryActions }
-                VStack(alignment: .leading, spacing: 8) { recoveryActions }
+                WhispGlassGroup {
+                    HStack(spacing: 10) { recoveryActions }
+                }
+                WhispGlassGroup {
+                    VStack(alignment: .leading, spacing: 8) { recoveryActions }
+                }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(40)
     }
@@ -403,7 +406,7 @@ private struct ProcessingView: View {
                         .font(.caption2.monospacedDigit())
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .glassEffect(.regular, in: .capsule)
+                        .background(WhispPalette.quietFill, in: .capsule)
                         .foregroundStyle(.tertiary)
 
                     Spacer()
@@ -416,7 +419,8 @@ private struct ProcessingView: View {
                         Label("Копировать", systemImage: "doc.on.doc")
                             .font(.caption2)
                     }
-                    .buttonStyle(.glass)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
 
                     Button {
                         withAnimation(.snappy(duration: 0.2)) {
@@ -427,11 +431,10 @@ private struct ProcessingView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.glass)
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
 
                 if isLogExpanded {
                     Divider()
@@ -547,7 +550,8 @@ private struct StartView: View {
                             Button { model.refreshInputDevices() } label: {
                                 Image(systemName: "arrow.clockwise")
                             }
-                            .buttonStyle(.glass)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
                             .help("Обновить список микрофонов")
                         }
 
@@ -673,7 +677,7 @@ private struct SessionSummaryView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)

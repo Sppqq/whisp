@@ -28,7 +28,6 @@ struct SessionInspectorView: View {
         }
         .navigationTitle("Инспектор")
         .background(WhispPalette.canvas)
-        .buttonStyle(.glass)
     }
 
     private func header(for session: LectureSession) -> some View {

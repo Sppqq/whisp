@@ -80,7 +80,6 @@ struct SettingsView: View {
         .navigationSplitViewStyle(.balanced)
         .background(WhispPalette.canvas)
         .tint(WhispPalette.accent)
-        .buttonStyle(.glass)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 VStack(alignment: .trailing, spacing: 2) {
@@ -179,7 +178,7 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(10)
-                .whispGlassControl()
+                .whispQuietSurface()
 
                 if !store.usesGemini {
                     Label(
@@ -218,43 +217,46 @@ struct SettingsView: View {
                             // Status badge
                             KeyStatusBadge(status: status)
 
-                            // Small individual test button
-                            Button {
-                                Task {
-                                    _ = await model.testSingleGeminiKey(key)
-                                }
-                            } label: {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.caption2)
-                            }
-                            .buttonStyle(.glass)
-                            .foregroundStyle(.secondary)
-                            .help("Проверить этот ключ")
+                            WhispGlassGroup {
+                                HStack(spacing: 5) {
+                                    Button {
+                                        Task {
+                                            _ = await model.testSingleGeminiKey(key)
+                                        }
+                                    } label: {
+                                        Image(systemName: "arrow.clockwise")
+                                            .font(.caption2)
+                                    }
+                                    .buttonStyle(.glass)
+                                    .foregroundStyle(.secondary)
+                                    .help("Проверить этот ключ")
 
-                            Button {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(key, forType: .string)
-                            } label: {
-                                Image(systemName: "doc.on.doc")
-                                    .font(.caption2)
-                            }
-                            .buttonStyle(.glass)
-                            .foregroundStyle(.secondary)
-                            .help("Скопировать ключ")
+                                    Button {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(key, forType: .string)
+                                    } label: {
+                                        Image(systemName: "doc.on.doc")
+                                            .font(.caption2)
+                                    }
+                                    .buttonStyle(.glass)
+                                    .foregroundStyle(.secondary)
+                                    .help("Скопировать ключ")
 
-                            Button(role: .destructive) {
-                                if geminiKeys.indices.contains(index) {
-                                    geminiKeys.remove(at: index)
-                                    saveSecrets()
+                                    Button(role: .destructive) {
+                                        if geminiKeys.indices.contains(index) {
+                                            geminiKeys.remove(at: index)
+                                            saveSecrets()
+                                        }
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .font(.caption2)
+                                    }
+                                    .buttonStyle(.glass)
+                                    .foregroundStyle(.secondary)
+                                    .disabled(geminiKeys.count <= 1)
+                                    .help(geminiKeys.count <= 1 ? "Должен остаться хотя бы один ключ" : "Удалить этот ключ")
                                 }
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(.caption2)
                             }
-                            .buttonStyle(.glass)
-                            .foregroundStyle(.secondary)
-                            .disabled(geminiKeys.count <= 1)
-                            .help(geminiKeys.count <= 1 ? "Должен остаться хотя бы один ключ" : "Удалить этот ключ")
                         }
                     }
 
@@ -262,26 +264,30 @@ struct SettingsView: View {
                         SecureField("Добавить ещё один Gemini API Key...", text: $newKey)
                             .whispGlassField()
 
-                        Button {
-                            let trimmed = newKey.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !trimmed.isEmpty else { return }
-                            if !geminiKeys.contains(trimmed) {
-                                geminiKeys.append(trimmed)
-                                newKey = ""
-                                saveSecrets()
-                            }
-                        } label: {
-                            Label("Добавить", systemImage: "plus")
-                        }
-                        .buttonStyle(.glass)
-                        .disabled(newKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        WhispGlassGroup {
+                            HStack(spacing: 8) {
+                                Button {
+                                    let trimmed = newKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    guard !trimmed.isEmpty else { return }
+                                    if !geminiKeys.contains(trimmed) {
+                                        geminiKeys.append(trimmed)
+                                        newKey = ""
+                                        saveSecrets()
+                                    }
+                                } label: {
+                                    Label("Добавить", systemImage: "plus")
+                                }
+                                .buttonStyle(.glass)
+                                .disabled(newKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                        Button("Вставить списком") {
-                            batchKeysText = geminiKeys.joined(separator: "\n")
-                            showBatchPaste = true
+                                Button("Вставить списком") {
+                                    batchKeysText = geminiKeys.joined(separator: "\n")
+                                    showBatchPaste = true
+                                }
+                                .buttonStyle(.glass)
+                                .font(.caption)
+                            }
                         }
-                        .buttonStyle(.glass)
-                        .font(.caption)
                     }
 
                     if showBatchPaste {
@@ -294,57 +300,63 @@ struct SettingsView: View {
                                 .padding(4)
                                 .scrollContentBackground(.hidden)
                                 .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
-                            HStack {
-                                Button("Применить список") {
-                                    let parsed = batchKeysText.components(separatedBy: CharacterSet.newlines)
-                                        .flatMap { $0.components(separatedBy: ",") }
-                                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                                        .filter { !$0.isEmpty }
-                                    if !parsed.isEmpty {
-                                        geminiKeys = parsed
-                                        saveSecrets()
+                            WhispGlassGroup {
+                                HStack(spacing: 8) {
+                                    Button("Применить список") {
+                                        let parsed = batchKeysText.components(separatedBy: CharacterSet.newlines)
+                                            .flatMap { $0.components(separatedBy: ",") }
+                                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                            .filter { !$0.isEmpty }
+                                        if !parsed.isEmpty {
+                                            geminiKeys = parsed
+                                            saveSecrets()
+                                        }
+                                        showBatchPaste = false
                                     }
-                                    showBatchPaste = false
-                                }
-                                .buttonStyle(.glassProminent)
-                                .controlSize(.small)
-
-                                Button("Отмена") { showBatchPaste = false }
-                                    .buttonStyle(.glass)
+                                    .buttonStyle(.glassProminent)
                                     .controlSize(.small)
+
+                                    Button("Отмена") { showBatchPaste = false }
+                                        .buttonStyle(.glass)
+                                        .controlSize(.small)
+                                }
                             }
                         }
                         .padding(10)
-                        .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                        .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
                     }
                 }
 
                 Divider()
 
                 HStack {
-                    Button("Сохранить") { saveSecrets() }.buttonStyle(.glassProminent)
+                    WhispGlassGroup {
+                        HStack(spacing: 8) {
+                            Button("Сохранить") { saveSecrets() }.buttonStyle(.glassProminent)
 
-                    Button {
-                        saveActiveProviderCredentials()
-                        Task {
-                            isTestingAll = true
-                            testResult = store.usesGemini
-                                ? await model.testAllGeminiKeys()
-                                : await model.testActiveProvider()
-                            isTestingAll = false
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            if isTestingAll {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Image(systemName: "arrow.clockwise.badge.checkmark")
+                            Button {
+                                saveActiveProviderCredentials()
+                                Task {
+                                    isTestingAll = true
+                                    testResult = store.usesGemini
+                                        ? await model.testAllGeminiKeys()
+                                        : await model.testActiveProvider()
+                                    isTestingAll = false
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if isTestingAll {
+                                        ProgressView().controlSize(.small)
+                                    } else {
+                                        Image(systemName: "arrow.clockwise.badge.checkmark")
+                                    }
+                                    Text(store.usesGemini ? "Проверить все ключи (\(geminiKeys.count))" : "Проверить провайдера")
+                                }
                             }
-                            Text(store.usesGemini ? "Проверить все ключи (\(geminiKeys.count))" : "Проверить провайдера")
+                            .buttonStyle(.glass)
+                            .disabled(isTestingAll)
                         }
                     }
-                    .buttonStyle(.glass)
-                    .disabled(isTestingAll)
 
                     Spacer()
                     ConnectionMark(state: model.geminiState)
@@ -369,7 +381,8 @@ struct SettingsView: View {
                                 } label: {
                                     Image(systemName: "trash")
                                 }
-                                .buttonStyle(.glass)
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
                                 .help("Удалить провайдера")
                             }
                             TextField("Базовый URL, например https://api.example.com", text: $provider.baseURL)
@@ -387,19 +400,21 @@ struct SettingsView: View {
                             .whispGlassField()
                         }
                         .padding(12)
-                        .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                        .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
                     }
 
-                    HStack {
-                        Button {
-                            customProviders.append(CustomProvider())
-                        } label: {
-                            Label("Добавить провайдера", systemImage: "plus")
-                        }
-                        .buttonStyle(.glass)
+                    WhispGlassGroup {
+                        HStack(spacing: 8) {
+                            Button {
+                                customProviders.append(CustomProvider())
+                            } label: {
+                                Label("Добавить провайдера", systemImage: "plus")
+                            }
+                            .buttonStyle(.glass)
 
-                        Button("Сохранить провайдеров") { saveCustomProviders() }
-                            .buttonStyle(.glassProminent)
+                            Button("Сохранить провайдеров") { saveCustomProviders() }
+                                .buttonStyle(.glassProminent)
+                        }
                     }
                 }
             }
@@ -494,6 +509,7 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity)
                     .whispGlassControl()
                     Button { model.refreshInputDevices() } label: { Image(systemName: "arrow.clockwise") }
+                        .buttonStyle(.glass)
                         .help("Обновить устройства")
                 }
                 if model.inputDevices.isEmpty {
@@ -555,12 +571,17 @@ struct SettingsView: View {
                 }
                 SecureField("Пароль", text: $webDAVPassword).whispGlassField()
                 HStack {
-                    Button("Сохранить") { saveSecrets() }.buttonStyle(.glassProminent)
-                    Button("Проверить WebDAV") {
-                        saveSecrets()
-                        Task {
-                            try? await Task.sleep(for: .milliseconds(180))
-                            testResult = await model.testWebDAV()
+                    WhispGlassGroup {
+                        HStack(spacing: 8) {
+                            Button("Сохранить") { saveSecrets() }.buttonStyle(.glassProminent)
+                            Button("Проверить WebDAV") {
+                                saveSecrets()
+                                Task {
+                                    try? await Task.sleep(for: .milliseconds(180))
+                                    testResult = await model.testWebDAV()
+                                }
+                            }
+                            .buttonStyle(.glass)
                         }
                     }
                     Spacer()
@@ -590,21 +611,23 @@ struct SettingsView: View {
                     Text("Если вы изменили модель AI или правила оформления, вы можете заново сгенерировать конспекты для всех сохранённых лекций.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    HStack(spacing: 12) {
-                        Button {
-                            model.showBatchRegenerateSheet = true
-                        } label: {
-                            Label("Перегенерировать все конспекты...", systemImage: "sparkles")
-                        }
-                        .buttonStyle(.glass)
-                        .disabled(model.isBusy)
+                    WhispGlassGroup {
+                        HStack(spacing: 12) {
+                            Button {
+                                model.showBatchRegenerateSheet = true
+                            } label: {
+                                Label("Перегенерировать все конспекты...", systemImage: "sparkles")
+                            }
+                            .buttonStyle(.glass)
+                            .disabled(model.isBusy)
 
-                        Button {
-                            model.revealInFinder()
-                        } label: {
-                            Label("Открыть папку в Finder", systemImage: "folder")
+                            Button {
+                                model.revealInFinder()
+                            } label: {
+                                Label("Открыть папку в Finder", systemImage: "folder")
+                            }
+                            .buttonStyle(.glass)
                         }
-                        .buttonStyle(.glass)
                     }
                 }
             }
@@ -675,30 +698,32 @@ struct SettingsView: View {
 
                 updateStatus
 
-                HStack {
-                    Button {
-                        Task { await model.updateService.checkForUpdates() }
-                    } label: {
-                        Label("Проверить обновления", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.glass)
-                    .disabled(isUpdateCheckRunning)
-
-                    if case .available(let release) = model.updateService.state {
+                WhispGlassGroup {
+                    HStack(spacing: 8) {
                         Button {
-                            Task { await model.updateService.installUpdate(release) }
+                            Task { await model.updateService.checkForUpdates() }
                         } label: {
-                            Label("Обновить до \(release.version)", systemImage: "arrow.triangle.2.circlepath.circle.fill")
-                        }
-                        .buttonStyle(.glassProminent)
-                        .disabled(model.isRecording)
-
-                        Button {
-                            Task { await model.updateService.downloadAndOpen(release) }
-                        } label: {
-                            Label("Скачать DMG вручную", systemImage: "arrow.down.circle")
+                            Label("Проверить обновления", systemImage: "arrow.clockwise")
                         }
                         .buttonStyle(.glass)
+                        .disabled(isUpdateCheckRunning)
+
+                        if case .available(let release) = model.updateService.state {
+                            Button {
+                                Task { await model.updateService.installUpdate(release) }
+                            } label: {
+                                Label("Обновить до \(release.version)", systemImage: "arrow.triangle.2.circlepath.circle.fill")
+                            }
+                            .buttonStyle(.glassProminent)
+                            .disabled(model.isRecording)
+
+                            Button {
+                                Task { await model.updateService.downloadAndOpen(release) }
+                            } label: {
+                                Label("Скачать DMG вручную", systemImage: "arrow.down.circle")
+                            }
+                            .buttonStyle(.glass)
+                        }
                     }
                 }
             }
@@ -898,7 +923,7 @@ private struct SettingsCard<Content: View>: View {
             HStack(alignment: .top, spacing: 11) {
                 Image(systemName: icon).font(.system(size: 15, weight: .medium)).foregroundStyle(WhispPalette.accent)
                     .frame(width: 30, height: 30)
-                    .whispGlassControl(cornerRadius: 8)
+                    .whispQuietSurface(cornerRadius: 8)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.headline)
                     Text(caption).font(.caption).foregroundStyle(.secondary)
@@ -942,7 +967,9 @@ private struct SubjectsSettingsContent: View {
                         .whispGlassField()
                     Button(role: .destructive) {
                         store.settings.subjects.removeAll { $0.id == subject.id }
-                    } label: { Image(systemName: "trash") }.buttonStyle(.glass).foregroundStyle(.secondary)
+                    } label: { Image(systemName: "trash") }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
                 }
             }
             Divider()
@@ -1006,6 +1033,6 @@ private struct KeyStatusBadge: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
-        .glassEffect(.regular, in: .capsule)
+        .background(WhispPalette.quietFill, in: .capsule)
     }
 }
