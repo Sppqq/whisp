@@ -49,4 +49,48 @@ final class MarkdownExporterTests: XCTestCase {
         XCTAssertTrue(bundle.notes.hasPrefix("---\ntype: transcript"))
         XCTAssertTrue(bundle.notes.contains("## Кратко"))
     }
+
+    func testReviewStudentNotebookAddsNavigationAndAudioToPlainStoredText() {
+        var session = LectureSession()
+        session.title = "Физика"
+        session.subject = "Физика"
+        session.analysis = AnalysisResult(
+            title: "Физика",
+            subject: "Физика",
+            confidence: 1,
+            alternatives: [],
+            summary: "",
+            detailedNotes: "",
+            studentNotebook: "",
+            tags: ["кинематика"],
+            keyConcepts: ["Ускорение"]
+        )
+        session.studentNotesMarkdown = "## Конспект\n\nТекст лекции."
+
+        let preview = MarkdownExporter.reviewStudentNotebook(session: session)
+
+        XCTAssertTrue(preview.contains("> [!abstract] 🔗 Связи в Obsidian"))
+        XCTAssertTrue(preview.contains("**Ключевые понятия**: [[Ускорение]]"))
+        XCTAssertTrue(preview.contains("**Теги**:"))
+        XCTAssertTrue(preview.contains("![[Микрофон.m4a]]"))
+        XCTAssertTrue(preview.contains("## Конспект"))
+    }
+
+    func testReviewStudentNotebookDoesNotDuplicateExistingNavigation() {
+        var session = LectureSession()
+        session.subject = "Химия"
+        session.studentNotesMarkdown = """
+        > [!abstract] 🔗 Связи в Obsidian
+        > - **Предмет**: Химия
+
+        ![[Микрофон.m4a]]
+
+        Текст.
+        """
+
+        let preview = MarkdownExporter.reviewStudentNotebook(session: session)
+
+        XCTAssertEqual(preview.components(separatedBy: "> [!abstract]").count - 1, 1)
+        XCTAssertEqual(preview.components(separatedBy: "![[Микрофон.m4a]]").count - 1, 1)
+    }
 }

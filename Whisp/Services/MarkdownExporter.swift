@@ -9,6 +9,54 @@ struct MarkdownBundle: Sendable {
 }
 
 enum MarkdownExporter {
+    /// Builds the content shown in the student-notebook preview.
+    ///
+    /// Older sessions may only store the generated notebook text, while newer
+    /// exported notes already contain the Obsidian navigation callout and audio
+    /// attachment. Keep the preview consistent in both cases without adding a
+    /// second copy of either block.
+    static func reviewStudentNotebook(session: LectureSession) -> String {
+        let stored = session.studentNotesMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = stored.isEmpty
+            ? session.analysis.map { renderStudentNotebook($0) } ?? ""
+            : stored
+        guard !body.isEmpty else { return "" }
+
+        let hasNavigation = body.contains("> [!abstract]")
+        let hasAudio = body.contains("![[Микрофон.m4a]]") || body.contains("![[Системный звук.m4a]]")
+        let additions = [
+            hasNavigation ? nil : graphNavigation(session: session, includeTags: true),
+            hasAudio ? nil : audioLinks(session: session)
+        ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        guard !additions.isEmpty else { return body }
+        let inserted = additions.joined(separator: "\n\n")
+
+        // Preserve frontmatter at the beginning so MarkdownPreview can hide it.
+        let lines = body.components(separatedBy: .newlines)
+        if lines.first?.trimmingCharacters(in: .whitespaces) == "---",
+           let closing = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) {
+            let closingOffset = closing + 1
+            let frontmatter = lines[...closingOffset].joined(separator: "\n")
+            let remainder = lines.dropFirst(closingOffset + 1).joined(separator: "\n")
+            return [frontmatter, insertAfterTitleIfNeeded(remainder, inserted)]
+                .joined(separator: "\n\n")
+        }
+
+        return insertAfterTitleIfNeeded(body, inserted)
+    }
+
+    private static func insertAfterTitleIfNeeded(_ body: String, _ inserted: String) -> String {
+        let lines = body.components(separatedBy: .newlines)
+        if let firstContent = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+           lines[firstContent].trimmingCharacters(in: .whitespaces).hasPrefix("# ") {
+            var result = lines
+            result.insert(contentsOf: ["", inserted, ""], at: firstContent + 1)
+            return result.joined(separator: "\n")
+        }
+        return "\(inserted)\n\n\(body)"
+    }
+
     static func render(session: LectureSession, availableAudio: Set<String>? = nil) -> MarkdownBundle {
         let status = session.hasPendingBackfill ? "local_fallback" : "complete"
         let audio = audioLinks(session: session, availableAudio: availableAudio)

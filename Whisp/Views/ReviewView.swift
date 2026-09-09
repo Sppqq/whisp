@@ -200,7 +200,11 @@ struct ReviewView: View {
                             .padding(10)
                             .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
                         }
-                        editor(binding: Binding(get: { model.currentSession?.studentNotesMarkdown ?? "" }, set: { model.updateReview(studentNotes: $0) }))
+                        if isPreviewMode {
+                            MarkdownPreview(markdown: currentContent)
+                        } else {
+                            editor(binding: Binding(get: { model.currentSession?.studentNotesMarkdown ?? "" }, set: { model.updateReview(studentNotes: $0) }))
+                        }
                     }
                 case "notes":
                     VStack(spacing: 0) {
@@ -418,7 +422,9 @@ struct ReviewView: View {
 
     private var currentContent: String {
         switch tab {
-        case "student": return model.currentSession?.studentNotesMarkdown ?? ""
+        case "student":
+            guard let session = model.currentSession else { return "" }
+            return MarkdownExporter.reviewStudentNotebook(session: session)
         case "notes": return model.currentSession?.notesMarkdown ?? ""
         case "quiz": return model.currentSession?.quizMarkdown ?? ""
         default: return model.currentSession?.finalMarkdown ?? ""
