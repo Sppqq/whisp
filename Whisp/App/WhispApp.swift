@@ -7,16 +7,16 @@ struct WhispApp: App {
     var body: some Scene {
         WindowGroup("Whisp", id: "main") {
             MainView(model: model)
-                .frame(minWidth: 1_050, minHeight: 680)
+                .frame(minWidth: WhispMetrics.windowMinWidth, minHeight: WhispMetrics.windowMinHeight)
                 .preferredColorScheme(preferredColorScheme)
                 .task { await model.launch() }
         }
-        .defaultSize(width: 1_180, height: 760)
+        .defaultSize(width: 1_280, height: 820)
         .windowResizability(.contentMinSize)
 
         Settings {
             SettingsView(model: model)
-                .frame(width: 680, height: 620)
+                .frame(minWidth: WhispMetrics.settingsMinWidth, minHeight: WhispMetrics.settingsMinHeight)
                 .preferredColorScheme(preferredColorScheme)
         }
     }

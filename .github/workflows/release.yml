@@ -105,9 +105,18 @@ jobs:
             fi
           else
             if ! python3 scripts/release_notes.py Unreleased --output dist/release-notes.md; then
+              PREVIOUS_TAG="$(git describe --tags --match='v*' --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
+              if [[ -n "$PREVIOUS_TAG" ]]; then
+                FALLBACK_COMMITS="$(git log --no-merges --format='- %s' "$PREVIOUS_TAG..$GITHUB_SHA")"
+              else
+                FALLBACK_COMMITS="$(git log --no-merges --format='- %s' -1 "$GITHUB_SHA")"
+              fi
+              if [[ -z "$FALLBACK_COMMITS" ]]; then
+                FALLBACK_COMMITS="- Изменения сборки доступны в коммите $GITHUB_SHA."
+              fi
               {
                 echo "### Изменения"
-                git log --format='- %s' -20 "$GITHUB_SHA"
+                printf '%s\n' "$FALLBACK_COMMITS"
               } > dist/release-notes.md
             fi
           fi

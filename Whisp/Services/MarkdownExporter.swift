@@ -9,15 +9,83 @@ struct MarkdownBundle: Sendable {
 }
 
 enum MarkdownExporter {
-    static func render(session: LectureSession) -> MarkdownBundle {
+    /// Builds the content shown in the student-notebook preview.
+    ///
+    /// Older sessions may only store the generated notebook text, while newer
+    /// exported notes already contain the Obsidian navigation callout and audio
+    /// attachment. Keep the preview consistent in both cases without adding a
+    /// second copy of either block.
+    static func reviewStudentNotebook(session: LectureSession) -> String {
+        let stored = session.studentNotesMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = stored.isEmpty
+            ? session.analysis.map { renderStudentNotebook($0) } ?? ""
+            : stored
+        guard !body.isEmpty else { return "" }
+
+        let hasNavigation = body.contains("> [!abstract]")
+        let hasAudio = body.contains("![[Микрофон.m4a]]") || body.contains("![[Системный звук.m4a]]")
+        let additions = [
+            hasNavigation ? nil : graphNavigation(session: session, includeTags: true),
+            hasAudio ? nil : audioLinks(session: session)
+        ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        guard !additions.isEmpty else { return body }
+        let inserted = additions.joined(separator: "\n\n")
+
+        // Preserve frontmatter at the beginning so MarkdownPreview can hide it.
+        let lines = body.components(separatedBy: .newlines)
+        if lines.first?.trimmingCharacters(in: .whitespaces) == "---",
+           let closing = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) {
+            let closingOffset = closing + 1
+            let frontmatter = lines[...closingOffset].joined(separator: "\n")
+            let remainder = lines.dropFirst(closingOffset + 1).joined(separator: "\n")
+            return [frontmatter, insertAfterTitleIfNeeded(remainder, inserted)]
+                .joined(separator: "\n\n")
+        }
+
+        return insertAfterTitleIfNeeded(body, inserted)
+    }
+
+    private static func insertAfterTitleIfNeeded(_ body: String, _ inserted: String) -> String {
+        let lines = body.components(separatedBy: .newlines)
+        if let firstContent = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+           lines[firstContent].trimmingCharacters(in: .whitespaces).hasPrefix("# ") {
+            var result = lines
+            result.insert(contentsOf: ["", inserted, ""], at: firstContent + 1)
+            return result.joined(separator: "\n")
+        }
+        return "\(inserted)\n\n\(body)"
+    }
+
+    static func render(session: LectureSession, availableAudio: Set<String>? = nil) -> MarkdownBundle {
         let status = session.hasPendingBackfill ? "local_fallback" : "complete"
-        let audio = audioLinks(session: session)
-        let mainYaml = yaml(session: session, transcriptionStatus: status, isMainNote: true)
+        let audio = audioLinks(session: session, availableAudio: availableAudio)
+        let mainYaml = yaml(
+            session: session,
+            transcriptionStatus: status,
+            isMainNote: true,
+            availableAudio: availableAudio
+        )
         let subYaml = yaml(session: session, transcriptionStatus: status, isMainNote: false)
         let rawBody = transcriptBody(session.rawTranscript)
         let finalBody = transcriptBody(session.finalTranscript)
-        let notesBody = WhispFormatting.formatMarkdownNotes(session.analysis.map(renderAnalysis) ?? session.notesMarkdown)
-        let studentBody = WhispFormatting.formatMarkdownNotes(session.analysis.map(renderStudentNotebook) ?? (session.studentNotesMarkdown.isEmpty ? notesBody : session.studentNotesMarkdown))
+        let notesBody: String
+        if let storedNotes = storedMarkdownBody(session.notesMarkdown) {
+            notesBody = WhispFormatting.formatMarkdownNotes(storedNotes)
+        } else if let analysis = session.analysis {
+            notesBody = WhispFormatting.formatMarkdownNotes(renderAnalysis(analysis))
+        } else {
+            notesBody = ""
+        }
+
+        let studentBody: String
+        if let storedStudentNotes = storedMarkdownBody(session.studentNotesMarkdown) {
+            studentBody = WhispFormatting.formatMarkdownNotes(storedStudentNotes)
+        } else if let analysis = session.analysis {
+            studentBody = WhispFormatting.formatMarkdownNotes(renderStudentNotebook(analysis))
+        } else {
+            studentBody = notesBody
+        }
 
         let transcriptSection: String
         if !finalBody.isEmpty {
@@ -53,7 +121,12 @@ enum MarkdownExporter {
         )
     }
 
-    private static func yaml(session: LectureSession, transcriptionStatus: String, isMainNote: Bool) -> String {
+    private static func yaml(
+        session: LectureSession,
+        transcriptionStatus: String,
+        isMainNote: Bool,
+        availableAudio: Set<String>? = nil
+    ) -> String {
         let iso = ISO8601DateFormatter().string(from: session.startedAt ?? session.createdAt)
         let fallback = session.fallbackIntervals.map {
             "\(WhispFormatting.timestamp($0.start))-\(WhispFormatting.timestamp($0.end ?? session.duration))"
@@ -81,6 +154,9 @@ enum MarkdownExporter {
 
         let subjectLink = session.subject != "Не определено" ? "\"\(escapeYAML(session.subject))\"" : "\"Не определено\""
 
+        let audioFiles = audioFileNames(session: session, availableAudio: availableAudio)
+        let audioValue = audioFiles.isEmpty ? "[]" : "[\(audioFiles.joined(separator: ", "))]"
+
         return """
         ---
         type: lecture
@@ -91,7 +167,7 @@ enum MarkdownExporter {
         transcription_status: \(transcriptionStatus)\(tagsSection)
         transcription_models: [gemini-3.5-transcribe-live, large-v3-v20240930_626MB]
         fallback_intervals: "\(fallback)"
-        audio: \(session.captureSystemAudio ? "[Микрофон.m4a, Системный звук.m4a]" : "[Микрофон.m4a]")
+        audio: \(audioValue)
         ---
         """
     }
@@ -188,10 +264,43 @@ enum MarkdownExporter {
         return result
     }
 
-    private static func audioLinks(session: LectureSession) -> String {
-        var links = ["![[Микрофон.m4a]]"]
-        if session.captureSystemAudio { links.append("![[Системный звук.m4a]]") }
-        return links.joined(separator: "\n")
+    private static func audioLinks(session: LectureSession, availableAudio: Set<String>? = nil) -> String {
+        audioFileNames(session: session, availableAudio: availableAudio)
+            .map { "![[\($0)]]" }
+            .joined(separator: "\n")
+    }
+
+    private static func audioFileNames(session: LectureSession, availableAudio: Set<String>? = nil) -> [String] {
+        var names = ["Микрофон.m4a"]
+        if session.captureSystemAudio { names.append("Системный звук.m4a") }
+        guard let availableAudio else { return names }
+        return names.filter { availableAudio.contains($0) }
+    }
+
+    /// Stored markdown may come from a restored WebDAV document and therefore
+    /// already contain frontmatter. Keep only its body before adding the
+    /// current session properties, otherwise every sync would duplicate the
+    /// Properties block in Obsidian.
+    private static func storedMarkdownBody(_ text: String) -> String? {
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+        let lines = normalized.components(separatedBy: "\n")
+        guard let first = lines.first,
+              first.trimmingCharacters(in: .whitespacesAndNewlines) == "---" else {
+            let body = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+            return body.isEmpty ? nil : body
+        }
+
+        guard let closingIndex = lines.dropFirst().firstIndex(where: {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines) == "---"
+        }) else {
+            let body = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+            return body.isEmpty ? nil : body
+        }
+
+        let bodyStart = closingIndex + 1
+        let body = lines[bodyStart...].joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return body.isEmpty ? nil : body
     }
 
     private static func cleanTag(_ value: String) -> String {

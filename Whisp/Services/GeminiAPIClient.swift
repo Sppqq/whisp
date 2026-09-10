@@ -14,6 +14,13 @@ actor GeminiAPIClient {
     private let session: URLSession
     private let proxyDelegate: ProxyAuthenticationDelegate?
     static let defaultBaseURL = URL(string: "https://generativelanguage.googleapis.com")!
+    static let defaultAnalysisModel = "gemini-3.8-flash"
+    static let defaultAnalysisFallbackModels = [
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite"
+    ]
+    static let modelFallbackFailureThreshold = 3
     private let baseURL: URL
     private let transport: ProviderTransport
 
@@ -192,16 +199,84 @@ actor GeminiAPIClient {
     func generateText(
         prompt: String,
         model: String,
+        fallbackModel: String? = nil,
+        fallbackModels: [String] = [],
         responseSchema: [String: Any]? = nil,
         onStatus: (@Sendable (String) async -> Void)? = nil
     ) async throws -> String {
-        let maxAttempts = max(5, apiKeys.count * 3)
+        var requestedFallbackModels = fallbackModel.map { [$0] } ?? []
+        requestedFallbackModels.append(contentsOf: fallbackModels)
+
+        var candidateModels = [model]
+        var seenModels = Set([model])
+        for candidate in requestedFallbackModels {
+            let cleaned = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty, seenModels.insert(cleaned).inserted else { continue }
+            candidateModels.append(cleaned)
+        }
+
+        // A fallback chain deliberately gets a small, fixed failure budget per
+        // model. Calls without a fallback keep the previous retry policy.
+        let maxAttemptsPerModel = candidateModels.count > 1
+            ? Self.modelFallbackFailureThreshold
+            : nil
+        var lastError: GeminiAPIError?
+
+        for (index, candidateModel) in candidateModels.enumerated() {
+            do {
+                return try await generateTextWithRetries(
+                    prompt: prompt,
+                    model: candidateModel,
+                    responseSchema: responseSchema,
+                    maxAttemptsOverride: maxAttemptsPerModel,
+                    onStatus: onStatus
+                )
+            } catch let error as GeminiAPIError {
+                lastError = error
+                let nextModel = candidateModels.indices.contains(index + 1)
+                    ? candidateModels[index + 1]
+                    : nil
+                guard let nextModel,
+                      shouldUseModelFallback(
+                          primaryModel: candidateModel,
+                          fallbackModel: nextModel,
+                          error: error
+                      ) else {
+                    throw error
+                }
+
+                if error.isRateLimitOrQuota {
+                    await onStatus?(
+                        "После \(Self.modelFallbackFailureThreshold) неудачных попыток на \(candidateModel) " +
+                        "переключаемся на \(nextModel)..."
+                    )
+                } else {
+                    await onStatus?("Модель \(candidateModel) недоступна. Переключаемся на \(nextModel)...")
+                }
+            }
+        }
+
+        throw lastError ?? GeminiAPIError(
+            code: 429,
+            status: "RESOURCE_EXHAUSTED",
+            message: "Превышен лимит запросов к Gemini",
+            retryAfter: 10
+        )
+    }
+
+    private func generateTextWithRetries(
+        prompt: String,
+        model: String,
+        responseSchema: [String: Any]?,
+        maxAttemptsOverride: Int? = nil,
+        onStatus: (@Sendable (String) async -> Void)?
+    ) async throws -> String {
+        let maxAttempts = max(1, maxAttemptsOverride ?? max(5, apiKeys.count * 3))
         var lastError: Error?
 
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
             let key = currentAPIKey()
-            let effectiveModel = (attempt > apiKeys.count && model == "gemini-3.8-flash") ? "gemini-2.5-flash" : model
             do {
                 let data: Data
                 switch transport {
@@ -215,7 +290,7 @@ actor GeminiAPIClient {
                         "contents": [["role": "user", "parts": [["text": prompt]]]],
                         "generationConfig": generation
                     ]
-                    data = try await sendJSON(body, path: "v1beta/models/\(effectiveModel):generateContent", apiKeyOverride: key)
+                    data = try await sendJSON(body, path: "v1beta/models/\(model):generateContent", apiKeyOverride: key)
                 case .openAICompatible:
                     var body: [String: Any] = [
                         "model": model,
@@ -254,6 +329,29 @@ actor GeminiAPIClient {
         throw lastError ?? GeminiAPIError(code: 429, status: "RESOURCE_EXHAUSTED", message: "Превышен лимит запросов к Gemini", retryAfter: 10)
     }
 
+    private func shouldUseModelFallback(
+        primaryModel: String,
+        fallbackModel: String?,
+        error: GeminiAPIError
+    ) -> Bool {
+        guard transport == .gemini,
+              let fallbackModel,
+              !fallbackModel.isEmpty,
+              fallbackModel != primaryModel else { return false }
+
+        if error.isRateLimitOrQuota || error.code == 400 || error.code == 404 {
+            return true
+        }
+
+        let message = error.message.lowercased()
+        return message.contains("model") && (
+            message.contains("not found") ||
+            message.contains("unsupported") ||
+            message.contains("does not exist") ||
+            message.contains("invalid")
+        )
+    }
+
     func transcribe(
         audioURL: URL,
         model: String,
@@ -267,17 +365,25 @@ actor GeminiAPIClient {
             try Task.checkCancellation()
             do {
                 return try await performTranscribe(audioURL: audioURL, model: model, onStatus: onStatus)
-            } catch let error as GeminiAPIError where error.isRateLimitOrQuota {
+            } catch let error as GeminiAPIError where error.isRateLimitOrQuota || error.isRetryableTranscriptionResponse {
                 lastError = error
                 if attempt == maxAttempts { throw error }
 
                 if let rotation = rotateToNextKey() {
-                    await onStatus?("Лимит квоты на ключе #\(rotation.previousIndex). Переключаемся на ключ #\(rotation.index) из \(rotation.total)...")
+                    if error.isRateLimitOrQuota {
+                        await onStatus?("Лимит квоты на ключе #\(rotation.previousIndex). Переключаемся на ключ #\(rotation.index) из \(rotation.total)...")
+                    } else {
+                        await onStatus?("Gemini вернул неполный ответ. Повторяем фрагмент на ключе #\(rotation.index) из \(rotation.total)...")
+                    }
                     try? await Task.sleep(for: .milliseconds(500))
                 } else {
-                    let delay = max(3.0, (error.retryAfter ?? 10.0) + 1.0)
+                    let delay = error.isRateLimitOrQuota ? max(3.0, (error.retryAfter ?? 10.0) + 1.0) : 1.0
                     let delayFormatted = String(format: "%.1f", delay)
-                    await onStatus?("Превышен лимит запросов Google API. Ожидание \(delayFormatted) сек перед повтором...")
+                    if error.isRateLimitOrQuota {
+                        await onStatus?("Превышен лимит запросов Google API. Ожидание \(delayFormatted) сек перед повтором...")
+                    } else {
+                        await onStatus?("Gemini вернул неполный ответ. Повтор через \(delayFormatted) сек...")
+                    }
                     try await Task.sleep(for: .seconds(delay))
                 }
             }

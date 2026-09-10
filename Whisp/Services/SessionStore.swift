@@ -46,9 +46,14 @@ actor SessionStore {
 
         // Save local .md files so they are easily accessible in Finder / Obsidian
         let lessonName = WhispFormatting.safePathComponent(session.title)
-        let markdown = MarkdownExporter.render(session: session)
-        let mainContent = session.studentNotesMarkdown.isEmpty ? markdown.studentNotebook : session.studentNotesMarkdown
-        let notesContent = session.notesMarkdown.isEmpty ? markdown.notes : session.notesMarkdown
+        let availableAudio = Set(["Микрофон.m4a", "Системный звук.m4a"].filter {
+            FileManager.default.fileExists(atPath: dir.appending(path: $0).path)
+        })
+        let markdown = MarkdownExporter.render(session: session, availableAudio: availableAudio)
+        let hasStudentNotes = !session.studentNotesMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.analysis != nil
+        let hasNotes = !session.notesMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.analysis != nil
+        let mainContent = hasStudentNotes ? markdown.studentNotebook : ""
+        let notesContent = hasNotes ? markdown.notes : ""
         let finalContent = session.finalMarkdown.isEmpty ? markdown.final : session.finalMarkdown
         let rawContent = session.rawMarkdown.isEmpty ? markdown.raw : session.rawMarkdown
 

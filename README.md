@@ -8,7 +8,7 @@
   <br>
   Записывайте с микрофона или импортируйте готовое аудио, проверяйте результат и сохраняйте конспект в Obsidian.
   <br><br>
-  <img alt="macOS 15+" src="https://img.shields.io/badge/macOS-15%2B-202225?style=flat-square&logo=apple&logoColor=white">
+  <img alt="macOS 26+" src="https://img.shields.io/badge/macOS-26%2B-202225?style=flat-square&logo=apple&logoColor=white">
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple_Silicon-native-202225?style=flat-square">
   <img alt="Swift 5" src="https://img.shields.io/badge/Swift-5-F25F4B?style=flat-square&logo=swift&logoColor=white">
   <img alt="Public beta" src="https://img.shields.io/badge/status-public_beta-E66B5B?style=flat-square">
@@ -39,6 +39,7 @@ Whisp помогает превратить длинную лекцию в ма�
 - автоматическая проверка GitHub Releases и загрузка нового DMG;
 - фирменная иконка в Dock и Finder;
 - menu bar и настраиваемые глобальные горячие клавиши.
+- нативная macOS 26+ оболочка с Liquid Glass для навигации, Inspector и управляющих панелей.
 
 После обработки доступны пять представлений:
 
@@ -85,9 +86,9 @@ Whisp фиксирует границы fallback-интервалов и поз�
 ### Требования
 
 - Mac с Apple Silicon;
-- macOS 15 или новее;
-- для готового DMG: только macOS 15 или новее;
-- для самостоятельной сборки: полный Xcode 16 или новее и [Homebrew](https://brew.sh/).
+- macOS 26 или новее;
+- для готового DMG: только macOS 26 или новее;
+- для самостоятельной сборки: полный Xcode 26 или новее и [Homebrew](https://brew.sh/).
 
 ### Самостоятельная сборка
 

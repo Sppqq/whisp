@@ -15,9 +15,18 @@ struct OnboardingView: View {
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(WhispPalette.accent)
                 Spacer()
-                Text("Шаг \(step + 1) из 3")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text("Шаг \(step + 1) из 3")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        ForEach(0..<3, id: \.self) { index in
+                            Capsule()
+                                .fill(index <= step ? WhispPalette.accent : WhispPalette.quietFill)
+                                .frame(width: 24, height: 4)
+                        }
+                    }
+                }
             }
             .padding(.horizontal, 30)
             .padding(.top, 24)
@@ -35,32 +44,38 @@ struct OnboardingView: View {
                 Button("Пропустить настройку") {
                     model.skipOnboarding()
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
 
                 Spacer()
 
-                if step > 0 {
-                    Button("Назад") { step -= 1 }
-                        .keyboardShortcut(.cancelAction)
-                }
-
-                Button(step == 2 ? "Перейти к первой записи" : "Продолжить") {
-                    if step == 2 {
-                        model.completeOnboarding()
-                    } else {
-                        if step == 1 {
-                            model.settingsStore.geminiAPIKey = geminiKey
+                WhispGlassGroup {
+                    HStack(spacing: 10) {
+                        if step > 0 {
+                            Button("Назад") { step -= 1 }
+                                .keyboardShortcut(.cancelAction)
+                                .buttonStyle(.glass)
                         }
-                        step += 1
+
+                        Button(step == 2 ? "Перейти к первой записи" : "Продолжить") {
+                            if step == 2 {
+                                model.completeOnboarding()
+                            } else {
+                                if step == 1 {
+                                    model.settingsStore.geminiAPIKey = geminiKey
+                                }
+                                step += 1
+                            }
+                        }
+                        .buttonStyle(.glassProminent)
+                        .keyboardShortcut(.defaultAction)
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(WhispPalette.accent)
-                .keyboardShortcut(.defaultAction)
             }
-            .padding(24)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
         }
-        .frame(width: 680, height: 520)
+        .frame(width: 720, height: 560)
         .background(WhispPalette.canvas)
         .tint(WhispPalette.accent)
         .onAppear {
@@ -78,7 +93,7 @@ struct OnboardingView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("Лекция превращается в материал для учёбы")
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+                    .font(.system(size: 30, weight: .semibold))
                 Text("Whisp сохранит запись, подготовит расшифровку и поможет быстро проверить главное перед зачётом.")
                     .font(.body)
                     .foregroundStyle(.secondary)
@@ -102,15 +117,15 @@ struct OnboardingView: View {
             Spacer()
 
             Text("Подключите расшифровку")
-                .font(.system(size: 27, weight: .semibold, design: .rounded))
+                .font(.system(size: 27, weight: .semibold))
             Text("Для облачной расшифровки нужен ключ активного провайдера. На первом запуске используется Gemini. Ключ хранится локально в выбранном хранилище Whisp.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .lineSpacing(4)
 
             if model.settingsStore.usesGemini {
-                SecureField("Gemini API key", text: $geminiKey)
-                    .textFieldStyle(.roundedBorder)
+                SecureField("Ключ Gemini API", text: $geminiKey)
+                    .whispGlassField()
                     .onChange(of: geminiKey) { _, _ in testMessage = "" }
 
                 HStack(spacing: 12) {
@@ -123,7 +138,7 @@ struct OnboardingView: View {
                             Label("Проверить подключение", systemImage: "checkmark.shield")
                         }
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.glass)
                     .disabled(isTesting || geminiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     if !testMessage.isEmpty {
@@ -156,11 +171,24 @@ struct OnboardingView: View {
             Spacer()
 
             Text("Проверьте источник звука")
-                .font(.system(size: 27, weight: .semibold, design: .rounded))
+                .font(.system(size: 27, weight: .semibold))
             Text("Вы сможете изменить эти параметры позже. Для обычной лекции достаточно микрофона; запись системного звука нужна, если преподаватель или видео звучат через Mac.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .lineSpacing(4)
+
+            if model.inputDevices.isEmpty {
+                HStack(spacing: 10) {
+                    Label("Микрофоны не найдены или доступ ещё не выдан", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(WhispPalette.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Обновить") { model.refreshInputDevices() }
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Микрофон")
@@ -178,9 +206,10 @@ struct OnboardingView: View {
                 }
                 .labelsHidden()
                 .frame(maxWidth: .infinity)
+                .whispGlassControl()
             }
             .padding(16)
-            .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
 
             Label("Перед отправкой в облако вы увидите и сможете отредактировать результат.", systemImage: "eye")
                 .font(.caption)

@@ -21,7 +21,8 @@ enum GeminiTranscriptionPayload {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw invalidResponse("Некорректный ответ расшифровки")
         }
-        if let status = root["status"] as? String, status != "completed" {
+        let status = (root["status"] as? String)?.lowercased()
+        if let status, status != "completed" {
             throw invalidResponse("Расшифровка не завершена: \(status)")
         }
         let steps = root["steps"] as? [[String: Any]] ?? []
@@ -79,7 +80,8 @@ enum GeminiTranscriptionPayload {
             segments = [TranscriptSegment(start: 0, end: 0, text: text, source: .geminiBackfill, model: model)]
         }
         guard !segments.isEmpty else {
-            if items.contains(where: { ($0["type"] as? String) == "text" && ($0["text"] as? String) != nil }) {
+            let hasTextPayload = items.contains { $0["text"] is String } || root["output_text"] is String
+            if (status == "completed" && items.isEmpty) || hasTextPayload {
                 return [] // A valid silent chunk is not a malformed API response.
             }
             throw invalidResponse("Gemini не вернул распознанную речь. Аудио сохранено; можно повторить обработку.")

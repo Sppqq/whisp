@@ -36,4 +36,10 @@ struct GeminiAPIError: Error, LocalizedError, Sendable {
                lower.contains("high demand") || lower.contains("overloaded") ||
                lower.contains("temporarily unavailable") || lower.contains("spikes in demand")
     }
+
+    /// A completed interaction can occasionally arrive without usable text.
+    /// It is safe to retry that individual audio window with another key.
+    var isRetryableTranscriptionResponse: Bool {
+        status == "TRANSCRIPTION" || status == "EMPTY"
+    }
 }

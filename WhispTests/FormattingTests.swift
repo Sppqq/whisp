@@ -12,6 +12,12 @@ final class FormattingTests: XCTestCase {
         XCTAssertEqual(WhispFormatting.safePathComponent("///"), "Без названия")
     }
 
+    func testSafePathUsesUTF8ByteLimit() {
+        let component = WhispFormatting.safePathComponent(String(repeating: "я", count: 120))
+        XCTAssertLessThanOrEqual(component.utf8.count, 180)
+        XCTAssertEqual(component.count, 90)
+    }
+
     func testRussianFolderPath() throws {
         var session = LectureSession()
         session.startedAt = ISO8601DateFormatter().date(from: "2026-09-01T07:30:00Z")

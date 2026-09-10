@@ -25,13 +25,34 @@ enum WhispFormatting {
         let cleaned = value.components(separatedBy: forbidden).joined(separator: " ")
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.isEmpty ? "Без названия" : String(cleaned.prefix(120))
+        guard !cleaned.isEmpty else { return "Без названия" }
+
+        // WebDAV ultimately writes to a filesystem where the filename limit is
+        // measured in UTF-8 bytes, not Swift characters. Cyrillic characters
+        // are two bytes each, so a character-only limit can still exceed 255
+        // bytes once a descriptive filename suffix is appended.
+        var result = ""
+        for character in cleaned {
+            let candidate = result + String(character)
+            if candidate.utf8.count > 180 { break }
+            result = candidate
+        }
+        return result.isEmpty ? "Без названия" : result
+    }
+
+    static let lectureDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.dateFormat = "dd.MM.yyyy"
+        return formatter
+    }()
+
+    static func lectureDate(_ date: Date) -> String {
+        lectureDateFormatter.string(from: date)
     }
 
     static func datedTitle(title: String, date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "dd.MM.yyyy"
-        let datePrefix = formatter.string(from: date)
+        let datePrefix = lectureDate(date)
 
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.range(of: #"^\d{2}\.\d{2}\.\d{4}"#, options: .regularExpression) != nil {

@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 struct PostUpdateView: View {
     let version: String
@@ -14,9 +15,7 @@ struct PostUpdateView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    if !releaseChanges.isEmpty {
-                        changelogSection
-                    }
+                    changelogSection
 
                     Text("Как теперь работать с записью")
                         .font(.headline)
@@ -51,8 +50,7 @@ struct PostUpdateView: View {
                     .foregroundStyle(.secondary)
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(WhispPalette.quietFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(WhispPalette.hairline))
+                    .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
                 }
                 .padding(24)
             }
@@ -65,7 +63,7 @@ struct PostUpdateView: View {
                     onDismiss()
                     dismiss()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 .controlSize(.large)
             }
             .padding(18)
@@ -81,7 +79,7 @@ struct PostUpdateView: View {
                 .font(.system(size: 32, weight: .medium))
                 .foregroundStyle(WhispPalette.accent)
                 .frame(width: 56, height: 56)
-                .background(WhispPalette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Обновление завершено")
@@ -103,58 +101,96 @@ struct PostUpdateView: View {
     private var changelogSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Что нового")
+                Text("Полный changelog")
                     .font(.headline)
 
                 Spacer()
 
-                Text("Изменения версии")
+                Text("Версия \(version)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(releaseChanges.indices, id: \.self) { index in
-                    let change = releaseChanges[index]
-                    PostUpdateChangeRow(change: change)
+            Group {
+                if releaseChanges.isEmpty {
+                    Text("Полный changelog этой сборки не найден в приложении.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(releaseChanges.indices, id: \.self) { index in
+                            let change = releaseChanges[index]
+                            PostUpdateChangeRow(change: change)
 
-                    if index < releaseChanges.count - 1 {
-                        Divider()
-                            .padding(.leading, 36)
+                            if index < releaseChanges.count - 1 {
+                                Divider()
+                                    .padding(.leading, 36)
+                            }
+                        }
                     }
+                    .padding(.horizontal, 14)
                 }
             }
-            .padding(.horizontal, 14)
-            .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(WhispPalette.hairline))
+            .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
         }
     }
 
     private var releaseChanges: [PostUpdateChange] {
-        guard version.contains("1.1.12") else { return [] }
+        guard let url = Bundle.main.url(forResource: "CHANGELOG", withExtension: "md"),
+              let markdown = try? String(contentsOf: url, encoding: .utf8) else {
+            return []
+        }
+        return ChangelogParser.changes(for: version, in: markdown)
+    }
+}
 
-        return [
-            PostUpdateChange(
-                icon: "sparkles",
-                category: "Добавлено",
-                title: "Экран обновления после первого запуска новой версии"
-            ),
-            PostUpdateChange(
-                icon: "text.quote",
-                category: "Изменено",
-                title: "Стенограмма и сырой звук получили разные подписи, иконки и оформление"
-            ),
-            PostUpdateChange(
-                icon: "waveform",
-                category: "Изменено",
-                title: "Источник аудио в плеере теперь различается по иконке микрофона или системного звука"
-            ),
-            PostUpdateChange(
-                icon: "checkmark.circle",
-                category: "Исправлено",
-                title: "Убран дублирующийся пункт описания темы в настройках"
-            )
-        ]
+private enum ChangelogParser {
+    static func changes(for version: String, in markdown: String) -> [PostUpdateChange] {
+        let section = section(for: version, in: markdown) ?? ""
+        var category = "Изменения"
+        var changes: [PostUpdateChange] = []
+
+        for line in section.split(whereSeparator: \.isNewline) {
+            let value = String(line).trimmingCharacters(in: .whitespaces)
+            if value.hasPrefix("### ") {
+                category = String(value.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+            } else if value.hasPrefix("- ") {
+                let title = String(value.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+                guard !title.isEmpty else { continue }
+                changes.append(PostUpdateChange(
+                    icon: icon(for: category),
+                    category: category,
+                    title: title
+                ))
+            }
+        }
+
+        return changes
+    }
+
+    private static func section(for version: String, in markdown: String) -> String? {
+        let lines = markdown.components(separatedBy: .newlines)
+        let versionHeader = "## [\(version.trimmingCharacters(in: .whitespacesAndNewlines))]"
+        let start = lines.firstIndex { $0.hasPrefix(versionHeader) }
+            ?? lines.firstIndex { $0.hasPrefix("## [Unreleased]") }
+        guard let start else { return nil }
+
+        let followingLine = start + 1
+        let end = followingLine < lines.endIndex
+            ? (lines[followingLine...].firstIndex { $0.hasPrefix("## ") } ?? lines.endIndex)
+            : lines.endIndex
+        return lines[start..<end].joined(separator: "\n")
+    }
+
+    private static func icon(for category: String) -> String {
+        let normalized = category.lowercased()
+        if normalized.contains("добав") { return "plus.circle" }
+        if normalized.contains("исправ") { return "checkmark.circle" }
+        if normalized.contains("совмест") { return "macwindow" }
+        if normalized.contains("провер") { return "checkmark.seal" }
+        return "arrow.triangle.2.circlepath"
     }
 }
 
@@ -212,7 +248,7 @@ private struct PostUpdateHighlight: View {
                 .font(.system(size: 19, weight: .medium))
                 .foregroundStyle(tint)
                 .frame(width: 36, height: 36)
-                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .background(tint.opacity(0.10), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.headline)
@@ -226,7 +262,6 @@ private struct PostUpdateHighlight: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, minHeight: 164, alignment: .topLeading)
-        .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(WhispPalette.hairline))
+        .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
     }
 }

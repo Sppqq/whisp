@@ -1,21 +1,13 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum WhispPalette {
-    static let accent = Color(red: 0.92, green: 0.32, blue: 0.24)
-    static let canvas = Color(nsColor: .windowBackgroundColor)
-    static let panel = Color(nsColor: .controlBackgroundColor)
-    static let elevated = Color(nsColor: .textBackgroundColor)
-    static let sidebar = Color(nsColor: .underPageBackgroundColor)
-    static let hairline = Color.primary.opacity(0.13)
-    static let quietFill = Color.primary.opacity(0.055)
-}
-
 struct MainView: View {
     @Bindable var model: AppModel
+    @State private var isInspectorPresented = false
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             LibrarySidebar(model: model)
                 .navigationSplitViewColumnWidth(min: 240, ideal: 270, max: 340)
         } detail: {
@@ -24,9 +16,48 @@ struct MainView: View {
                 detail
                 updateProgressOverlay
             }
+            .navigationTitle("")
         }
         .navigationSplitViewStyle(.balanced)
         .tint(WhispPalette.accent)
+        .inspector(isPresented: $isInspectorPresented) {
+            SessionInspectorView(model: model)
+                .inspectorColumnWidth(min: 240, ideal: 280, max: 340)
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                HStack(spacing: 8) {
+                    Button {
+                        model.showStartScreen()
+                    } label: {
+                        Image(systemName: "plus")
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                    .labelStyle(.iconOnly)
+                    .help("Новая лекция или импорт")
+                    .accessibilityLabel("Новая лекция или импорт")
+                    .keyboardShortcut("n", modifiers: .command)
+                    .disabled(model.isRecording)
+
+                    Button {
+                        isInspectorPresented.toggle()
+                    } label: {
+                        Image(systemName: "sidebar.trailing")
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .controlSize(.small)
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(isInspectorPresented ? WhispPalette.accent : .secondary)
+                    .help(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
+                    .accessibilityLabel(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
+                    .disabled(model.displayedSession == nil)
+                }
+            }
+        }
         .alert("Завершить лекцию?", isPresented: $model.showStopConfirmation) {
             Button("Отмена", role: .cancel) { model.discardStopRequest() }
             Button("Завершить", role: .destructive) { Task { await model.confirmStop() } }
@@ -98,7 +129,8 @@ struct MainView: View {
             BackfillComparisonView(model: model).frame(minWidth: 1_000, minHeight: 650)
         }
         .sheet(isPresented: $model.showSettings) {
-            SettingsView(model: model).frame(width: 720, height: 680)
+            SettingsView(model: model)
+                .frame(minWidth: WhispMetrics.settingsMinWidth, minHeight: WhispMetrics.settingsMinHeight)
         }
         .sheet(isPresented: $model.showOnboarding) {
             OnboardingView(model: model)
@@ -132,8 +164,7 @@ struct MainView: View {
                     }
                 }
                 .padding(14)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WhispPalette.hairline))
+                .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.controlCornerRadius))
                 .padding(18)
             }
             .allowsHitTesting(false)
@@ -146,8 +177,7 @@ struct MainView: View {
                         .font(.callout.weight(.medium))
                 }
                 .padding(14)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WhispPalette.hairline))
+                .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.controlCornerRadius))
                 .padding(18)
             }
             .allowsHitTesting(false)
@@ -182,13 +212,14 @@ struct MainView: View {
                         Label("Показать процесс", systemImage: "waveform.badge.magnifyingglass")
                             .font(.caption)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.glass)
                     .controlSize(.small)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .background(WhispPalette.panel)
-                Divider()
+                .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
 
             if model.isRecording {
@@ -214,10 +245,14 @@ private struct FailedSessionView: View {
     var body: some View {
         VStack(spacing: 18) {
             ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.red.opacity(0.09))
                 Image(systemName: "exclamationmark.waveform")
                     .font(.system(size: 30, weight: .light)).foregroundStyle(.red)
-            }.frame(width: 78, height: 78)
+            }
+            .frame(width: 78, height: 78)
+            .glassEffect(
+                .regular.tint(Color.red.opacity(0.12)),
+                in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius)
+            )
             Text("Не удалось обработать запись").font(.title2.weight(.semibold))
             Text(model.currentSession?.lastError ?? "Не удалось получить аудио")
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -229,28 +264,44 @@ private struct FailedSessionView: View {
                 Button("Проверить подключение Gemini") {
                     Task { _ = await model.testAllGeminiKeys() }
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.glass)
                 .font(.caption)
             }
-            HStack(spacing: 10) {
-                if model.needsScreenCapturePermission {
-                    Button("Открыть настройки macOS") { model.openScreenCaptureSettings() }
+            ViewThatFits(in: .horizontal) {
+                WhispGlassGroup {
+                    HStack(spacing: 10) { recoveryActions }
                 }
-                if model.needsMicrophonePermission {
-                    Button("Открыть настройки микрофона") { model.openMicrophoneSettings() }
-                }
-                Button(model.currentSession?.finalTranscript.isEmpty == false || model.currentSession?.rawTranscript.isEmpty == false ? "Повторить только конспект" : "Повторить обработку") { Task { await model.retryFailedStage() } }
-                    .buttonStyle(.borderedProminent).tint(WhispPalette.accent)
-                Button("Новая запись / импорт") { model.showStartScreen() }
-                Button(role: .destructive) {
-                    if let id = model.currentSession?.id {
-                        model.deleteSession(id)
-                    }
-                } label: {
-                    Label("Удалить", systemImage: "trash")
+                WhispGlassGroup {
+                    VStack(alignment: .leading, spacing: 8) { recoveryActions }
                 }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(40)
+    }
+
+    @ViewBuilder
+    private var recoveryActions: some View {
+        if model.needsScreenCapturePermission {
+            Button("Открыть настройки macOS") { model.openScreenCaptureSettings() }
+                .buttonStyle(.glass)
+        }
+        if model.needsMicrophonePermission {
+            Button("Открыть настройки микрофона") { model.openMicrophoneSettings() }
+                .buttonStyle(.glass)
+        }
+        Button(model.currentSession?.finalTranscript.isEmpty == false || model.currentSession?.rawTranscript.isEmpty == false ? "Повторить только конспект" : "Повторить обработку") {
+            Task { await model.retryFailedStage() }
+        }
+        .buttonStyle(.glassProminent)
+        Button("Новая запись / импорт") { model.showStartScreen() }
+            .buttonStyle(.glass)
+        Button(role: .destructive) {
+            if let id = model.currentSession?.id {
+                model.deleteSession(id)
+            }
+        } label: {
+            Label("Удалить", systemImage: "trash")
+        }
+        .buttonStyle(.glass)
     }
 }
 
@@ -330,7 +381,7 @@ private struct ProcessingView: View {
                 }
                 .padding(10)
                 .frame(width: 520, alignment: .leading)
-                .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 10))
+                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
             }
 
             if !recentSegments.isEmpty {
@@ -344,8 +395,7 @@ private struct ProcessingView: View {
                     }
                 }
                 .padding(14).frame(width: 520, alignment: .leading)
-                .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WhispPalette.hairline))
+                .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
@@ -361,7 +411,7 @@ private struct ProcessingView: View {
                         .font(.caption2.monospacedDigit())
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(WhispPalette.hairline, in: Capsule())
+                        .background(WhispPalette.quietFill, in: .capsule)
                         .foregroundStyle(.tertiary)
 
                     Spacer()
@@ -374,7 +424,8 @@ private struct ProcessingView: View {
                         Label("Копировать", systemImage: "doc.on.doc")
                             .font(.caption2)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
 
                     Button {
                         withAnimation(.snappy(duration: 0.2)) {
@@ -385,11 +436,10 @@ private struct ProcessingView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(WhispPalette.panel)
 
                 if isLogExpanded {
                     Divider()
@@ -426,9 +476,7 @@ private struct ProcessingView: View {
                 }
             }
             .frame(width: 520)
-            .background(WhispPalette.elevated)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(WhispPalette.hairline))
+            .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
 
             HStack(spacing: 12) {
                 Button(role: .destructive) {
@@ -437,7 +485,7 @@ private struct ProcessingView: View {
                     Label("Отменить обработку", systemImage: "xmark.circle")
                         .font(.callout)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
                 .controlSize(.regular)
             }
             .padding(.top, 2)
@@ -480,109 +528,116 @@ private struct StartView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("ВАШЕ ПРОСТРАНСТВО ДЛЯ ЛЕКЦИЙ")
-                        .font(.caption.weight(.semibold))
-                        .tracking(1.2)
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Whisp", systemImage: "waveform")
+                        .font(.title3.weight(.semibold))
                         .foregroundStyle(WhispPalette.accent)
-                    Text("Слушайте.\nК важному вернётесь.")
-                        .font(.system(size: 38, weight: .semibold, design: .rounded))
-                        .tracking(-1)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("Запишите лекцию или добавьте аудиофайл. Whisp подготовит расшифровку и конспект, которые можно проверить и отредактировать.")
+                    Text("Новая лекция")
+                        .font(.largeTitle.weight(.semibold))
+                    Text("Запишите лекцию или импортируйте аудиофайл. Результат можно проверить, отредактировать и сохранить в Obsidian.")
                         .font(.body)
                         .foregroundStyle(.secondary)
-                        .lineSpacing(4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Новая лекция").font(.title2.weight(.semibold))
-                            Text("Проверьте источник перед стартом").font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button { model.refreshInputDevices() } label: { Image(systemName: "arrow.clockwise") }
-                            .buttonStyle(.plain).foregroundStyle(.secondary).help("Обновить список микрофонов")
-                    }
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Микрофон").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                        Picker("Микрофон", selection: Binding(
-                            get: { model.selectedMicrophoneID },
-                            set: { model.selectedMicrophoneID = $0 }
-                        )) {
-                            Text("Системный по умолчанию").tag(UInt32?.none)
-                            ForEach(model.inputDevices) { device in
-                                Text(device.name + (device.isDefault ? " · по умолчанию" : ""))
-                                    .tag(Optional(device.id))
-                            }
-                        }
-                        .labelsHidden().frame(maxWidth: .infinity)
-                    }
-
-                    VStack(alignment: .leading, spacing: 9) {
-                        Text("Что записывать").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                        Picker("Что записывать", selection: $captureMode) {
-                            ForEach(CaptureMode.allCases) { mode in
-                                Label(mode.rawValue, systemImage: mode.icon).tag(mode)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        Text(captureMode == .microphone
-                             ? "Для очной лекции: записывается ваш микрофон."
-                             : "Микрофон и звук приложений сохранятся отдельными дорожками.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-
-                    Divider()
-
-                    Button {
-                        Task { await model.startRecording(captureSystemAudio: captureMode == .microphoneAndSystem) }
-                    } label: {
+                WhispGlassSurface(tint: WhispPalette.accent) {
+                    VStack(alignment: .leading, spacing: 22) {
                         HStack {
-                            Image(systemName: "record.circle.fill")
-                            Text("Начать запись").fontWeight(.semibold)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Источник записи")
+                                    .font(.headline)
+                                Text("Проверьте микрофон и системный звук перед стартом")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                             Spacer()
-                            Text(model.settingsStore.settings.hotkeyRecord).font(.caption.monospaced()).opacity(0.78)
+                            Button { model.refreshInputDevices() } label: {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .help("Обновить список микрофонов")
                         }
-                        .padding(.horizontal, 4).frame(height: 34)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .tint(WhispPalette.accent)
 
-                    Button {
-                        showAudioImporter = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "waveform.badge.plus")
-                            Text("Импортировать аудиофайл").fontWeight(.medium)
-                            Spacer()
-
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Микрофон", systemImage: "mic")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            Picker("Микрофон", selection: Binding(
+                                get: { model.selectedMicrophoneID },
+                                set: { model.selectedMicrophoneID = $0 }
+                            )) {
+                                Text("Системный по умолчанию").tag(UInt32?.none)
+                                ForEach(model.inputDevices) { device in
+                                    Text(device.name + (device.isDefault ? " · по умолчанию" : ""))
+                                        .tag(Optional(device.id))
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity)
+                            .whispGlassControl()
                         }
-                        .padding(.horizontal, 4).frame(height: 32)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Что записывать", systemImage: "waveform")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            Picker("Что записывать", selection: $captureMode) {
+                                ForEach(CaptureMode.allCases) { mode in
+                                    Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                            Text(captureMode == .microphone
+                                 ? "Записывается только микрофон."
+                                 : "Микрофон и звук приложений сохранятся отдельными дорожками.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        WhispGlassDivider()
+
+                        WhispGlassGroup {
+                            Button {
+                                Task { await model.startRecording(captureSystemAudio: captureMode == .microphoneAndSystem) }
+                            } label: {
+                                Label("Начать запись", systemImage: "record.circle.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.glassProminent)
+                            .controlSize(.large)
+
+                            Button {
+                                showAudioImporter = true
+                            } label: {
+                                Label("Импортировать аудиофайл", systemImage: "waveform.badge.plus")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.glass)
+                            .controlSize(.large)
+                        }
+
+                        Text("Можно также перетащить аудиофайлы прямо сюда")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .center)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
+                    .padding(26)
                 }
-                .padding(24)
-                .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 18).stroke(WhispPalette.hairline))
                 .disabled(model.isBusy)
                 .dropDestination(for: URL.self) { urls, _ in
                     model.enqueueAudioImports(urls)
                     return true
                 }
 
-                Label("Перед отправкой в Obsidian вы сможете проверить результат.", systemImage: "doc.text.magnifyingglass")
+                Label("Перед отправкой в Obsidian результат можно проверить и отредактировать.", systemImage: "checkmark.circle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxWidth: 600)
+            .frame(maxWidth: 660)
             .padding(36)
             .frame(maxWidth: .infinity)
         }
@@ -603,17 +658,50 @@ private struct StartView: View {
 
 private struct SessionSummaryView: View {
     let session: LectureSession
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text(session.subject).font(.caption.weight(.semibold)).foregroundStyle(WhispPalette.accent)
-                Text(session.title).font(.system(size: 36, weight: .bold, design: .rounded)).tracking(-0.8)
-                Label(session.status.title, systemImage: session.status == .synced ? "checkmark.icloud" : "clock")
-                    .font(.callout).foregroundStyle(.secondary)
-                Divider()
-                Text(session.notesMarkdown).textSelection(.enabled).frame(maxWidth: 760, alignment: .leading)
-            }.padding(48).frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(session.subject)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(WhispPalette.accent)
+                    Text(session.title)
+                        .font(.title.weight(.bold))
+                        .tracking(-0.5)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 16)
+
+                Label(
+                    session.status.title,
+                    systemImage: session.status == .synced ? "checkmark.icloud" : "clock"
+                )
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+
+            if session.notesMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ContentUnavailableView(
+                    "Конспект ещё не создан",
+                    systemImage: "doc.text",
+                    description: Text("Выберите лекцию после завершения обработки, чтобы открыть её материалы.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                MarkdownPreview(markdown: session.notesMarkdown)
+            }
         }
+        .background(WhispPalette.canvas)
     }
 }
 
@@ -635,13 +723,15 @@ struct BatchRegenerateSheet: View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(WhispPalette.accent)
                     Image(systemName: "sparkles.rectangle.stack.fill")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(WhispPalette.accent)
                 }
                 .frame(width: 40, height: 40)
+                .glassEffect(
+                    .regular.tint(WhispPalette.accent.opacity(0.12)),
+                    in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
+                )
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Массовая перегенерация конспектов")
@@ -660,7 +750,7 @@ struct BatchRegenerateSheet: View {
                             .font(.title3)
                             .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.glass)
                 }
             }
             .padding(.horizontal, 24)
@@ -703,8 +793,7 @@ struct BatchRegenerateSheet: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.orange.opacity(0.25), lineWidth: 1))
+            .glassEffect(.regular.tint(Color.orange.opacity(0.12)), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
 
             HStack(spacing: 12) {
                 metricCard(title: "Найдено лекций", value: "\(eligibleSessions.count)", icon: "books.vertical")
@@ -718,7 +807,7 @@ struct BatchRegenerateSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .background(WhispPalette.panel, in: RoundedRectangle(cornerRadius: 8))
+            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
 
             Spacer()
 
@@ -729,7 +818,7 @@ struct BatchRegenerateSheet: View {
 
                 HStack {
                     TextField("ПЕРЕГЕНЕРИРОВАТЬ", text: $confirmationInput)
-                        .textFieldStyle(.roundedBorder)
+                        .whispGlassField()
                         .font(.system(.body, design: .monospaced))
 
                     if isConfirmed {
@@ -755,7 +844,7 @@ struct BatchRegenerateSheet: View {
                 } label: {
                     Label("Начать перегенерацию...", systemImage: "sparkles")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 .tint(Color.red)
                 .disabled(!isConfirmed || eligibleSessions.isEmpty)
             }
@@ -788,7 +877,7 @@ struct BatchRegenerateSheet: View {
                 }
             }
             .padding(14)
-            .background(WhispPalette.panel, in: RoundedRectangle(cornerRadius: 10))
+            .whispGlassControl(cornerRadius: WhispMetrics.controlCornerRadius)
 
             HStack(spacing: 16) {
                 HStack(spacing: 6) {
@@ -828,8 +917,7 @@ struct BatchRegenerateSheet: View {
                         .padding(8)
                     }
                     .frame(maxHeight: .infinity)
-                    .background(Color(nsColor: .textBackgroundColor).opacity(0.8), in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(WhispPalette.hairline, lineWidth: 1))
+                    .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                     .onChange(of: model.batchLogs.count) {
                         if let last = model.batchLogs.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
@@ -847,7 +935,7 @@ struct BatchRegenerateSheet: View {
                 } label: {
                     Label("Остановить", systemImage: "stop.fill")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
             }
         }
         .padding(24)
@@ -867,6 +955,6 @@ struct BatchRegenerateSheet: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .background(WhispPalette.panel, in: RoundedRectangle(cornerRadius: 8))
+        .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
     }
 }

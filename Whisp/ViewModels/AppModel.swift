@@ -127,10 +127,11 @@ final class AppModel {
     var batchForceOverwrite = true
     var batchLogs: [ProcessingLogEntry] = []
     var isGeneratingQuiz = false
+    var isGeneratingNotes = false
     var isRestoringFromWebDAV = false
     private var batchRegenerateTask: Task<Void, Never>?
 
-    var isBusy: Bool { isRecording || isBatchRegenerating || isRestoringFromWebDAV || isWorking }
+    var isBusy: Bool { isRecording || isBatchRegenerating || isRestoringFromWebDAV || isWorking || isGeneratingNotes }
     private(set) var activeProcessingSessionID: UUID?
     var selectedMicrophoneID: UInt32? {
         get { settingsStore.settings.preferredMicrophoneID }
@@ -663,10 +664,33 @@ final class AppModel {
         await task.value
     }
 
-    func updateReview(title: String? = nil, subject: String? = nil, raw: String? = nil, final: String? = nil, notes: String? = nil, studentNotes: String? = nil, quiz: String? = nil) {
+    func updateReview(title: String? = nil, subject: String? = nil, date: Date? = nil, raw: String? = nil, final: String? = nil, notes: String? = nil, studentNotes: String? = nil, quiz: String? = nil) {
         guard var session = currentSession else { return }
         if let title { session.title = title }
         if let subject { session.subject = subject }
+        if let date {
+            let previousStart = session.startedAt ?? session.createdAt
+            let shift = date.timeIntervalSince(previousStart)
+            let topic = session.title.replacingOccurrences(
+                of: #"^\d{2}\.\d{2}\.\d{4}\s*—\s*"#,
+                with: "",
+                options: .regularExpression
+            )
+
+            session.startedAt = date
+            session.title = WhispFormatting.datedTitle(title: topic, date: date)
+            if let endedAt = session.endedAt {
+                session.endedAt = endedAt.addingTimeInterval(shift)
+            }
+            session.pauses = session.pauses.map { pause in
+                var shifted = pause
+                shifted.start = pause.start.addingTimeInterval(shift)
+                if let end = pause.end {
+                    shifted.end = end.addingTimeInterval(shift)
+                }
+                return shifted
+            }
+        }
         if let raw { session.rawMarkdown = raw }
         if let final { session.finalMarkdown = final; session.userEditedFinal = true }
         if let notes { session.notesMarkdown = notes; session.userEditedNotes = true }
@@ -1100,9 +1124,14 @@ final class AppModel {
                 }
                 session.finalTranscript = TranscriptMerger.merge(session.rawTranscript)
             }
-            processingProgress = 0.7
+            session.status = session.hasPendingBackfill ? .awaitingBackfill : .review
+            let rendered = MarkdownExporter.render(session: session)
+            session.rawMarkdown = rendered.raw
+            session.finalMarkdown = rendered.final
+            processingProgress = 0.75
             if let index = sessions.firstIndex(where: { $0.id == session.id }) { sessions[index] = session }
             if currentSession?.id == session.id { currentSession = session }
+            selectedSessionID = session.id
             try await store.save(session)
             await regenerateAnalysis(for: session.id)
         } catch is CancellationError {
@@ -1144,17 +1173,102 @@ final class AppModel {
         if session.finalTranscript.isEmpty && !session.rawTranscript.isEmpty {
             session.finalTranscript = session.rawTranscript
         }
+
+        isGeneratingNotes = true
+        defer { isGeneratingNotes = false }
+
         var analysisError: String?
         if !settingsStore.activeProviderAPIKeys.isEmpty, !session.finalTranscript.isEmpty {
             do {
                 statusMessage = "Создаём конспект через \(settingsStore.activeProviderName)..."
-                let analysis = try await LectureAnalysisService(client: try providerClient(), model: settingsStore.activeAnalysisModel)
-                    .analyze(segments: session.finalTranscript, subjects: activeSubjects, onStatus: { [weak self] status in
-                        await MainActor.run { self?.statusMessage = status }
-                    })
+                addProcessingLog("Начало анализа и составления конспекта...")
+
+                if forceOverwriteNotes || !session.userEditedStudentNotes {
+                    session.studentNotesMarkdown = ""
+                }
+                if forceOverwriteNotes || !session.userEditedNotes {
+                    session.notesMarkdown = ""
+                }
+
+                let analysis = try await LectureAnalysisService(
+                    client: try providerClient(),
+                    model: settingsStore.activeAnalysisModel,
+                    fallbackModels: settingsStore.activeAnalysisFallbackModels
+                )
+                    .analyze(
+                        segments: session.finalTranscript,
+                        subjects: activeSubjects,
+                        onStatus: { [weak self] status in
+                            await MainActor.run {
+                                self?.statusMessage = status
+                                self?.addProcessingLog(status)
+                            }
+                        },
+                        onMetadata: { [weak self] partial in
+                            await MainActor.run {
+                                guard let self else { return }
+                                if let idx = self.sessions.firstIndex(where: { $0.id == targetID }) {
+                                    var current = self.sessions[idx]
+                                    current.title = WhispFormatting.datedTitle(title: partial.title, date: current.startedAt ?? current.createdAt)
+                                    current.subject = partial.confidence >= 0.65 ? partial.subject : "Не определено"
+                                    self.sessions[idx] = current
+                                    if self.currentSession?.id == targetID { self.currentSession = current }
+                                    Task { try? await self.store.save(current) }
+                                }
+                            }
+                        },
+                        onPartCompleted: { [weak self] currentPart, totalParts, partText in
+                            await MainActor.run {
+                                guard let self else { return }
+                                if let idx = self.sessions.firstIndex(where: { $0.id == targetID }) {
+                                    var current = self.sessions[idx]
+                                    if forceOverwriteNotes || !current.userEditedStudentNotes {
+                                        if current.studentNotesMarkdown.isEmpty {
+                                            current.studentNotesMarkdown = partText
+                                        } else {
+                                            current.studentNotesMarkdown += "\n\n" + partText
+                                        }
+                                    }
+                                    if forceOverwriteNotes || !current.userEditedNotes {
+                                        if current.notesMarkdown.isEmpty {
+                                            current.notesMarkdown = partText
+                                        } else {
+                                            current.notesMarkdown += "\n\n" + partText
+                                        }
+                                    }
+                                    // Leave room for the final editorial pass after
+                                    // all progressive parts have been generated.
+                                    let partProgress = 0.75 + (Double(currentPart) / Double(max(1, totalParts))) * 0.20
+                                    self.processingProgress = min(1.0, partProgress)
+                                    self.sessions[idx] = current
+                                    if self.currentSession?.id == targetID { self.currentSession = current }
+                                    Task { try? await self.store.save(current) }
+                                }
+                            }
+                        }
+                    )
+
+                if let idx = sessions.firstIndex(where: { $0.id == targetID }) {
+                    session = sessions[idx]
+                }
                 session.analysis = analysis
                 session.title = WhispFormatting.datedTitle(title: analysis.title, date: session.startedAt ?? session.createdAt)
                 session.subject = analysis.confidence >= 0.65 ? analysis.subject : "Не определено"
+                if forceOverwriteNotes || !session.userEditedStudentNotes {
+                    session.studentNotesMarkdown = analysis.studentNotebook
+                }
+                if forceOverwriteNotes || !session.userEditedNotes {
+                    session.notesMarkdown = """
+                    ## Кратко
+
+                    \(analysis.summary)
+
+                    ## Подробный разбор лекции
+
+                    \(analysis.detailedNotes)
+                    """
+                }
+                processingProgress = max(processingProgress, 0.98)
                 session.lastError = nil
                 if forceOverwriteNotes {
                     session.userEditedNotes = false
@@ -1163,6 +1277,7 @@ final class AppModel {
             } catch {
                 analysisError = error.localizedDescription
                 session.lastError = error.localizedDescription
+                addProcessingLog("Ошибка составления конспекта: \(error.localizedDescription)")
             }
         }
         session.status = session.hasPendingBackfill ? .awaitingBackfill : .review
@@ -1174,8 +1289,8 @@ final class AppModel {
         let rendered = MarkdownExporter.render(session: session)
         session.rawMarkdown = rendered.raw
         session.finalMarkdown = session.userEditedFinal ? previousFinal : rendered.final
-        session.notesMarkdown = preserveEditedNotes ? previousNotes : rendered.notes
-        session.studentNotesMarkdown = preserveEditedStudentNotes ? previousStudentNotes : rendered.studentNotebook
+        session.notesMarkdown = preserveEditedNotes ? previousNotes : (session.notesMarkdown.isEmpty ? rendered.notes : session.notesMarkdown)
+        session.studentNotesMarkdown = preserveEditedStudentNotes ? previousStudentNotes : (session.studentNotesMarkdown.isEmpty ? rendered.studentNotebook : session.studentNotesMarkdown)
         sessions[index] = session
         try? await store.save(session)
         if currentSession?.id == targetID {

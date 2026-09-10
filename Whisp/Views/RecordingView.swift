@@ -20,6 +20,9 @@ struct RecordingView: View {
                 Toggle("Следить за текстом", isOn: $followsTranscript)
                     .toggleStyle(.switch)
                     .controlSize(.small)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                     .help("Выключите, чтобы читать предыдущие реплики без автоматической прокрутки")
             }
             .padding(.horizontal, 30)
@@ -37,9 +40,9 @@ struct RecordingView: View {
                     .font(.system(size: 15, weight: .medium))
                     .frame(width: 30, height: 30)
             }
-            .buttonStyle(.plain)
-            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            .buttonStyle(.glass)
             .help("Настройки")
+            .accessibilityLabel("Настройки")
 
             HStack(spacing: 10) {
                 Circle()
@@ -57,9 +60,7 @@ struct RecordingView: View {
 
             RecordingStatePill(model: model)
         }
-        .padding(.horizontal, 24).padding(.vertical, 17)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .bottom) { Divider().opacity(0.5) }
+        .padding(.horizontal, 28).padding(.vertical, 18)
     }
 
     private var transcript: some View {
@@ -103,8 +104,7 @@ struct RecordingView: View {
             }
         }
         .frame(maxWidth: 920)
-        .background(WhispPalette.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(WhispPalette.hairline))
+        .background(WhispPalette.content)
         .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 14)
         .overlay {
             if model.currentSession?.rawTranscript.isEmpty == true { listeningState }
@@ -144,23 +144,26 @@ struct RecordingView: View {
                 }
             }
 
-            HStack(spacing: 10) {
-                Button { Task { await model.pauseOrResume() } } label: {
-                    Label(model.isPaused ? "Продолжить" : "Пауза", systemImage: model.isPaused ? "play.fill" : "pause.fill")
-                        .frame(minWidth: 102)
-                }
-                .buttonStyle(.borderedProminent).controlSize(.large).tint(WhispPalette.accent)
+            WhispGlassGroup {
+                HStack(spacing: 10) {
+                    Button { Task { await model.pauseOrResume() } } label: {
+                        Label(model.isPaused ? "Продолжить" : "Пауза", systemImage: model.isPaused ? "play.fill" : "pause.fill")
+                            .frame(minWidth: 102)
+                    }
+                    .buttonStyle(.glassProminent).controlSize(.large)
 
-                Button(role: .destructive) { model.showStopConfirmation = true } label: {
-                    Label("Завершить", systemImage: "stop.fill").frame(minWidth: 102)
+                    Button(role: .destructive) { model.showStopConfirmation = true } label: {
+                        Label("Завершить", systemImage: "stop.fill").frame(minWidth: 102)
+                    }
+                    .buttonStyle(.glass).controlSize(.large)
                 }
-                .buttonStyle(.bordered).controlSize(.large)
             }
             Text(model.statusMessage).font(.caption).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 26).padding(.top, 15).padding(.bottom, 17)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) { Divider().opacity(0.5) }
+        .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
+        .padding(.horizontal, 18)
+        .padding(.bottom, 18)
     }
 
     private var selectedMicrophoneName: String {
@@ -202,10 +205,12 @@ private struct RecordingStatePill: View {
             }
             .foregroundStyle(.primary)
             .padding(.horizontal, 11).padding(.vertical, 7)
-            .background(color.opacity(0.12), in: Capsule())
+            .glassEffect(.regular.tint(color.opacity(0.12)).interactive(), in: .capsule)
         }
         .menuStyle(.borderlessButton)
         .help("Открыть состояние Gemini, Whisper, прокси и WebDAV")
+        .accessibilityLabel("Состояние сервисов")
+        .accessibilityValue(title)
     }
 }
 
@@ -259,7 +264,7 @@ private struct LevelMeter: View {
                 Capsule().fill(Color.primary.opacity(0.08)).overlay(alignment: .leading) {
                     Capsule()
                         .fill(value > 0.82 ? Color.red : WhispPalette.accent)
-                        .frame(width: max(3, geometry.size.width * CGFloat(value)))
+                        .frame(width: max(3, geometry.size.width * min(max(CGFloat(value), 0), 1)))
                         .animation(.linear(duration: 0.08), value: value)
                 }
             }.frame(width: 112, height: 5)
