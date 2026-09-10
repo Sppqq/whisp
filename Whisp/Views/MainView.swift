@@ -26,12 +26,12 @@ struct MainView: View {
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                HStack(spacing: 3) {
+                HStack(spacing: 8) {
                     Button {
                         model.showStartScreen()
                     } label: {
                         Image(systemName: "plus")
-                            .frame(width: 30, height: 30)
+                            .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.glass)
                     .controlSize(.small)
@@ -41,23 +41,20 @@ struct MainView: View {
                     .keyboardShortcut("n", modifiers: .command)
                     .disabled(model.isRecording)
 
-                    Toggle(isOn: $isInspectorPresented) {
+                    Button {
+                        isInspectorPresented.toggle()
+                    } label: {
                         Image(systemName: "sidebar.trailing")
+                            .frame(width: 28, height: 28)
                     }
-                    .toggleStyle(.button)
                     .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
                     .controlSize(.small)
                     .labelStyle(.iconOnly)
-                    .frame(width: 30, height: 30)
-                    .tint(isInspectorPresented ? WhispPalette.accent : .secondary)
+                    .foregroundStyle(isInspectorPresented ? WhispPalette.accent : .secondary)
                     .help(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
                     .accessibilityLabel(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
                     .disabled(model.displayedSession == nil)
-                }
-                .padding(3)
-                .background(WhispPalette.quietFill, in: .capsule)
-                .overlay {
-                    Capsule().stroke(WhispPalette.hairline, lineWidth: 1)
                 }
             }
         }
