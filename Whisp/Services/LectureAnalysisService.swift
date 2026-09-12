@@ -42,6 +42,7 @@ actor LectureAnalysisService {
         var alternatives: [String]?
         var tags: [String]?
         var keyConcepts: [String]?
+        var reminders: [ReminderDraft]?
         var summary: String
     }
 
@@ -84,7 +85,8 @@ actor LectureAnalysisService {
             detailedNotes: "",
             studentNotebook: "",
             tags: metadata.tags ?? [],
-            keyConcepts: metadata.keyConcepts ?? []
+            keyConcepts: metadata.keyConcepts ?? [],
+            reminders: metadata.reminders ?? []
         )
         await onMetadata?(partialResult)
 
@@ -226,6 +228,7 @@ actor LectureAnalysisService {
         - alternatives: массив до 3 альтернативных предметов
         - tags: массив из 3-6 тегов для Obsidian (например: ["лекция", "математика", "интегралы"])
         - keyConcepts: массив из 3-7 ключевых понятий и терминов для графа связей Obsidian (например: ["Определенный интеграл", "Формула Ньютона-Лейбница"])
+        - reminders: массив до 5 конкретных поручений к следующему уроку. Только то, что реально сказано в расшифровке: сделать, выучить, принести или подготовить. Не добавляй общие советы и не выдумывай задания. У каждого элемента короткий title (до 60 символов) и подробные notes без воды
         - summary: краткая суть лекции (1-2 ёмких абзаца без воды)
 
         РАСШИФРОВКА:
@@ -241,9 +244,13 @@ actor LectureAnalysisService {
                 "alternatives": ["type": "ARRAY", "items": ["type": "STRING"], "description": "До 3 альтернативных предметов"],
                 "tags": ["type": "ARRAY", "items": ["type": "STRING"], "description": "Массив из 3-6 тегов для Obsidian"],
                 "keyConcepts": ["type": "ARRAY", "items": ["type": "STRING"], "description": "Массив из 3-7 ключевых понятий"],
+                "reminders": ["type": "ARRAY", "items": ["type": "OBJECT", "properties": [
+                    "title": ["type": "STRING", "description": "Короткое название задания до 60 символов"],
+                    "notes": ["type": "STRING", "description": "Детали задания без воды"]
+                ], "required": ["title", "notes"]], "description": "Реальные задания к следующему уроку, до 5"],
                 "summary": ["type": "STRING", "description": "Краткая суть лекции (1-2 абзаца)"]
             ],
-            "required": ["title", "subject", "confidence", "alternatives", "tags", "keyConcepts", "summary"]
+            "required": ["title", "subject", "confidence", "alternatives", "tags", "keyConcepts", "reminders", "summary"]
         ]
 
         let text = try await generateText(prompt: prompt, responseSchema: schema, onStatus: onStatus)
@@ -257,6 +264,7 @@ actor LectureAnalysisService {
                 alternatives: [],
                 tags: ["лекция"],
                 keyConcepts: [],
+                reminders: [],
                 summary: "Конспект лекции."
             )
         }

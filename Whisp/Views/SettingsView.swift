@@ -3,6 +3,7 @@ import SwiftUI
 private enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
     case provider = "Провайдер"
     case audio = "Звук"
+    case schedule = "Расписание"
     case storage = "Хранилище"
     case appearance = "Вид"
     case subjects = "Предметы"
@@ -13,6 +14,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .provider: "point.3.connected.trianglepath.dotted"
         case .audio: "waveform.badge.mic"
+        case .schedule: "calendar"
         case .storage: "externaldrive"
         case .appearance: "circle.lefthalf.filled"
         case .subjects: "books.vertical"
@@ -40,6 +42,7 @@ struct SettingsView: View {
     @State private var webDAVPassword = ""
     @State private var testResult = ""
     @State private var isTestingAll = false
+    @State private var remindersAccessStatus = ""
 
     init(model: AppModel) {
         self._model = Bindable(wrappedValue: model)
@@ -141,6 +144,7 @@ struct SettingsView: View {
         switch selectedPage {
         case .provider: providerPage
         case .audio: audioPage
+        case .schedule: schedulePage
         case .storage: storagePage
         case .appearance: appearancePage
         case .subjects: subjectsPage
@@ -455,23 +459,42 @@ struct SettingsView: View {
         if let provider = store.activeProviderPreset, provider != .gemini {
             SettingsCard(
                 title: provider.title,
-                caption: "API key хранится отдельно. URL и модели можно заменить под свой аккаунт.",
+                caption: provider.requiresAPIKey
+                    ? "API key хранится отдельно. URL и модели можно заменить под свой аккаунт."
+                    : "Локальный сервис. URL и модели можно настроить под запущенный инстанс.",
                 icon: provider.icon
             ) {
                 VStack(alignment: .leading, spacing: 10) {
                     TextField("Базовый URL API", text: providerConfigurationBinding(provider, keyPath: \.baseURL))
                         .whispGlassField()
                     HStack {
-                        TextField("Модель расшифровки", text: providerConfigurationBinding(provider, keyPath: \.transcriptionModel))
-                            .whispGlassField()
+                        if provider.supportsRemoteTranscription {
+                            TextField("Модель расшифровки", text: providerConfigurationBinding(provider, keyPath: \.transcriptionModel))
+                                .whispGlassField()
+                        }
                         TextField("Модель для конспекта", text: providerConfigurationBinding(provider, keyPath: \.analysisModel))
                             .whispGlassField()
                     }
-                    SecureField("API key", text: providerAPIKeyBinding(provider))
+                    SecureField(provider.requiresAPIKey ? "API key" : "API key (необязательно)", text: providerAPIKeyBinding(provider))
                     .whispGlassField()
 
                     if provider == .anthropic {
                         Label("Anthropic используется для конспектов; для расшифровки аудио выберите Gemini или OpenAI-совместимый API.", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if provider == .ollama {
+                        Label("Ollama работает локально (по умолчанию http://localhost:11434/v1). API key не требуется. Whisp расшифровывает аудио локальным Whisper, а Ollama строит конспект.", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if provider == .lmStudio {
+                        Label("LM Studio работает локально (Local Server на http://localhost:1234/v1). API key не требуется. Расшифровка выполняется локальным Whisper, а конспект строит активная модель LM Studio.", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if provider == .unsloth {
+                        Label("Unsloth работает через OpenAI-совместимый сервер (обычно http://localhost:8000/v1). При локальном запуске API key не требуется.", systemImage: "info.circle")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -522,6 +545,94 @@ struct SettingsView: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var schedulePage: some View {
+        VStack(spacing: 16) {
+            SettingsCard(
+                title: "Расписание уроков",
+                caption: "Whisp использует ближайший урок как срок для заданий из лекции.",
+                icon: "calendar"
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Создавать напоминания автоматически", isOn: $store.settings.remindersEnabled)
+                        .toggleStyle(.switch)
+
+                    HStack {
+                        Button {
+                            Task {
+                                do {
+                                    let granted = try await model.reminderService.requestAccess()
+                                    remindersAccessStatus = granted ? "Доступ разрешён" : "Доступ не разрешён"
+                                } catch {
+                                    remindersAccessStatus = error.localizedDescription
+                                }
+                            }
+                        } label: {
+                            Label("Разрешить доступ к Reminders", systemImage: "checklist")
+                        }
+                        .buttonStyle(.glass)
+                        if !remindersAccessStatus.isEmpty {
+                            Text(remindersAccessStatus)
+                                .font(.caption)
+                                .foregroundStyle(remindersAccessStatus == "Доступ разрешён" ? WhispPalette.success : .secondary)
+                        }
+                    }
+
+                    Text("Если в лекции прозвучит конкретное задание — например, «к следующему уроку принести отчёт» — Whisp добавит его в Apple Reminders. Доступ к напоминаниям macOS запросит при первом таком задании.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if store.settings.lessonSchedule.isEmpty {
+                        Text("Добавьте хотя бы один урок ниже.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ForEach($store.settings.lessonSchedule) { $entry in
+                        scheduleRow(entry: $entry)
+                    }
+
+                    Button {
+                        store.settings.lessonSchedule.append(LessonScheduleEntry())
+                    } label: {
+                        Label("Добавить урок", systemImage: "plus")
+                    }
+                    .buttonStyle(.glassProminent)
+                }
+            }
+        }
+    }
+
+    private func scheduleRow(entry: Binding<LessonScheduleEntry>) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                TextField("Предмет", text: entry.subject)
+                    .whispGlassField()
+                Button(role: .destructive) {
+                    store.settings.lessonSchedule.removeAll { $0.id == entry.wrappedValue.id }
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+            }
+            HStack(spacing: 10) {
+                Picker("День", selection: entry.weekday) {
+                    ForEach(1...7, id: \.self) { day in
+                        Text(Calendar.current.weekdaySymbols[(day + 5) % 7]).tag(day)
+                    }
+                }
+                .pickerStyle(.menu)
+                .whispGlassControl()
+
+                Stepper("\(String(format: "%02d", entry.wrappedValue.hour)):\(String(format: "%02d", entry.wrappedValue.minute))", value: entry.hour, in: 0...23)
+                Stepper("мин. \(String(format: "%02d", entry.wrappedValue.minute))", value: entry.minute, in: 0...59, step: 5)
+                Stepper("\(entry.wrappedValue.durationMinutes) мин", value: entry.durationMinutes, in: 15...240, step: 15)
+            }
+        }
+        .padding(12)
+        .whispQuietSurface()
     }
 
     private var storagePage: some View {
@@ -800,6 +911,7 @@ struct SettingsView: View {
         switch selectedPage {
         case .provider: "Сервис, ключи и сетевое подключение"
         case .audio: "Источники записи"
+        case .schedule: "Дни и время занятий"
         case .storage: "Obsidian и локальные файлы"
         case .appearance: "Светлая, тёмная или системная тема"
         case .subjects: "Список дисциплин для классификации"

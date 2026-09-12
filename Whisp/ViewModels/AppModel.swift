@@ -23,6 +23,7 @@ final class AppModel {
     let audioCapture = AudioCaptureService()
     let player = AudioPlayerController()
     let updateService = UpdateService()
+    let reminderService = ReminderService()
 
     @ObservationIgnored private var librarySearchIndex = LibrarySearchIndex()
     @ObservationIgnored private var librarySearchIndexNeedsRebuild = true
@@ -243,11 +244,10 @@ final class AppModel {
             sessions = try await store.loadAll()
             let needsInitialSetup = !onboardingCompleted
                 && sessions.isEmpty
-                && settingsStore.activeProviderAPIKeys.isEmpty
-                && settingsStore.activeProviderEndpoint == nil
+                && !settingsStore.isActiveProviderConfigured
             showOnboarding = needsInitialSetup
             showSettings = !needsInitialSetup
-                && (settingsStore.activeProviderAPIKeys.isEmpty || settingsStore.activeProviderEndpoint == nil)
+                && !settingsStore.isActiveProviderConfigured
             if let uploading = sessions.first(where: { $0.status == .uploading }) {
                 currentSession = uploading
                 selectedSessionID = uploading.id
@@ -496,13 +496,13 @@ final class AppModel {
                 throw GeminiAPIError(
                     code: 400,
                     status: "UNSUPPORTED",
-                    message: "Anthropic создаёт конспекты по готовому тексту, но не расшифровывает аудио. Для импорта выберите Gemini или OpenAI-совместимый провайдер.",
+                    message: "\(settingsStore.activeProviderName) создаёт конспекты по готовому тексту, но не расшифровывает аудио. Для импорта аудио выберите Gemini или OpenAI-совместимый провайдер, либо запишите аудио через Whisp (с локальным Whisper).",
                     retryAfter: nil
                 )
             }
-            guard !settingsStore.activeProviderAPIKeys.isEmpty else {
-                addProcessingLog("Ошибка: не указан API key активного провайдера")
-                throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала добавьте API key активного провайдера в Настройках", retryAfter: nil)
+            guard settingsStore.isActiveProviderConfigured else {
+                addProcessingLog("Ошибка: активный провайдер не настроен")
+                throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала настройте активный провайдер в Настройках", retryAfter: nil)
             }
 
             statusMessage = "Расшифровываем импортированную запись"
@@ -974,7 +974,11 @@ final class AppModel {
             geminiState = .available
             let count = settingsStore.activeProviderAPIKeys.count
             let name = settingsStore.activeProviderName
-            return count > 1 ? "\(name) доступен (\(count) ключей)" : "\(name) доступен"
+            if settingsStore.activeProviderRequiresAPIKey {
+                return count > 1 ? "\(name) доступен (\(count) ключей)" : "\(name) доступен"
+            } else {
+                return "\(name) доступен"
+            }
         } catch {
             let message = connectionMessage(for: error)
             geminiState = .unavailable(message)
@@ -1061,6 +1065,21 @@ final class AppModel {
                 break
             }
         }
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCannotConnectToHost {
+            if let preset = settingsStore.activeProviderPreset {
+                let endpoint = settingsStore.activeProviderEndpoint?.absoluteString ?? preset.defaultConfiguration.baseURL
+                switch preset {
+                case .ollama:
+                    return "Не удалось подключиться к Ollama на \(endpoint). Убедитесь, что сервер запущен (`ollama serve`)."
+                case .lmStudio:
+                    return "Не удалось подключиться к LM Studio на \(endpoint). Убедитесь, что запущен Local Server в LM Studio."
+                case .unsloth:
+                    return "Не удалось подключиться к Unsloth на \(endpoint). Убедитесь, что локальный сервер запущен."
+                default:
+                    break
+                }
+            }
+        }
         return error.localizedDescription
     }
 
@@ -1093,13 +1112,13 @@ final class AppModel {
                     throw GeminiAPIError(
                         code: 400,
                         status: "UNSUPPORTED",
-                        message: "Anthropic создаёт конспекты по готовому тексту, но не расшифровывает аудио. Сначала выберите Gemini или OpenAI-совместимый провайдер для расшифровки.",
+                        message: "\(settingsStore.activeProviderName) создаёт конспекты по готовому тексту, но не расшифровывает аудио. Во время записи речь распознаётся через локальный Whisper.",
                         retryAfter: nil
                     )
                 }
                 session.finalTranscript = TranscriptMerger.merge(session.rawTranscript)
                 session.lastError = nil
-            } else if !settingsStore.activeProviderAPIKeys.isEmpty {
+            } else if settingsStore.isActiveProviderConfigured {
                 do {
                     statusMessage = "Финальная расшифровка: \(settingsStore.activeProviderName)"
                     let finalService = FinalTranscriptionService(
@@ -1120,7 +1139,7 @@ final class AppModel {
                 }
             } else {
                 if session.rawTranscript.isEmpty {
-                    throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала добавьте API key активного провайдера", retryAfter: nil)
+                    throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала настройте активный провайдер в Настройках", retryAfter: nil)
                 }
                 session.finalTranscript = TranscriptMerger.merge(session.rawTranscript)
             }
@@ -1178,7 +1197,7 @@ final class AppModel {
         defer { isGeneratingNotes = false }
 
         var analysisError: String?
-        if !settingsStore.activeProviderAPIKeys.isEmpty, !session.finalTranscript.isEmpty {
+        if settingsStore.isActiveProviderConfigured, !session.finalTranscript.isEmpty {
             do {
                 statusMessage = "Создаём конспект через \(settingsStore.activeProviderName)..."
                 addProcessingLog("Начало анализа и составления конспекта...")
@@ -1252,6 +1271,22 @@ final class AppModel {
                     session = sessions[idx]
                 }
                 session.analysis = analysis
+                if settingsStore.settings.remindersEnabled,
+                   session.createdReminderIDs.isEmpty,
+                   !analysis.reminders.isEmpty,
+                   !settingsStore.settings.lessonSchedule.isEmpty {
+                    do {
+                        let ids = try await reminderService.createReminders(
+                            drafts: analysis.reminders,
+                            session: session,
+                            schedule: settingsStore.settings.lessonSchedule
+                        )
+                        session.createdReminderIDs = ids
+                        statusMessage = "Конспект готов, напоминания добавлены"
+                    } catch {
+                        addProcessingLog("Напоминания не созданы: \(error.localizedDescription)")
+                    }
+                }
                 session.title = WhispFormatting.datedTitle(title: analysis.title, date: session.startedAt ?? session.createdAt)
                 session.subject = analysis.confidence >= 0.65 ? analysis.subject : "Не определено"
                 if forceOverwriteNotes || !session.userEditedStudentNotes {
@@ -1488,8 +1523,8 @@ final class AppModel {
             lastError = "Стенограмма пуста, невозможно составить вопросы"
             return
         }
-        guard !settingsStore.activeProviderAPIKeys.isEmpty else {
-            lastError = "Укажите API key активного провайдера в настройках"
+        guard settingsStore.isActiveProviderConfigured else {
+            lastError = "Настройте активный провайдер в настройках"
             return
         }
 
@@ -1604,7 +1639,7 @@ final class AppModel {
         backfillMonitor?.cancel()
         guard currentSession?.hasPendingBackfill == true,
               settingsStore.activeProviderSupportsRemoteTranscription,
-              !settingsStore.activeProviderAPIKeys.isEmpty else { return }
+              settingsStore.isActiveProviderConfigured else { return }
         let sessionID = currentSession?.id
         backfillMonitor = Task { [weak self] in
             var delay = 60.0
@@ -1749,7 +1784,7 @@ final class AppModel {
                 retryAfter: nil
             )
         }
-        guard !settingsStore.activeProviderAPIKeys.isEmpty else {
+        if settingsStore.activeProviderRequiresAPIKey && settingsStore.activeProviderAPIKeys.isEmpty {
             throw GeminiAPIError(
                 code: 401,
                 status: "API_KEY",

@@ -97,7 +97,10 @@ actor GeminiAPIClient {
 
     private func probeModels() async throws {
         var request = URLRequest(url: baseURL.appending(path: "models"))
-        request.setValue("Bearer \(currentAPIKey())", forHTTPHeaderField: "Authorization")
+        let key = currentAPIKey()
+        if !key.isEmpty {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
     }
@@ -182,7 +185,8 @@ actor GeminiAPIClient {
             "required": ["title", "subject", "confidence", "alternatives", "summary", "detailedNotes"]
         ]
         let text = try await generateText(prompt: prompt, model: model, responseSchema: schema, onStatus: onStatus)
-        let envelope = try JSONDecoder().decode(GeminiAnalysisEnvelope.self, from: Data(text.utf8))
+        let cleanedJSON = Self.extractJSON(from: text)
+        let envelope = try JSONDecoder().decode(GeminiAnalysisEnvelope.self, from: Data(cleanedJSON.utf8))
         return AnalysisResult(
             title: envelope.title,
             subject: envelope.subject,
@@ -469,7 +473,10 @@ actor GeminiAPIClient {
         await onStatus?("Загрузка аудио в OpenAI-совместимый API (\(sizeMB))...")
         var request = URLRequest(url: baseURL.appending(path: "audio/transcriptions"))
         request.httpMethod = "POST"
-        request.setValue("Bearer \(currentAPIKey())", forHTTPHeaderField: "Authorization")
+        let key = currentAPIKey()
+        if !key.isEmpty {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         let (data, response) = try await session.upload(for: request, from: body)
         try validate(response: response, data: data)
@@ -579,10 +586,14 @@ actor GeminiAPIClient {
         request.httpMethod = "POST"
         let key = apiKeyOverride ?? currentAPIKey()
         if transport == .anthropic {
-            request.setValue(key, forHTTPHeaderField: "x-api-key")
+            if !key.isEmpty {
+                request.setValue(key, forHTTPHeaderField: "x-api-key")
+            }
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         } else {
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            if !key.isEmpty {
+                request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            }
         }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: object)
@@ -667,5 +678,24 @@ actor GeminiAPIClient {
         data.append(Data("data".utf8)); append(UInt32(dataSize).littleEndian)
         data.append(Data(repeating: 0, count: dataSize))
         return data
+    }
+
+    static func extractJSON(from text: String) -> String {
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let thinkClose = trimmed.range(of: "</think>") {
+            trimmed = String(trimmed[thinkClose.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if trimmed.hasPrefix("```") {
+            let lines = trimmed.components(separatedBy: .newlines)
+            if lines.count >= 2 && lines.first?.hasPrefix("```") == true && lines.last?.trimmingCharacters(in: .whitespacesAndNewlines) == "```" {
+                trimmed = lines.dropFirst().dropLast().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        if let firstBrace = trimmed.firstIndex(of: "{"),
+           let lastBrace = trimmed.lastIndex(of: "}"),
+           firstBrace <= lastBrace {
+            trimmed = String(trimmed[firstBrace...lastBrace])
+        }
+        return trimmed
     }
 }
