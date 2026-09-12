@@ -163,6 +163,8 @@ struct ReviewView: View {
                 .background(Color.orange.opacity(0.08), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
             }
 
+            remindersSection
+
             VStack(alignment: .leading, spacing: 12) {
                 Picker("Документ", selection: $tab) {
                     Text("Тетрадь").tag("student")
@@ -525,6 +527,53 @@ struct ReviewView: View {
                 .padding(.vertical, 7)
                 .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
             }
+        }
+    }
+
+    @ViewBuilder private var remindersSection: some View {
+        if let session = model.currentSession,
+           let reminders = session.analysis?.reminders,
+           !reminders.isEmpty {
+            let nextLesson = ReminderService().nextLessonDate(
+                subject: session.subject,
+                after: session.startedAt ?? session.createdAt,
+                schedule: model.settingsStore.settings.lessonSchedule
+            )
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label("Задания к следующему уроку", systemImage: "checklist")
+                        .font(.headline)
+                    Spacer()
+                    if session.createdReminderIDs.isEmpty {
+                        Button {
+                            Task { await model.createRemindersForCurrentSession() }
+                        } label: {
+                            Label("Добавить в Reminders", systemImage: "plus")
+                        }
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.small)
+                    } else {
+                        Label("Добавлено", systemImage: "checkmark.circle.fill")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(WhispPalette.success)
+                    }
+                }
+
+                Text("Срок: \(nextLesson.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(reminders) { reminder in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(reminder.title).font(.callout.weight(.medium))
+                        Text(reminder.notes).font(.caption).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(12)
+            .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+            .padding(.horizontal, 18)
         }
     }
 

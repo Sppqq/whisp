@@ -966,6 +966,40 @@ final class AppModel {
         return await testActiveProvider()
     }
 
+    func createRemindersForCurrentSession() async {
+        guard var session = currentSession else { return }
+        guard let drafts = session.analysis?.reminders, !drafts.isEmpty else {
+            statusMessage = "В этой лекции заданий не найдено"
+            return
+        }
+        guard session.createdReminderIDs.isEmpty else {
+            statusMessage = "Напоминания для этой лекции уже добавлены"
+            return
+        }
+        guard !settingsStore.settings.lessonSchedule.isEmpty else {
+            statusMessage = "Сначала добавьте расписание уроков в настройках"
+            return
+        }
+
+        do {
+            let ids = try await reminderService.createReminders(
+                drafts: drafts,
+                session: session,
+                schedule: settingsStore.settings.lessonSchedule
+            )
+            session.createdReminderIDs = ids
+            if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+                sessions[index] = session
+            }
+            currentSession = session
+            try await store.save(session)
+            statusMessage = "Добавлено напоминаний: \(ids.count)"
+        } catch {
+            statusMessage = error.localizedDescription
+            lastError = error.localizedDescription
+        }
+    }
+
     func testActiveProvider() async -> String {
         geminiState = .checking
         proxyState = settingsStore.proxy.isEnabled ? .checking : .disabled
