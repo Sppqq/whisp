@@ -29,7 +29,7 @@ enum WhispMetrics {
     static let glassFieldHeight: CGFloat = 34
     static let windowMinWidth: CGFloat = 1_120
     static let windowMinHeight: CGFloat = 720
-    static let settingsMinWidth: CGFloat = 900
+    static let settingsMinWidth: CGFloat = 1_150
     static let settingsMinHeight: CGFloat = 700
 }
 

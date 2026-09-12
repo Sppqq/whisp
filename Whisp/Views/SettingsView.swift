@@ -75,7 +75,7 @@ struct SettingsView: View {
                     pageContent
                 }
                 .padding(30)
-                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: selectedPage == .schedule ? 1_120 : 720, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
             .background(WhispPalette.canvas)
@@ -607,13 +607,14 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(alignment: .top, spacing: 12) {
-                            ForEach(1...7, id: \.self) { day in
-                                scheduleDayColumn(day: day)
-                            }
+                    LazyVGrid(
+                        columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10), count: 7),
+                        alignment: .leading,
+                        spacing: 12
+                    ) {
+                        ForEach(1...7, id: \.self) { day in
+                            scheduleDayColumn(day: day)
                         }
-                        .padding(.vertical, 2)
                     }
                 }
             }
@@ -623,9 +624,10 @@ struct SettingsView: View {
     private func scheduleDayColumn(day: Int) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(Calendar.current.weekdaySymbols[(day + 5) % 7])
+                Text(scheduleDayName(day))
                     .font(.headline)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Spacer()
                 Button {
                     store.settings.lessonSchedule.append(
@@ -648,11 +650,11 @@ struct SettingsView: View {
                 Text("Нет уроков")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, minHeight: 70)
+                    .frame(maxWidth: .infinity, minHeight: 70, alignment: .center)
             }
         }
-        .padding(12)
-        .frame(width: 190, alignment: .top)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .top)
         .whispQuietSurface()
     }
 
@@ -661,8 +663,12 @@ struct SettingsView: View {
         let subjects = model.activeSubjects.contains(entry.wrappedValue.subject)
             ? model.activeSubjects
             : [entry.wrappedValue.subject] + model.activeSubjects
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
+        let durations = Array(Set([45, 60, 75, 90, 105, 120, 135, 150, 180, 240, entry.wrappedValue.durationMinutes])).sorted()
+        return VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Предмет")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 Picker("Предмет", selection: entry.subject) {
                     ForEach(subjects, id: \.self) { subject in
                         Text(subject).tag(subject)
@@ -671,6 +677,38 @@ struct SettingsView: View {
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Начало")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                DatePicker(
+                    "Начало",
+                    selection: scheduleTimeBinding(entry: entry),
+                    displayedComponents: .hourAndMinute
+                )
+                .datePickerStyle(.field)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Длительность")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Picker("Длительность", selection: entry.durationMinutes) {
+                    ForEach(durations, id: \.self) { duration in
+                        Text("\(duration) мин").tag(duration)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack {
+                Spacer(minLength: 0)
                 Button(role: .destructive) {
                     store.settings.lessonSchedule.removeAll { $0.id == entryID }
                 } label: {
@@ -678,17 +716,35 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.borderless)
             }
-            HStack(spacing: 10) {
-                Stepper("\(String(format: "%02d:%02d", entry.wrappedValue.hour, entry.wrappedValue.minute))", value: entry.hour, in: 0...23)
-                    .labelsHidden()
-                Stepper("Минуты", value: entry.minute, in: 0...59, step: 5)
-                    .labelsHidden()
-                Stepper("\(entry.wrappedValue.durationMinutes) мин", value: entry.durationMinutes, in: 15...240, step: 15)
-                    .labelsHidden()
-            }
         }
         .padding(12)
         .whispQuietSurface()
+    }
+
+    private func scheduleTimeBinding(entry: Binding<LessonScheduleEntry>) -> Binding<Date> {
+        let calendar = Calendar.current
+        return Binding(
+            get: {
+                calendar.date(from: DateComponents(hour: entry.wrappedValue.hour, minute: entry.wrappedValue.minute)) ?? Date()
+            },
+            set: { date in
+                entry.wrappedValue.hour = calendar.component(.hour, from: date)
+                entry.wrappedValue.minute = calendar.component(.minute, from: date)
+            }
+        )
+    }
+
+    private func scheduleDayName(_ day: Int) -> String {
+        switch day {
+        case 1: "Вс"
+        case 2: "Пн"
+        case 3: "Вт"
+        case 4: "Ср"
+        case 5: "Чт"
+        case 6: "Пт"
+        case 7: "Сб"
+        default: "—"
+        }
     }
 
     private var storagePage: some View {
