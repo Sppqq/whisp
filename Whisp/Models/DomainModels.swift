@@ -635,10 +635,11 @@ struct WhispSettings: Codable, Sendable {
     var appearance: WhispAppearance = .system
     var lessonSchedule: [LessonScheduleEntry] = []
     var remindersEnabled = true
+    var reminderListIdentifier: String?
 
     private enum CodingKeys: String, CodingKey {
         case subjects, customVocabulary, localRetentionDays, geminiModel, geminiLiveModel, analysisModel
-        case activeProviderID, providerConfigurations, hotkeyRecord, hotkeyFinish, preferredMicrophoneID, appearance, lessonSchedule, remindersEnabled
+        case activeProviderID, providerConfigurations, hotkeyRecord, hotkeyFinish, preferredMicrophoneID, appearance, lessonSchedule, remindersEnabled, reminderListIdentifier
     }
 
     init() {}
@@ -661,6 +662,7 @@ struct WhispSettings: Codable, Sendable {
         appearance = try values.decodeIfPresent(WhispAppearance.self, forKey: .appearance) ?? .system
         lessonSchedule = try values.decodeIfPresent([LessonScheduleEntry].self, forKey: .lessonSchedule) ?? []
         remindersEnabled = try values.decodeIfPresent(Bool.self, forKey: .remindersEnabled) ?? true
+        reminderListIdentifier = try values.decodeIfPresent(String.self, forKey: .reminderListIdentifier)
     }
 
     static let defaultSubjects = [

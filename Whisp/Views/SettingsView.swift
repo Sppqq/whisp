@@ -43,6 +43,7 @@ struct SettingsView: View {
     @State private var testResult = ""
     @State private var isTestingAll = false
     @State private var remindersAccessStatus = ""
+    @State private var reminderLists: [ReminderService.ReminderListOption] = []
 
     init(model: AppModel) {
         self._model = Bindable(wrappedValue: model)
@@ -562,8 +563,12 @@ struct SettingsView: View {
                         Button {
                             Task {
                                 do {
-                                    let granted = try await model.reminderService.requestAccess()
-                                    remindersAccessStatus = granted ? "Доступ разрешён" : "Доступ не разрешён"
+                                    let lists = try await model.reminderService.availableLists()
+                                    reminderLists = lists
+                                    if store.settings.reminderListIdentifier == nil {
+                                        store.settings.reminderListIdentifier = lists.first?.id
+                                    }
+                                    remindersAccessStatus = lists.isEmpty ? "Списки не найдены" : "Доступ разрешён"
                                 } catch {
                                     remindersAccessStatus = error.localizedDescription
                                 }
@@ -577,6 +582,20 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(remindersAccessStatus == "Доступ разрешён" ? WhispPalette.success : .secondary)
                         }
+                    }
+
+                    if !reminderLists.isEmpty {
+                        Picker("Список Reminders", selection: Binding(
+                            get: { store.settings.reminderListIdentifier },
+                            set: { store.settings.reminderListIdentifier = $0 }
+                        )) {
+                            Text("Системный по умолчанию").tag(String?.none)
+                            ForEach(reminderLists) { list in
+                                Text(list.title).tag(Optional(list.id))
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .whispGlassControl()
                     }
 
                     Text("Если в лекции прозвучит конкретное задание — например, «к следующему уроку принести отчёт» — Whisp добавит его в Apple Reminders. Доступ к напоминаниям macOS запросит при первом таком задании.")

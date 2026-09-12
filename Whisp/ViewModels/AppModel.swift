@@ -985,7 +985,8 @@ final class AppModel {
             let ids = try await reminderService.createReminders(
                 drafts: drafts,
                 session: session,
-                schedule: settingsStore.settings.lessonSchedule
+                schedule: settingsStore.settings.lessonSchedule,
+                listIdentifier: settingsStore.settings.reminderListIdentifier
             )
             session.createdReminderIDs = ids
             if let index = sessions.firstIndex(where: { $0.id == session.id }) {
@@ -1313,7 +1314,8 @@ final class AppModel {
                         let ids = try await reminderService.createReminders(
                             drafts: analysis.reminders,
                             session: session,
-                            schedule: settingsStore.settings.lessonSchedule
+                            schedule: settingsStore.settings.lessonSchedule,
+                            listIdentifier: settingsStore.settings.reminderListIdentifier
                         )
                         session.createdReminderIDs = ids
                         statusMessage = "Конспект готов, напоминания добавлены"

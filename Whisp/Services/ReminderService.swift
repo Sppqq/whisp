@@ -5,20 +5,36 @@ import Foundation
 final class ReminderService {
     private let store = EKEventStore()
 
+    struct ReminderListOption: Identifiable, Hashable, Sendable {
+        let id: String
+        let title: String
+    }
+
     func requestAccess() async throws -> Bool {
         try await store.requestFullAccessToReminders()
+    }
+
+    func availableLists() async throws -> [ReminderListOption] {
+        guard try await requestAccess() else { throw ReminderServiceError.accessDenied }
+        return store.calendars(for: .reminder)
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            .map { ReminderListOption(id: $0.calendarIdentifier, title: $0.title) }
     }
 
     func createReminders(
         drafts: [ReminderDraft],
         session: LectureSession,
-        schedule: [LessonScheduleEntry]
+        schedule: [LessonScheduleEntry],
+        listIdentifier: String? = nil
     ) async throws -> [String] {
         guard !drafts.isEmpty else { return [] }
         guard try await requestAccess() else {
             throw ReminderServiceError.accessDenied
         }
-        guard let calendar = store.defaultCalendarForNewReminders() else {
+        let calendar = listIdentifier.flatMap { identifier in
+            store.calendars(for: .reminder).first { $0.calendarIdentifier == identifier }
+        } ?? store.defaultCalendarForNewReminders()
+        guard let calendar else {
             throw ReminderServiceError.noReminderList
         }
 
