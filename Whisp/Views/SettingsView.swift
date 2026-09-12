@@ -607,39 +607,63 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    LazyVGrid(
-                        columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .top), count: 7),
-                        alignment: .leading,
-                        spacing: 12
-                    ) {
-                        ForEach([2, 3, 4, 5, 6, 7, 1], id: \.self) { day in
-                            scheduleDayColumn(day: day)
-                        }
-                    }
+                    scheduleTable
                 }
             }
         }
     }
 
-    private func scheduleDayColumn(day: Int) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(scheduleDayName(day))
-                    .font(.headline)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                Spacer()
-                Button {
-                    store.settings.lessonSchedule.append(
-                        LessonScheduleEntry(subject: model.activeSubjects.first ?? "Новый предмет", weekday: day)
-                    )
-                } label: {
-                    Image(systemName: "plus")
+    private var scheduleTable: some View {
+        VStack(spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(scheduleWeekdays, id: \.self) { day in
+                    scheduleDayHeader(day: day)
+                        .frame(maxWidth: .infinity, alignment: .top)
                 }
-                .buttonStyle(.borderless)
-                .help("Добавить урок")
             }
 
+            ScrollView(.vertical, showsIndicators: true) {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .top), count: 7),
+                    alignment: .leading,
+                    spacing: 12
+                ) {
+                    ForEach(scheduleWeekdays, id: \.self) { day in
+                        scheduleDayColumn(day: day)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .frame(maxHeight: 560)
+        }
+    }
+
+    private var scheduleWeekdays: [Int] { [2, 3, 4, 5, 6, 7, 1] }
+
+    private func scheduleDayHeader(day: Int) -> some View {
+        HStack {
+            Text(scheduleDayName(day))
+                .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Spacer(minLength: 4)
+            Button {
+                store.settings.lessonSchedule.append(
+                    LessonScheduleEntry(subject: model.activeSubjects.first ?? "Новый предмет", weekday: day)
+                )
+            } label: {
+                Image(systemName: "plus")
+            }
+            .buttonStyle(.borderless)
+            .help("Добавить урок")
+        }
+        .padding(10)
+        .frame(minHeight: 40, alignment: .leading)
+        .whispQuietSurface()
+    }
+
+    private func scheduleDayColumn(day: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             ForEach($store.settings.lessonSchedule) { entry in
                 if entry.wrappedValue.weekday == day {
                     scheduleRow(entry: entry)
@@ -736,13 +760,13 @@ struct SettingsView: View {
 
     private func scheduleDayName(_ day: Int) -> String {
         switch day {
-        case 1: "Вс"
-        case 2: "Пн"
-        case 3: "Вт"
-        case 4: "Ср"
-        case 5: "Чт"
-        case 6: "Пт"
-        case 7: "Сб"
+        case 1: "Воскресенье"
+        case 2: "Понедельник"
+        case 3: "Вторник"
+        case 4: "Среда"
+        case 5: "Четверг"
+        case 6: "Пятница"
+        case 7: "Суббота"
         default: "—"
         }
     }
