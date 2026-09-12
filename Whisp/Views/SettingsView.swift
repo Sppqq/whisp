@@ -476,6 +476,24 @@ struct SettingsView: View {
                         TextField("Модель для конспекта", text: providerConfigurationBinding(provider, keyPath: \.analysisModel))
                             .whispGlassField()
                     }
+
+                    Button {
+                        Task { await model.createRemindersForExistingAnalyses() }
+                    } label: {
+                        Label(
+                            model.isCreatingBatchReminders
+                                ? "Добавляем (model.batchReminderCurrentIndex)/(model.batchReminderTotalCount)…"
+                                : "Добавить задания из готовых лекций",
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                    }
+                    .buttonStyle(.glass)
+                    .disabled(model.isCreatingBatchReminders || model.isBusy)
+
+                    Text("Однократно проверит готовые разборы, найдёт сохранённые задания и добавит их в выбранный список Reminders. Уже добавленные лекции пропускаются.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     SecureField(provider.requiresAPIKey ? "API key" : "API key (необязательно)", text: providerAPIKeyBinding(provider))
                     .whispGlassField()
 

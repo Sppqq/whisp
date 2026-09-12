@@ -11,7 +11,10 @@ final class ReminderService {
     }
 
     func requestAccess() async throws -> Bool {
-        try await store.requestFullAccessToReminders()
+        if EKEventStore.authorizationStatus(for: .reminder) == .authorized {
+            return true
+        }
+        return try await store.requestFullAccessToReminders()
     }
 
     func availableLists() async throws -> [ReminderListOption] {

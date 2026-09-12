@@ -124,6 +124,11 @@ final class AppModel {
     var batchCurrentTitle = ""
     var batchSuccessCount = 0
     var batchFailureCount = 0
+    var isCreatingBatchReminders = false
+    var batchReminderTotalCount = 0
+    var batchReminderCurrentIndex = 0
+    var batchReminderSuccessCount = 0
+    var batchReminderFailureCount = 0
     var showBatchRegenerateSheet = false
     var batchForceOverwrite = true
     var batchLogs: [ProcessingLogEntry] = []
@@ -999,6 +1004,51 @@ final class AppModel {
             statusMessage = error.localizedDescription
             lastError = error.localizedDescription
         }
+    }
+
+    func createRemindersForExistingAnalyses() async {
+        guard !isBusy, !isCreatingBatchReminders else { return }
+        guard !settingsStore.settings.lessonSchedule.isEmpty else {
+            statusMessage = "Сначала добавьте расписание уроков в настройках"
+            return
+        }
+        let eligible = sessions.filter { $0.createdReminderIDs.isEmpty && !($0.analysis?.reminders ?? []).isEmpty }
+        guard !eligible.isEmpty else {
+            statusMessage = "Новых заданий для добавления не найдено"
+            return
+        }
+
+        isCreatingBatchReminders = true
+        batchReminderTotalCount = eligible.count
+        batchReminderCurrentIndex = 0
+        batchReminderSuccessCount = 0
+        batchReminderFailureCount = 0
+        defer { isCreatingBatchReminders = false }
+
+        for (index, original) in eligible.enumerated() {
+            if Task.isCancelled { break }
+            batchReminderCurrentIndex = index + 1
+            statusMessage = "Добавляем напоминания (index + 1)/(eligible.count)…"
+            guard var session = sessions.first(where: { $0.id == original.id }),
+                  let drafts = session.analysis?.reminders else { continue }
+            do {
+                let ids = try await reminderService.createReminders(
+                    drafts: drafts,
+                    session: session,
+                    schedule: settingsStore.settings.lessonSchedule,
+                    listIdentifier: settingsStore.settings.reminderListIdentifier
+                )
+                session.createdReminderIDs = ids
+                if let sessionIndex = sessions.firstIndex(where: { $0.id == session.id }) {
+                    sessions[sessionIndex] = session
+                }
+                try await store.save(session)
+                batchReminderSuccessCount += 1
+            } catch {
+                batchReminderFailureCount += 1
+            }
+        }
+        statusMessage = "Напоминания добавлены: (batchReminderSuccessCount), ошибок: (batchReminderFailureCount)"
     }
 
     func testActiveProvider() async -> String {
