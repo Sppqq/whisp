@@ -657,6 +657,7 @@ struct SettingsView: View {
     }
 
     private func scheduleRow(entry: Binding<LessonScheduleEntry>) -> some View {
+        let entryID = entry.wrappedValue.id
         let subjects = model.activeSubjects.contains(entry.wrappedValue.subject)
             ? model.activeSubjects
             : [entry.wrappedValue.subject] + model.activeSubjects
@@ -671,7 +672,7 @@ struct SettingsView: View {
                 .labelsHidden()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Button(role: .destructive) {
-                    store.settings.lessonSchedule.removeAll { $0.id == entry.wrappedValue.id }
+                    store.settings.lessonSchedule.removeAll { $0.id == entryID }
                 } label: {
                     Image(systemName: "trash")
                 }
