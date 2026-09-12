@@ -553,7 +553,7 @@ struct SettingsView: View {
         VStack(spacing: 16) {
             SettingsCard(
                 title: "Расписание уроков",
-                caption: "Whisp использует ближайший урок как срок для заданий из лекции.",
+                caption: "Whisp напоминает о подготовке вечером перед нужным уроком.",
                 icon: "calendar"
             ) {
                 VStack(alignment: .leading, spacing: 12) {
@@ -617,7 +617,7 @@ struct SettingsView: View {
                         .whispGlassControl()
                     }
 
-                    Text("Если в лекции прозвучит конкретное задание — например, «к следующему уроку принести отчёт» — Whisp добавит его в Apple Reminders. Доступ к напоминаниям macOS запросит при первом таком задании.")
+                    Text("Если в лекции прозвучит конкретное задание — например, «к следующему уроку принести отчёт» — Whisp добавит его в Apple Reminders и напомнит накануне в 19:00. Инструкции, которые нужно выполнять прямо на проверочной, не добавляются.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

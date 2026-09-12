@@ -168,6 +168,25 @@ struct ReminderDraft: Codable, Hashable, Sendable, Identifiable {
         self.dueHint = dueHint
     }
 
+    /// Instructions that describe work performed during an assessment are not
+    /// useful preparation reminders. Keep preparation for the assessment,
+    /// but omit its in-class format and solving requirements.
+    var isInClassAssessmentInstruction: Bool {
+        let text = "\(title) \(notes)".trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let preparationWords = ["подготов", "повтор", "выуч", "прочита", "принес", "возьми", "взять"]
+        guard !preparationWords.contains(where: text.contains) else { return false }
+
+        let assessmentMarkers = [
+            "провероч", "контрольн", "самостоятельн", "тест", "экзамен",
+            "зачет", "зачёт", "письменн"
+        ]
+        let actionWords = ["выполн", "реш", "напис", "сдел"]
+        guard assessmentMarkers.contains(where: text.contains),
+              actionWords.contains(where: text.contains) else { return false }
+
+        return true
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()

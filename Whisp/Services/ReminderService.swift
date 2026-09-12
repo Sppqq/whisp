@@ -43,7 +43,7 @@ final class ReminderService {
 
         let source = "Whisp · \(session.title)"
         var identifiers: [String] = []
-        for draft in drafts.prefix(5) {
+        for draft in drafts.prefix(5) where !draft.isInClassAssessmentInstruction {
             guard let dueDate = resolvedDueDate(
                 for: draft,
                 subject: session.subject,
@@ -71,15 +71,19 @@ final class ReminderService {
     ) -> Date? {
         let hint = draft.dueHint.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if hint.isEmpty || hint.contains("следующ") && hint.contains("урок") {
-            return nextLessonDate(subject: subject, after: date, schedule: schedule)
+            return preparationDate(
+                before: nextLessonDate(subject: subject, after: date, schedule: schedule)
+            )
         }
 
         if hint.contains("урок"), let count = firstNumber(in: hint) {
             return lessonAfter(subject: subject, count: count + 1, after: date, schedule: schedule)
+                .map { preparationDate(before: $0) }
         }
 
         if (hint.contains("след") && hint.contains("недел")) || hint.contains("через неделю") {
             return lessonInFollowingWeek(subject: subject, after: date, schedule: schedule)
+                .map { preparationDate(before: $0) }
         }
 
         let weekdays: [(String, Int)] = [
@@ -88,9 +92,18 @@ final class ReminderService {
         ]
         if let weekday = weekdays.first(where: { hint.contains($0.0) })?.1 {
             return nextLessonOnWeekday(weekday, subject: subject, after: date, schedule: schedule)
+                .map { preparationDate(before: $0) }
         }
 
-        return nextLessonDate(subject: subject, after: date, schedule: schedule)
+        return preparationDate(before: nextLessonDate(subject: subject, after: date, schedule: schedule))
+    }
+
+    /// Remind the student the evening before the lesson, leaving time to do
+    /// homework or pack something instead of notifying at the classroom door.
+    func preparationDate(before lessonDate: Date) -> Date {
+        let calendar = Calendar.current
+        let previousDay = calendar.date(byAdding: .day, value: -1, to: lessonDate) ?? lessonDate
+        return calendar.date(bySettingHour: 19, minute: 0, second: 0, of: previousDay) ?? previousDay
     }
 
     func nextLessonDate(subject: String, after date: Date, schedule: [LessonScheduleEntry]) -> Date {

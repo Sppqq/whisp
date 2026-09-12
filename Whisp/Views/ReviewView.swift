@@ -539,6 +539,7 @@ struct ReviewView: View {
                 after: session.startedAt ?? session.createdAt,
                 schedule: model.settingsStore.settings.lessonSchedule
             )
+            let reminderDate = ReminderService().preparationDate(before: nextLesson)
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Label("Задания к следующему уроку", systemImage: "checklist")
@@ -559,7 +560,7 @@ struct ReviewView: View {
                     }
                 }
 
-                Text("Срок: \(nextLesson.formatted(date: .abbreviated, time: .shortened))")
+                Text("Напомнить: \(reminderDate.formatted(date: .abbreviated, time: .shortened)) — вечером накануне")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
