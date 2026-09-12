@@ -41,19 +41,56 @@ final class ReminderService {
             throw ReminderServiceError.noReminderList
         }
 
-        let dueDate = nextLessonDate(subject: session.subject, after: session.startedAt ?? session.createdAt, schedule: schedule)
         let source = "Whisp · \(session.title)"
         var identifiers: [String] = []
         for draft in drafts.prefix(5) {
+            guard let dueDate = resolvedDueDate(
+                for: draft,
+                subject: session.subject,
+                after: session.startedAt ?? session.createdAt,
+                schedule: schedule
+            ), dueDate > Date() else { continue }
             let reminder = EKReminder(eventStore: store)
             reminder.title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            reminder.notes = "\(draft.notes.trimmingCharacters(in: .whitespacesAndNewlines))\n\nИсточник: \(source)"
+            let dueHint = draft.dueHint.trimmingCharacters(in: .whitespacesAndNewlines)
+            let deadline = dueHint.isEmpty ? "" : "\nСрок в лекции: \(dueHint)"
+            reminder.notes = "\(draft.notes.trimmingCharacters(in: .whitespacesAndNewlines))\(deadline)\n\nИсточник: \(source)"
             reminder.calendar = calendar
             reminder.dueDateComponents = Calendar.current.dateComponents([.calendar, .year, .month, .day, .hour, .minute], from: dueDate)
             try store.save(reminder, commit: true)
             identifiers.append(reminder.calendarItemIdentifier)
         }
         return identifiers
+    }
+
+    func resolvedDueDate(
+        for draft: ReminderDraft,
+        subject: String,
+        after date: Date,
+        schedule: [LessonScheduleEntry]
+    ) -> Date? {
+        let hint = draft.dueHint.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if hint.isEmpty || hint.contains("следующ") && hint.contains("урок") {
+            return nextLessonDate(subject: subject, after: date, schedule: schedule)
+        }
+
+        if hint.contains("урок"), let count = firstNumber(in: hint) {
+            return lessonAfter(subject: subject, count: count + 1, after: date, schedule: schedule)
+        }
+
+        if (hint.contains("след") && hint.contains("недел")) || hint.contains("через неделю") {
+            return lessonInFollowingWeek(subject: subject, after: date, schedule: schedule)
+        }
+
+        let weekdays: [(String, Int)] = [
+            ("понедельник", 2), ("вторник", 3), ("сред", 4),
+            ("четверг", 5), ("пятниц", 6), ("суббот", 7), ("воскрес", 1)
+        ]
+        if let weekday = weekdays.first(where: { hint.contains($0.0) })?.1 {
+            return nextLessonOnWeekday(weekday, subject: subject, after: date, schedule: schedule)
+        }
+
+        return nextLessonDate(subject: subject, after: date, schedule: schedule)
     }
 
     func nextLessonDate(subject: String, after date: Date, schedule: [LessonScheduleEntry]) -> Date {
@@ -74,6 +111,69 @@ final class ReminderService {
             }
             return nil
         }.min() ?? date.addingTimeInterval(86_400)
+    }
+
+    private func firstNumber(in text: String) -> Int? {
+        if let number = text.split(whereSeparator: { !$0.isNumber }).compactMap({ Int($0) }).first {
+            return number
+        }
+        let words = ["один": 1, "одну": 1, "два": 2, "две": 2, "три": 3, "четыре": 4, "пять": 5]
+        return words.first(where: { text.contains($0.key) })?.value
+    }
+
+    private func lessonAfter(subject: String, count: Int, after date: Date, schedule: [LessonScheduleEntry]) -> Date? {
+        var cursor = date
+        var result: Date?
+        for _ in 0..<max(1, count) {
+            result = nextLessonDate(subject: subject, after: cursor, schedule: schedule)
+            guard let result else { return nil }
+            cursor = result
+        }
+        return result
+    }
+
+    private func nextLessonOnWeekday(
+        _ weekday: Int,
+        subject: String,
+        after date: Date,
+        schedule: [LessonScheduleEntry]
+    ) -> Date? {
+        let calendar = Calendar.current
+        let candidates = schedule.filter {
+            $0.weekday == weekday && (subject.isEmpty || $0.subject.caseInsensitiveCompare(subject) == .orderedSame)
+        }
+        let usable = candidates.isEmpty ? schedule.filter { $0.weekday == weekday } : candidates
+        return usable.compactMap { entry in
+            for offset in 0...7 {
+                guard let day = calendar.date(byAdding: .day, value: offset, to: date),
+                      calendar.component(.weekday, from: day) == weekday,
+                      let candidate = calendar.date(bySettingHour: entry.hour, minute: entry.minute, second: 0, of: day),
+                      candidate > date else { continue }
+                return candidate
+            }
+            return nil
+        }.min()
+    }
+
+    private func lessonInFollowingWeek(subject: String, after date: Date, schedule: [LessonScheduleEntry]) -> Date? {
+        let calendar = Calendar.current
+        let weekday = calendar.component(.weekday, from: date)
+        let daysFromMonday = (weekday + 5) % 7
+        guard let nextMonday = calendar.date(byAdding: .day, value: 7 - daysFromMonday, to: calendar.startOfDay(for: date)) else {
+            return nil
+        }
+        let candidates = schedule.filter {
+            subject.isEmpty || $0.subject.caseInsensitiveCompare(subject) == .orderedSame
+        }
+        let usable = candidates.isEmpty ? schedule : candidates
+        return usable.compactMap { entry in
+            guard let dayOffset = [2, 3, 4, 5, 6, 7, 1].firstIndex(of: entry.weekday),
+                  let day = calendar.date(byAdding: .day, value: dayOffset, to: nextMonday),
+                  let candidate = calendar.date(bySettingHour: entry.hour, minute: entry.minute, second: 0, of: day) else {
+                return nil
+            }
+            return candidate
+        }.min()
     }
 }
 

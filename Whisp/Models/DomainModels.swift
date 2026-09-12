@@ -160,10 +160,12 @@ struct ReminderDraft: Codable, Hashable, Sendable, Identifiable {
     var id = UUID()
     var title: String
     var notes: String
+    var dueHint: String
 
-    init(title: String, notes: String) {
+    init(title: String, notes: String, dueHint: String = "") {
         self.title = title
         self.notes = notes
+        self.dueHint = dueHint
     }
 
     init(from decoder: Decoder) throws {
@@ -171,6 +173,7 @@ struct ReminderDraft: Codable, Hashable, Sendable, Identifiable {
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         title = try container.decodeIfPresent(String.self, forKey: .title) ?? "Задание"
         notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        dueHint = try container.decodeIfPresent(String.self, forKey: .dueHint) ?? ""
     }
 }
 
