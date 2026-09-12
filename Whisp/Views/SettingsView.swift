@@ -603,32 +603,73 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if store.settings.lessonSchedule.isEmpty {
-                        Text("Добавьте хотя бы один урок ниже.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("Выберите предмет и время в нужном дне. Предметы берутся из раздела «Предметы».")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                    ForEach($store.settings.lessonSchedule) { $entry in
-                        scheduleRow(entry: $entry)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 12) {
+                            ForEach(1...7, id: \.self) { day in
+                                scheduleDayColumn(day: day)
+                            }
+                        }
+                        .padding(.vertical, 2)
                     }
-
-                    Button {
-                        store.settings.lessonSchedule.append(LessonScheduleEntry())
-                    } label: {
-                        Label("Добавить урок", systemImage: "plus")
-                    }
-                    .buttonStyle(.glassProminent)
                 }
             }
         }
     }
 
-    private func scheduleRow(entry: Binding<LessonScheduleEntry>) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func scheduleDayColumn(day: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                TextField("Предмет", text: entry.subject)
-                    .whispGlassField()
+                Text(Calendar.current.weekdaySymbols[(day + 5) % 7])
+                    .font(.headline)
+                    .lineLimit(1)
+                Spacer()
+                Button {
+                    store.settings.lessonSchedule.append(
+                        LessonScheduleEntry(subject: model.activeSubjects.first ?? "Новый предмет", weekday: day)
+                    )
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .help("Добавить урок")
+            }
+
+            ForEach($store.settings.lessonSchedule) { entry in
+                if entry.wrappedValue.weekday == day {
+                    scheduleRow(entry: entry)
+                }
+            }
+
+            if !store.settings.lessonSchedule.contains(where: { $0.weekday == day }) {
+                Text("Нет уроков")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, minHeight: 70)
+            }
+        }
+        .padding(12)
+        .frame(width: 190, alignment: .top)
+        .whispQuietSurface()
+    }
+
+    private func scheduleRow(entry: Binding<LessonScheduleEntry>) -> some View {
+        let subjects = model.activeSubjects.contains(entry.wrappedValue.subject)
+            ? model.activeSubjects
+            : [entry.wrappedValue.subject] + model.activeSubjects
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Picker("Предмет", selection: entry.subject) {
+                    ForEach(subjects, id: \.self) { subject in
+                        Text(subject).tag(subject)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Button(role: .destructive) {
                     store.settings.lessonSchedule.removeAll { $0.id == entry.wrappedValue.id }
                 } label: {
@@ -637,17 +678,12 @@ struct SettingsView: View {
                 .buttonStyle(.borderless)
             }
             HStack(spacing: 10) {
-                Picker("День", selection: entry.weekday) {
-                    ForEach(1...7, id: \.self) { day in
-                        Text(Calendar.current.weekdaySymbols[(day + 5) % 7]).tag(day)
-                    }
-                }
-                .pickerStyle(.menu)
-                .whispGlassControl()
-
-                Stepper("\(String(format: "%02d", entry.wrappedValue.hour)):\(String(format: "%02d", entry.wrappedValue.minute))", value: entry.hour, in: 0...23)
-                Stepper("мин. \(String(format: "%02d", entry.wrappedValue.minute))", value: entry.minute, in: 0...59, step: 5)
+                Stepper("\(String(format: "%02d:%02d", entry.wrappedValue.hour, entry.wrappedValue.minute))", value: entry.hour, in: 0...23)
+                    .labelsHidden()
+                Stepper("Минуты", value: entry.minute, in: 0...59, step: 5)
+                    .labelsHidden()
                 Stepper("\(entry.wrappedValue.durationMinutes) мин", value: entry.durationMinutes, in: 15...240, step: 15)
+                    .labelsHidden()
             }
         }
         .padding(12)
@@ -765,7 +801,7 @@ struct SettingsView: View {
     }
 
     private var subjectsPage: some View {
-        SettingsCard(title: "Предметы", caption: "Gemini выбирает только из включённых дисциплин.", icon: "books.vertical") {
+        SettingsCard(title: "Предметы", caption: "Свои дисциплины используются в AI-классификации, выборе лекции и расписании.", icon: "books.vertical") {
             SubjectsSettingsContent(store: store)
         }
     }
@@ -1087,6 +1123,10 @@ private struct SubjectsSettingsContent: View {
     @State private var newSubject = ""
     var body: some View {
         VStack(spacing: 10) {
+            Text("Оставьте переключатель включённым, чтобы Whisp предлагал предмет при анализе лекций.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
             ForEach($store.settings.subjects) { $subject in
                 HStack {
                     Toggle("", isOn: $subject.isEnabled)
@@ -1107,12 +1147,15 @@ private struct SubjectsSettingsContent: View {
             HStack {
                 TextField("Новый предмет", text: $newSubject)
                     .whispGlassField()
-                Button("Добавить") {
+                Button("Добавить свой предмет") {
                     let name = newSubject.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !name.isEmpty else { return }
+                    guard !name.isEmpty,
+                          !store.settings.subjects.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { return }
                     store.settings.subjects.append(SubjectItem(name: name, order: store.settings.subjects.count))
                     newSubject = ""
-                }.buttonStyle(.glass)
+                }
+                .buttonStyle(.glass)
+                .disabled(newSubject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
     }
