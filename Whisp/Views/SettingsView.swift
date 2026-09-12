@@ -75,7 +75,7 @@ struct SettingsView: View {
                     pageContent
                 }
                 .padding(30)
-                .frame(maxWidth: selectedPage == .schedule ? 1_120 : 720, alignment: .leading)
+                .frame(maxWidth: selectedPage == .schedule ? 1_300 : 720, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
             .background(WhispPalette.canvas)
@@ -608,11 +608,11 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
 
                     LazyVGrid(
-                        columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10), count: 7),
+                        columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .top), count: 7),
                         alignment: .leading,
                         spacing: 12
                     ) {
-                        ForEach(1...7, id: \.self) { day in
+                        ForEach([2, 3, 4, 5, 6, 7, 1], id: \.self) { day in
                             scheduleDayColumn(day: day)
                         }
                     }
