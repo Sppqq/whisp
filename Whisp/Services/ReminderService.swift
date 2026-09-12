@@ -42,12 +42,12 @@ final class ReminderService {
         }
 
         let dueDate = nextLessonDate(subject: session.subject, after: session.startedAt ?? session.createdAt, schedule: schedule)
-        let source = "Whisp · (session.title)"
+        let source = "Whisp · \(session.title)"
         var identifiers: [String] = []
         for draft in drafts.prefix(5) {
             let reminder = EKReminder(eventStore: store)
             reminder.title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            reminder.notes = "(draft.notes.trimmingCharacters(in: .whitespacesAndNewlines))\n\nИсточник: (source)"
+            reminder.notes = "\(draft.notes.trimmingCharacters(in: .whitespacesAndNewlines))\n\nИсточник: \(source)"
             reminder.calendar = calendar
             reminder.dueDateComponents = Calendar.current.dateComponents([.calendar, .year, .month, .day, .hour, .minute], from: dueDate)
             try store.save(reminder, commit: true)
