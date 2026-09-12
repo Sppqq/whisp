@@ -35,6 +35,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+        NSRemindersFullAccessUsageDescription: "Whisp создаёт напоминания о заданиях, которые прозвучали на уроке."
     entitlements:
       path: Whisp/Resources/Whisp.entitlements
     dependencies:
