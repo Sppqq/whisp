@@ -477,23 +477,6 @@ struct SettingsView: View {
                             .whispGlassField()
                     }
 
-                    Button {
-                        Task { await model.createRemindersForExistingAnalyses() }
-                    } label: {
-                        Label(
-                            model.isCreatingBatchReminders
-                                ? "Добавляем (model.batchReminderCurrentIndex)/(model.batchReminderTotalCount)…"
-                                : "Добавить задания из готовых лекций",
-                            systemImage: "arrow.triangle.2.circlepath"
-                        )
-                    }
-                    .buttonStyle(.glass)
-                    .disabled(model.isCreatingBatchReminders || model.isBusy)
-
-                    Text("Однократно проверит готовые разборы, найдёт сохранённые задания и добавит их в выбранный список Reminders. Уже добавленные лекции пропускаются.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                     SecureField(provider.requiresAPIKey ? "API key" : "API key (необязательно)", text: providerAPIKeyBinding(provider))
                     .whispGlassField()
 
@@ -601,6 +584,24 @@ struct SettingsView: View {
                                 .foregroundStyle(remindersAccessStatus == "Доступ разрешён" ? WhispPalette.success : .secondary)
                         }
                     }
+
+                    Button {
+                        Task { await model.createRemindersForExistingAnalyses() }
+                    } label: {
+                        Label(
+                            model.isCreatingBatchReminders
+                                ? "Добавляем \(model.batchReminderCurrentIndex)/\(model.batchReminderTotalCount)…"
+                                : "Проверить готовые разборы и создать напоминания",
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                    }
+                    .buttonStyle(.glass)
+                    .disabled(model.isCreatingBatchReminders || model.isBusy)
+
+                    Text("Однократно заново проанализирует готовые разборы, найдёт задания и добавит их в выбранный список Reminders. Лекции с уже созданными напоминаниями пропускаются.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     if !reminderLists.isEmpty {
                         Picker("Список Reminders", selection: Binding(

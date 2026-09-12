@@ -1012,9 +1012,13 @@ final class AppModel {
             statusMessage = "Сначала добавьте расписание уроков в настройках"
             return
         }
-        let eligible = sessions.filter { $0.createdReminderIDs.isEmpty && !($0.analysis?.reminders ?? []).isEmpty }
+        let eligible = sessions.filter {
+            $0.analysis != nil
+                && $0.createdReminderIDs.isEmpty
+                && (!$0.finalTranscript.isEmpty || !$0.rawTranscript.isEmpty)
+        }
         guard !eligible.isEmpty else {
-            statusMessage = "Новых заданий для добавления не найдено"
+            statusMessage = "Готовых разборов для повторной проверки не найдено"
             return
         }
 
@@ -1028,9 +1032,17 @@ final class AppModel {
         for (index, original) in eligible.enumerated() {
             if Task.isCancelled { break }
             batchReminderCurrentIndex = index + 1
-            statusMessage = "Добавляем напоминания (index + 1)/(eligible.count)…"
+            statusMessage = "Анализируем лекцию \(index + 1)/\(eligible.count)…"
+            guard sessions.contains(where: { $0.id == original.id }) else { continue }
+            await regenerateAnalysis(for: original.id, forceOverwriteNotes: false)
             guard var session = sessions.first(where: { $0.id == original.id }),
-                  let drafts = session.analysis?.reminders else { continue }
+                  session.lastError == nil,
+                  let drafts = session.analysis?.reminders,
+                  !drafts.isEmpty else { continue }
+            if !session.createdReminderIDs.isEmpty {
+                batchReminderSuccessCount += 1
+                continue
+            }
             do {
                 let ids = try await reminderService.createReminders(
                     drafts: drafts,
@@ -1048,7 +1060,7 @@ final class AppModel {
                 batchReminderFailureCount += 1
             }
         }
-        statusMessage = "Напоминания добавлены: (batchReminderSuccessCount), ошибок: (batchReminderFailureCount)"
+        statusMessage = "Напоминания добавлены: \(batchReminderSuccessCount), ошибок: \(batchReminderFailureCount)"
     }
 
     func testActiveProvider() async -> String {
