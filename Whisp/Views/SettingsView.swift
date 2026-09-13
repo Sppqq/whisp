@@ -55,17 +55,33 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            ScrollView {
-                VStack(spacing: 6) {
-                    ForEach(SettingsPage.allCases) { item in
-                        settingsNavigationButton(item)
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                        columnVisibility = .detailOnly
                     }
+                } label: {
+                    WhispGlassIconActionLabel(systemImage: "sidebar.leading", size: 30)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .buttonStyle(.plain)
+                .help("Скрыть боковую панель")
+                .accessibilityLabel("Скрыть боковую панель")
+                .padding(.leading, 12)
+                .padding(.top, 8)
+
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(SettingsPage.allCases) { item in
+                            settingsNavigationButton(item)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                }
             }
             .navigationTitle("Whisp")
             .navigationSplitViewColumnWidth(min: 180, ideal: 205, max: 240)
+            .toolbar(removing: .sidebarToggle)
         } detail: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
@@ -89,6 +105,21 @@ struct SettingsView: View {
         .navigationSplitViewStyle(.balanced)
         .background(WhispPalette.canvas)
         .toolbar {
+            if columnVisibility == .detailOnly {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                            columnVisibility = .all
+                        }
+                    } label: {
+                        WhispGlassIconActionLabel(systemImage: "sidebar.leading", size: 30)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Показать боковую панель")
+                    .accessibilityLabel("Показать боковую панель")
+                }
+            }
+
             ToolbarItem(placement: .primaryAction) {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(appVersionLabel)
