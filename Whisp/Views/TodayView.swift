@@ -82,9 +82,9 @@ struct TodayView: View {
             Button {
                 model.showStartScreen()
             } label: {
-                Label("Новая лекция", systemImage: "plus")
+                WhispGlassActionLabel(title: "Новая лекция", systemImage: "plus")
             }
-            .buttonStyle(.glassProminent)
+            .buttonStyle(.plain)
             .disabled(model.isBusy)
         }
     }

@@ -27,6 +27,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
 struct SettingsView: View {
     @Bindable var model: AppModel
     @Bindable var store: SettingsStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page: SettingsPage? = .provider
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var geminiKey = ""
@@ -54,11 +55,15 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            List(SettingsPage.allCases, selection: $page) { item in
-                Label(item.rawValue, systemImage: item.icon)
-                    .tag(item)
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(SettingsPage.allCases) { item in
+                        settingsNavigationButton(item)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
             }
-            .listStyle(.sidebar)
             .navigationTitle("Whisp")
             .navigationSplitViewColumnWidth(min: 180, ideal: 205, max: 240)
         } detail: {
@@ -83,7 +88,6 @@ struct SettingsView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .background(WhispPalette.canvas)
-        .tint(WhispPalette.accent)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 VStack(alignment: .trailing, spacing: 2) {
@@ -124,6 +128,34 @@ struct SettingsView: View {
         .onChange(of: proxyPassword) { invalidateGeminiStatus() }
         .onChange(of: store.proxy) { invalidateGeminiStatus() }
         .onChange(of: store.webDAV) { model.webDAVState = .unchecked }
+    }
+
+    @ViewBuilder
+    private func settingsNavigationButton(_ item: SettingsPage) -> some View {
+        let isSelected = selectedPage == item
+        Button {
+            withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                page = item
+            }
+        } label: {
+            Label(item.rawValue, systemImage: item.icon)
+                .font(.callout.weight(isSelected ? .semibold : .regular))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+                .padding(.horizontal, 11)
+                .contentShape(.rect(cornerRadius: WhispMetrics.compactCornerRadius))
+        }
+        .buttonStyle(.plain)
+        .background {
+            if isSelected {
+                Color.clear
+                    .glassEffect(
+                        .regular.interactive(),
+                        in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
+                    )
+            }
+        }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var appVersionLabel: String {
@@ -171,6 +203,7 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .tint(.primary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .whispGlassControl()
@@ -208,7 +241,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Text("#\(index + 1)")
                                 .font(.caption.monospacedDigit().weight(.bold))
-                                .foregroundStyle(WhispPalette.accent)
+                                .foregroundStyle(.secondary)
                                 .frame(width: 28, alignment: .leading)
 
                             Text(maskKey(key))
@@ -229,22 +262,18 @@ struct SettingsView: View {
                                             _ = await model.testSingleGeminiKey(key)
                                         }
                                     } label: {
-                                        Image(systemName: "arrow.clockwise")
-                                            .font(.caption2)
+                                        WhispGlassIconActionLabel(systemImage: "arrow.clockwise")
                                     }
-                                    .buttonStyle(.glass)
-                                    .foregroundStyle(.secondary)
+                                    .buttonStyle(.plain)
                                     .help("Проверить этот ключ")
 
                                     Button {
                                         NSPasteboard.general.clearContents()
                                         NSPasteboard.general.setString(key, forType: .string)
                                     } label: {
-                                        Image(systemName: "doc.on.doc")
-                                            .font(.caption2)
+                                        WhispGlassIconActionLabel(systemImage: "doc.on.doc")
                                     }
-                                    .buttonStyle(.glass)
-                                    .foregroundStyle(.secondary)
+                                    .buttonStyle(.plain)
                                     .help("Скопировать ключ")
 
                                     Button(role: .destructive) {
@@ -253,11 +282,9 @@ struct SettingsView: View {
                                             saveSecrets()
                                         }
                                     } label: {
-                                        Image(systemName: "trash")
-                                            .font(.caption2)
+                                        WhispGlassIconActionLabel(systemImage: "trash", foregroundStyle: .red)
                                     }
-                                    .buttonStyle(.glass)
-                                    .foregroundStyle(.secondary)
+                                    .buttonStyle(.plain)
                                     .disabled(geminiKeys.count <= 1)
                                     .help(geminiKeys.count <= 1 ? "Должен остаться хотя бы один ключ" : "Удалить этот ключ")
                                 }
@@ -1176,7 +1203,7 @@ private struct SettingsCard<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack(alignment: .top, spacing: 11) {
-                Image(systemName: icon).font(.system(size: 15, weight: .medium)).foregroundStyle(WhispPalette.accent)
+                Image(systemName: icon).font(.system(size: 15, weight: .medium)).foregroundStyle(.primary)
                     .frame(width: 30, height: 30)
                     .whispQuietSurface(cornerRadius: 8)
                 VStack(alignment: .leading, spacing: 2) {

@@ -173,6 +173,37 @@ struct WhispStatusMark: View {
     }
 }
 
+/// Neutral Liquid Glass label for ordinary actions. Accent colors are reserved
+/// for state (success, warning, recording) instead of being painted on every
+/// clickable control.
+struct WhispGlassActionLabel: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .font(.callout.weight(.medium))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 36)
+            .glassEffect(.regular.interactive(), in: .capsule)
+    }
+}
+
+struct WhispGlassIconActionLabel: View {
+    let systemImage: String
+    var foregroundStyle: Color = .primary
+    var size: CGFloat = 32
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.callout.weight(.medium))
+            .foregroundStyle(foregroundStyle)
+            .frame(width: size, height: size)
+            .glassEffect(.regular.interactive(), in: .circle)
+    }
+}
+
 struct WhispGlassDivider: View {
     var body: some View {
         Rectangle()

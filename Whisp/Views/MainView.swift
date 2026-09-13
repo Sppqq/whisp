@@ -34,12 +34,9 @@ struct MainView: View {
                     Button {
                         model.showStartScreen()
                     } label: {
-                        Image(systemName: "plus")
-                            .frame(width: 28, height: 28)
+                        WhispGlassIconActionLabel(systemImage: "plus", size: 30)
                     }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
                     .labelStyle(.iconOnly)
                     .help("Новая лекция или импорт")
                     .accessibilityLabel("Новая лекция или импорт")

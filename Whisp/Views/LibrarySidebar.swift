@@ -91,9 +91,16 @@ struct LibrarySidebar: View {
             HStack {
                 SettingsLink {
                     Label("Настройки", systemImage: "gearshape")
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 10)
+                        .frame(minHeight: 34)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .glassEffect(
+                            .regular.interactive(),
+                            in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
+                        )
                 }
-                .buttonStyle(.glass)
+                .buttonStyle(.plain)
                 Spacer()
                 Text("⌘,").font(.caption.monospaced()).foregroundStyle(.tertiary)
             }
@@ -135,11 +142,9 @@ struct LibrarySidebar: View {
             Spacer()
 
             Button { model.showStartScreen() } label: {
-                Image(systemName: "plus")
-                    .frame(width: 26, height: 26)
+                WhispGlassIconActionLabel(systemImage: "plus", size: 30)
             }
-            .buttonStyle(.glassProminent)
-            .controlSize(.small)
+            .buttonStyle(.plain)
             .help("Новая лекция или импорт")
             .accessibilityLabel("Новая лекция или импорт")
             .disabled(model.isRecording)
@@ -153,9 +158,9 @@ struct LibrarySidebar: View {
         Group {
             if model.showsToday {
                 todayButtonLabel
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(.primary)
                     .glassEffect(
-                        .regular.tint(WhispPalette.accent).interactive(),
+                        .regular.tint(Color.primary.opacity(0.08)).interactive(),
                         in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
                     )
             } else {
@@ -179,7 +184,7 @@ struct LibrarySidebar: View {
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: "sun.max.fill")
-                    .foregroundStyle(model.showsToday ? Color.white : WhispPalette.accent)
+                    .foregroundStyle(.primary)
                 Text("Сегодня")
                     .font(.callout.weight(.semibold))
                 Spacer()
@@ -189,7 +194,7 @@ struct LibrarySidebar: View {
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
                         .background(
-                            model.showsToday ? Color.white.opacity(0.18) : WhispPalette.accent.opacity(0.12),
+                            Color.primary.opacity(model.showsToday ? 0.12 : 0.07),
                             in: Capsule()
                         )
                 }
@@ -292,9 +297,9 @@ struct LibrarySidebar: View {
                     .padding(.vertical, 3)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(Color.white)
+            .foregroundStyle(.primary)
             .glassEffect(
-                .regular.tint(WhispPalette.accent).interactive(),
+                .regular.tint(Color.primary.opacity(0.08)).interactive(),
                 in: .capsule
             )
         } else {
