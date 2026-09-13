@@ -2,6 +2,12 @@ import SwiftUI
 
 struct MarkdownPreview: View {
     let markdown: String
+    var onScrollOffsetChange: ((CGFloat) -> Void)?
+
+    init(markdown: String, onScrollOffsetChange: ((CGFloat) -> Void)? = nil) {
+        self.markdown = markdown
+        self.onScrollOffsetChange = onScrollOffsetChange
+    }
 
     private var blocks: [MarkdownPreviewBlock] {
         MarkdownPreviewParser.parse(markdown)
@@ -27,6 +33,11 @@ struct MarkdownPreview: View {
             .padding(.horizontal, 32)
             .padding(.vertical, 28)
             .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y + geometry.contentInsets.top
+        } action: { _, offset in
+            onScrollOffsetChange?(offset)
         }
         .background(WhispPalette.content)
         .textSelection(.enabled)

@@ -12,9 +12,13 @@ struct ReviewView: View {
     @State private var editingSegment: TranscriptSegment?
     @State private var editingSegmentIsRaw = false
     @State private var isDatePickerPresented = false
+    @State private var isReadingChromeCollapsed = false
+    @State private var lastReadingScrollOffset: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
+            if !isReadingChromeCollapsed {
+                VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
                     TextField("Название пары", text: Binding(
@@ -164,6 +168,10 @@ struct ReviewView: View {
                             minHeight: 28
                         )
                         .frame(width: 220)
+                    } else {
+                        Color.clear
+                            .frame(width: 220, height: 36)
+                            .accessibilityHidden(true)
                     }
 
                     Button {
@@ -204,6 +212,10 @@ struct ReviewView: View {
                         .buttonStyle(.plain)
                         .disabled(model.isGeneratingNotes)
                         .help("Перегенерировать конспекты через Gemini")
+                    } else {
+                        Color.clear
+                            .frame(width: 170, height: 32)
+                            .accessibilityHidden(true)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -234,6 +246,13 @@ struct ReviewView: View {
             if tab == "final" {
                 transcriptModeBanner
             }
+                }
+                .transition(
+                    reduceMotion
+                        ? .opacity
+                        : .move(edge: .top).combined(with: .opacity)
+                )
+            }
 
             Group {
                 switch tab {
@@ -256,7 +275,10 @@ struct ReviewView: View {
                             .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
                         }
                         if isPreviewMode {
-                            MarkdownPreview(markdown: currentContent)
+                            MarkdownPreview(
+                                markdown: currentContent,
+                                onScrollOffsetChange: updateReadingChrome
+                            )
                         } else {
                             editor(binding: Binding(get: { model.currentSession?.studentNotesMarkdown ?? "" }, set: { model.updateReview(studentNotes: $0) }))
                         }
@@ -349,10 +371,14 @@ struct ReviewView: View {
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
                                 .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+                                .frame(maxWidth: 860)
+                                .padding(.horizontal, 32)
+                                .frame(maxWidth: .infinity, alignment: .center)
 
                                 if quizViewMode == "interactive" {
                                     InteractiveQuizView(
                                         markdown: model.currentSession?.quizMarkdown ?? "",
+                                        onScrollOffsetChange: updateReadingChrome,
                                         progress: Binding(
                                             get: { model.currentSession?.quizProgress ?? QuizProgress() },
                                             set: { model.updateQuizProgress($0) }
@@ -457,7 +483,30 @@ struct ReviewView: View {
         }
         .task { await model.loadPlayback(source: audioSource) }
         .onChange(of: audioSource) { Task { await model.loadPlayback(source: audioSource) } }
+        .onChange(of: tab) {
+            revealReadingChrome(resetOffset: true)
+        }
+        .onChange(of: model.currentSession?.id) {
+            revealReadingChrome(resetOffset: true)
+        }
         .background(WhispPalette.canvas)
+        .overlay(alignment: .topTrailing) {
+            if isReadingChromeCollapsed {
+                Button {
+                    revealReadingChrome(resetOffset: false)
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                }
+                .buttonStyle(.plain)
+                .help("Показать панель лекции")
+                .accessibilityLabel("Показать панель лекции")
+                .padding(12)
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
+        }
         .sheet(item: $editingSegment) { segment in
             TranscriptSegmentEditor(
                 segment: segment,
@@ -488,6 +537,31 @@ struct ReviewView: View {
                 }
             }
         )
+    }
+
+    private func updateReadingChrome(_ offset: CGFloat) {
+        let delta = offset - lastReadingScrollOffset
+        lastReadingScrollOffset = offset
+
+        if offset < 12 {
+            revealReadingChrome(resetOffset: false)
+        } else if delta > 4, offset > 42, !isReadingChromeCollapsed {
+            withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                isReadingChromeCollapsed = true
+            }
+        } else if delta < -4, isReadingChromeCollapsed {
+            revealReadingChrome(resetOffset: false)
+        }
+    }
+
+    private func revealReadingChrome(resetOffset: Bool) {
+        if resetOffset {
+            lastReadingScrollOffset = 0
+        }
+        guard isReadingChromeCollapsed else { return }
+        withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+            isReadingChromeCollapsed = false
+        }
     }
 
     private var animatedPreviewSelection: Binding<Bool> {
@@ -527,9 +601,9 @@ struct ReviewView: View {
                !(analysis.tags.isEmpty && analysis.keyConcepts.isEmpty) {
                 HStack(spacing: 10) {
                     Label("МЕТАДАННЫЕ", systemImage: "tag")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .tracking(0.5)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.primary.opacity(0.72))
 
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
@@ -640,10 +714,10 @@ struct ReviewView: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
             .glassEffect(
-                accent ? .regular.tint(WhispPalette.accent.opacity(0.18)) : .regular,
+                .regular,
                 in: .capsule
             )
-            .foregroundStyle(accent ? WhispPalette.accent : .secondary)
+            .foregroundStyle(accent ? Color.primary.opacity(0.92) : .secondary)
     }
 
     private var readingTimeText: String {
@@ -933,6 +1007,11 @@ private struct ReviewHeaderControlLabel: View {
                             .listStyle(.inset)
                             .scrollContentBackground(.hidden)
                             .background(WhispPalette.content)
+                            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                                geometry.contentOffset.y + geometry.contentInsets.top
+                            } action: { _, offset in
+                                updateReadingChrome(offset)
+                            }
                             .onChange(of: model.player.currentTime) { _, newTime in
                                 guard model.player.isPlaying else { return }
                                 if let current = filtered.first(where: { newTime >= $0.start && newTime <= $0.end }) {
@@ -954,13 +1033,21 @@ private struct ReviewHeaderControlLabel: View {
     private func editor(binding: Binding<String>) -> some View {
         Group {
             if isPreviewMode {
-                MarkdownPreview(markdown: binding.wrappedValue)
+                MarkdownPreview(
+                    markdown: binding.wrappedValue,
+                    onScrollOffsetChange: updateReadingChrome
+                )
             } else {
                 TextEditor(text: binding)
                     .font(.system(.body, design: .monospaced))
                     .padding(12)
                     .scrollContentBackground(.hidden)
                     .background(WhispPalette.content)
+                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.contentOffset.y + geometry.contentInsets.top
+                    } action: { _, offset in
+                        updateReadingChrome(offset)
+                    }
             }
         }
     }
@@ -1222,6 +1309,7 @@ enum QuizParser {
 
 struct InteractiveQuizView: View {
     let markdown: String
+    var onScrollOffsetChange: ((CGFloat) -> Void)? = nil
     @Binding var progress: QuizProgress
 
     var body: some View {
@@ -1489,7 +1577,15 @@ struct InteractiveQuizView: View {
                     }
                 }
             }
-            .padding(20)
+            .frame(maxWidth: 860, alignment: .leading)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 28)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y + geometry.contentInsets.top
+        } action: { _, offset in
+            onScrollOffsetChange?(offset)
         }
         .background(WhispPalette.content)
     }
