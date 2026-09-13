@@ -167,26 +167,27 @@ struct ReviewView: View {
             remindersSection
 
             VStack(alignment: .leading, spacing: 12) {
-                Picker("Документ", selection: animatedTabSelection) {
-                    Text("Тетрадь").tag("student")
-                    Text("Разбор").tag("notes")
-                    Text("К зачёту").tag("quiz")
-                    Label("Стенограмма", systemImage: "text.quote").tag("final")
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                WhispGlassSegment(
+                    selection: animatedTabSelection,
+                    options: [
+                        ("student", "Тетрадь", "book.closed"),
+                        ("notes", "Разбор", "doc.text.magnifyingglass"),
+                        ("quiz", "К зачёту", "graduationcap"),
+                        ("final", "Стенограмма", "text.quote")
+                    ]
+                )
 
                 HStack(spacing: 10) {
                     if tab != "quiz" || quizViewMode == "markdown" {
-                        Picker("Режим", selection: animatedPreviewSelection) {
-                            Label("Правка", systemImage: "pencil").tag(false)
-                            Label("Просмотр", systemImage: "eye").tag(true)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 154)
-                        .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                        WhispGlassSegment(
+                            selection: animatedPreviewSelection,
+                            options: [
+                                (false, "Правка", "pencil"),
+                                (true, "Просмотр", "eye")
+                            ],
+                            minHeight: 28
+                        )
+                        .frame(width: 220)
                     }
 
                     Button {
@@ -339,14 +340,15 @@ struct ReviewView: View {
 
                                     Spacer()
 
-                                    Picker("Вид", selection: $quizViewMode) {
-                                        Text("Тренажёр").tag("interactive")
-                                        Text("Markdown").tag("markdown")
-                                    }
-                                    .pickerStyle(.segmented)
-                                    .labelsHidden()
-                                    .frame(width: 200)
-                                    .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                                    WhispGlassSegment(
+                                        selection: $quizViewMode,
+                                        options: [
+                                            ("interactive", "Тренажёр", "rectangle.stack"),
+                                            ("markdown", "Markdown", "chevron.left.forwardslash.chevron.right")
+                                        ],
+                                        minHeight: 28
+                                    )
+                                    .frame(width: 260)
 
                                     Button {
                                         Task { await model.generateQuiz() }
@@ -556,7 +558,7 @@ struct ReviewView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+                .whispGlassPanel(cornerRadius: WhispMetrics.compactCornerRadius)
             }
         }
     }
@@ -604,7 +606,7 @@ struct ReviewView: View {
                 }
             }
             .padding(12)
-            .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+            .whispGlassPanel(cornerRadius: WhispMetrics.compactCornerRadius)
             .padding(.horizontal, 18)
         }
     }
@@ -615,8 +617,8 @@ struct ReviewView: View {
             .lineLimit(1)
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
-            .background(
-                accent ? WhispPalette.accent.opacity(0.10) : WhispPalette.content.opacity(0.7),
+            .glassEffect(
+                accent ? .regular.tint(WhispPalette.accent.opacity(0.18)) : .regular,
                 in: .capsule
             )
             .foregroundStyle(accent ? WhispPalette.accent : .secondary)
@@ -641,7 +643,8 @@ struct ReviewView: View {
             } label: {
                 Image(systemName: "gobackward.15")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
             .font(.system(size: 13))
             .foregroundStyle(.secondary)
             .frame(width: 28, height: 28)
@@ -652,6 +655,7 @@ struct ReviewView: View {
                 Image(systemName: model.player.isPlaying ? "pause.fill" : "play.fill").frame(width: 20)
             }
             .buttonStyle(.glassProminent)
+            .buttonBorderShape(.circle)
             .controlSize(.small)
             .accessibilityLabel(model.player.isPlaying ? "Пауза" : "Воспроизвести")
 
@@ -660,7 +664,8 @@ struct ReviewView: View {
             } label: {
                 Image(systemName: "goforward.15")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
             .font(.system(size: 13))
             .foregroundStyle(.secondary)
             .frame(width: 28, height: 28)
@@ -689,7 +694,8 @@ struct ReviewView: View {
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .frame(width: 46)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.glass)
+            .buttonBorderShape(.capsule)
             .foregroundStyle(.secondary)
             .controlSize(.small)
             .help("Скорость воспроизведения")
@@ -703,12 +709,13 @@ struct ReviewView: View {
             .labelsHidden()
             .frame(width: 120)
             .pickerStyle(.menu)
-            .buttonStyle(.plain)
+            .buttonStyle(.glass)
+            .buttonBorderShape(.capsule)
             .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 10)
-        .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
+        .whispGlassPanel()
         .padding(.horizontal, 18)
         .padding(.bottom, 8)
     }

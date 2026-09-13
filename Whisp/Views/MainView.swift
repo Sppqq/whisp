@@ -602,14 +602,12 @@ private struct StartView: View {
                             Label("Что записывать", systemImage: "waveform")
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(.secondary)
-                            Picker("Что записывать", selection: $captureMode) {
-                                ForEach(CaptureMode.allCases) { mode in
-                                    Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                            WhispGlassSegment(
+                                selection: $captureMode,
+                                options: CaptureMode.allCases.map { mode in
+                                    (mode, mode.rawValue, mode.icon)
                                 }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
-                            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                            )
                             Text(captureMode == .microphone
                                  ? "Записывается только микрофон."
                                  : "Микрофон и звук приложений сохранятся отдельными дорожками.")

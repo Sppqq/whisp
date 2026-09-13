@@ -113,7 +113,10 @@ struct TodayView: View {
                 .font(.title3)
                 .foregroundStyle(color)
                 .frame(width: 38, height: 38)
-                .background(color.opacity(0.1), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
+                .glassEffect(
+                    .regular.tint(color.opacity(0.16)),
+                    in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
+                )
             VStack(alignment: .leading, spacing: 1) {
                 Text("\(value)")
                     .font(.title2.monospacedDigit().bold())
@@ -125,7 +128,7 @@ struct TodayView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity)
-        .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
+        .whispGlassPanel(cornerRadius: WhispMetrics.surfaceCornerRadius)
     }
 
     @ViewBuilder private var lessonsSection: some View {
@@ -152,7 +155,10 @@ struct TodayView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .frame(width: 48, height: 48)
-                        .background(WhispPalette.accent.opacity(0.09), in: .rect(cornerRadius: 11))
+                        .glassEffect(
+                            .regular.tint(WhispPalette.accent.opacity(0.14)),
+                            in: .rect(cornerRadius: 11)
+                        )
 
                         VStack(alignment: .leading, spacing: 3) {
                             Text(lesson.entry.subject)
@@ -173,7 +179,7 @@ struct TodayView: View {
                             .foregroundStyle(.secondary)
                     }
                     .padding(12)
-                    .whispQuietSurface()
+                    .whispGlassPanel()
                 }
             }
         }
@@ -218,7 +224,7 @@ struct TodayView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .whispQuietSurface()
+                    .whispInteractiveGlassSurface()
                 }
             }
         }
@@ -255,7 +261,7 @@ struct TodayView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .whispQuietSurface()
+                    .whispInteractiveGlassSurface()
                 }
             }
         }
@@ -306,6 +312,6 @@ struct TodayView: View {
             }
         }
         .padding(14)
-        .whispQuietSurface()
+        .whispGlassPanel()
     }
 }

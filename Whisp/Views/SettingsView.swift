@@ -797,7 +797,7 @@ struct SettingsView: View {
                 caption: "Способ хранения Gemini API key, пароля прокси и пароля WebDAV на этом Mac.",
                 icon: "lock.shield"
             ) {
-                Picker("Хранилище секретов", selection: Binding(
+                WhispGlassSegment(selection: Binding(
                     get: { store.secretStorageMode },
                     set: { newMode in
                         do {
@@ -812,14 +812,9 @@ struct SettingsView: View {
                             testResult = error.localizedDescription
                         }
                     }
-                )) {
-                    ForEach(SecretStorageMode.allCases) { mode in
-                        Label(mode.title, systemImage: mode.icon).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                ), options: SecretStorageMode.allCases.map { mode in
+                    (mode, mode.title, mode.icon)
+                })
 
                 Label(store.secretStorageMode.description, systemImage: "info.circle")
                     .font(.caption)
@@ -942,17 +937,12 @@ struct SettingsView: View {
                     .padding(.vertical, 5)
                     .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
 
-                Picker("Канал обновлений", selection: Binding(
+                WhispGlassSegment(selection: Binding(
                     get: { model.updateService.updateChannel },
                     set: { model.updateService.updateChannel = $0 }
-                )) {
-                    ForEach(UpdateChannel.allCases) { channel in
-                        Text(channel.title).tag(channel)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                ), options: UpdateChannel.allCases.map { channel in
+                    (channel, channel.title, channel == .stable ? "checkmark.seal" : "testtube.2")
+                })
 
                 Label(model.updateService.updateChannel.description, systemImage: "info.circle")
                     .font(.caption)
@@ -1123,14 +1113,12 @@ struct SettingsView: View {
             caption: "Выберите спокойную светлую или тёмную сцену для работы с лекциями.",
             icon: "circle.lefthalf.filled"
         ) {
-            Picker("Тема", selection: $store.settings.appearance) {
-                ForEach(WhispAppearance.allCases) { appearance in
-                    Label(appearance.title, systemImage: appearance.icon).tag(appearance)
+            WhispGlassSegment(
+                selection: $store.settings.appearance,
+                options: WhispAppearance.allCases.map { appearance in
+                    (appearance, appearance.title, appearance.icon)
                 }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+            )
 
             Label(
                 "Системная тема следует за macOS. Настройка применяется сразу, включая окно настроек.",
@@ -1200,7 +1188,7 @@ private struct SettingsCard<Content: View>: View {
         }
         .padding(19)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
+        .whispGlassPanel(cornerRadius: WhispMetrics.surfaceCornerRadius)
     }
 }
 

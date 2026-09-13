@@ -85,6 +85,57 @@ struct WhispGlassGroup<Content: View>: View {
     }
 }
 
+struct WhispGlassSegment<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [(value: Value, title: String, icon: String?)]
+    var minHeight: CGFloat = 32
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        GlassEffectContainer(spacing: 5) {
+            HStack(spacing: 5) {
+                ForEach(options, id: \.value) { option in
+                    segment(option)
+                }
+            }
+            .padding(4)
+        }
+        .glassEffect(.regular, in: .capsule)
+    }
+
+    @ViewBuilder
+    private func segment(_ option: (value: Value, title: String, icon: String?)) -> some View {
+        let isSelected = selection == option.value
+        Button {
+            withAnimation(reduceMotion ? nil : WhispMotion.control) {
+                selection = option.value
+            }
+        } label: {
+            HStack(spacing: 6) {
+                if let icon = option.icon {
+                    Image(systemName: icon)
+                }
+                Text(option.title)
+                    .lineLimit(1)
+            }
+            .font(.callout.weight(isSelected ? .semibold : .medium))
+            .foregroundStyle(isSelected ? Color.white : Color.primary)
+            .frame(maxWidth: .infinity, minHeight: minHeight)
+            .padding(.horizontal, 10)
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(
+            isSelected
+                ? .regular.tint(WhispPalette.accent).interactive()
+                : .regular.interactive(),
+            in: .capsule
+        )
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 struct WhispStatusMark: View {
     let color: Color
     let title: String
@@ -128,6 +179,14 @@ extension View {
             .regular.interactive(),
             in: .rect(cornerRadius: cornerRadius)
         )
+    }
+
+    func whispGlassPanel(cornerRadius: CGFloat = WhispMetrics.surfaceCornerRadius) -> some View {
+        glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+    }
+
+    func whispInteractiveGlassSurface(cornerRadius: CGFloat = WhispMetrics.controlCornerRadius) -> some View {
+        glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
     }
 
     /// A plain text field with the app-wide Liquid Glass field treatment.
