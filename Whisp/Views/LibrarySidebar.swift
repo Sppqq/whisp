@@ -196,6 +196,7 @@ struct LibrarySidebar: View {
             }
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+            .contentShape(.rect(cornerRadius: WhispMetrics.compactCornerRadius))
         }
         .buttonStyle(.plain)
         .disabled(model.isRecording)
