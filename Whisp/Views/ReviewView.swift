@@ -203,7 +203,7 @@ struct ReviewView: View {
                             .font(.callout.weight(.medium))
                             .foregroundStyle(.primary)
                             .padding(.horizontal, 12)
-                            .frame(minHeight: 28)
+                            .frame(minHeight: 32)
                             .glassEffect(.regular.interactive(), in: .capsule)
                     }
                     .buttonStyle(.plain)
@@ -216,9 +216,16 @@ struct ReviewView: View {
                             Task { await model.regenerateAnalysis(forceOverwriteNotes: true) }
                         } label: {
                             Label(model.currentSession?.analysis == nil ? "Создать" : "Перегенерировать", systemImage: "sparkles")
+                                .font(.callout.weight(.medium))
+                                .foregroundStyle(Color.white)
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 32)
+                                .glassEffect(
+                                    .regular.tint(WhispPalette.accent).interactive(),
+                                    in: .capsule
+                                )
                         }
-                        .buttonStyle(.glassProminent)
-                        .controlSize(.small)
+                        .buttonStyle(.plain)
                         .disabled(model.isGeneratingNotes)
                         .help("Перегенерировать конспекты через Gemini")
                     }

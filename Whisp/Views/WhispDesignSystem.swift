@@ -94,7 +94,38 @@ struct WhispGlassSegment<Value: Hashable>: View {
     @Namespace private var selectionGlassNamespace
 
     var body: some View {
-        GlassEffectContainer(spacing: 0) {
+        ZStack {
+            Color.clear
+                .frame(height: minHeight + 8)
+                .glassEffect(.regular, in: .capsule)
+
+            HStack(spacing: 0) {
+                ForEach(options, id: \.value) { option in
+                    ZStack {
+                        if selection == option.value {
+                            Capsule()
+                                .fill(Color.primary.opacity(0.10))
+                                .overlay {
+                                    Capsule()
+                                        .stroke(Color.white.opacity(0.30), lineWidth: 1)
+                                }
+                                .shadow(color: Color.black.opacity(0.10), radius: 5, y: 2)
+                                .matchedGeometryEffect(
+                                    id: "selection-lens",
+                                    in: selectionGlassNamespace
+                                )
+                        }
+
+                        Color.clear
+                    }
+                    .frame(maxWidth: .infinity, minHeight: minHeight)
+                }
+            }
+            .padding(4)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: minHeight + 8)
+        .overlay {
             HStack(spacing: 0) {
                 ForEach(options, id: \.value) { option in
                     segment(option)
@@ -102,7 +133,6 @@ struct WhispGlassSegment<Value: Hashable>: View {
             }
             .padding(4)
         }
-        .glassEffect(.regular, in: .capsule)
     }
 
     @ViewBuilder
@@ -125,17 +155,6 @@ struct WhispGlassSegment<Value: Hashable>: View {
             .frame(maxWidth: .infinity, minHeight: minHeight)
             .padding(.horizontal, 10)
             .contentShape(.capsule)
-            .background {
-                if isSelected {
-                    Color.clear
-                        .glassEffect(
-                            .regular.tint(Color.primary.opacity(0.12)).interactive(),
-                            in: .capsule
-                        )
-                        .glassEffectID("selection", in: selectionGlassNamespace)
-                        .glassEffectTransition(.matchedGeometry)
-                }
-            }
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
