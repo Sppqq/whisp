@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LibrarySidebar: View {
     @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var searchText = ""
     @State private var selectedSubject = "Все"
@@ -78,7 +79,13 @@ struct LibrarySidebar: View {
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
             .disabled(model.isRecording)
-            .onChange(of: model.selectedSessionID) { _, id in model.selectSession(id) }
+            .onChange(of: model.selectedSessionID) { _, id in
+                guard !(model.showsToday && id == nil) else { return }
+                withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                    model.selectSession(id)
+                }
+            }
+            .animation(reduceMotion ? nil : WhispMotion.content, value: filteredSessions.map(\.id))
 
             Divider().opacity(0.55)
             HStack {
@@ -146,10 +153,18 @@ struct LibrarySidebar: View {
         Group {
             if model.showsToday {
                 todayButtonLabel
-                    .buttonStyle(.glassProminent)
+                    .foregroundStyle(Color.white)
+                    .glassEffect(
+                        .regular.tint(WhispPalette.accent).interactive(),
+                        in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
+                    )
             } else {
                 todayButtonLabel
-                    .buttonStyle(.glass)
+                    .foregroundStyle(.primary)
+                    .glassEffect(
+                        .regular.interactive(),
+                        in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
+                    )
             }
         }
         .padding(.horizontal, 14)
@@ -158,7 +173,9 @@ struct LibrarySidebar: View {
 
     private var todayButtonLabel: some View {
         Button {
-            model.showTodayDashboard()
+            withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                model.showTodayDashboard()
+            }
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: "sun.max.fill")
@@ -180,6 +197,7 @@ struct LibrarySidebar: View {
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
         }
+        .buttonStyle(.plain)
         .disabled(model.isRecording)
         .accessibilityLabel(todayBadgeCount > 0 ? "Сегодня, \(todayBadgeCount) дел" : "Сегодня")
     }
@@ -265,23 +283,34 @@ struct LibrarySidebar: View {
     @ViewBuilder
     private func subjectFilterButton(_ subject: String) -> some View {
         if selectedSubject == subject {
-            Button { selectedSubject = subject } label: {
+            Button { selectSubject(subject) } label: {
                 Text(subject)
                     .font(.caption2.weight(.semibold))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
             }
-            .buttonStyle(.glassProminent)
-            .controlSize(.small)
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.white)
+            .glassEffect(
+                .regular.tint(WhispPalette.accent).interactive(),
+                in: .capsule
+            )
         } else {
-            Button { selectedSubject = subject } label: {
+            Button { selectSubject(subject) } label: {
                 Text(subject)
                     .font(.caption2)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
             }
-            .buttonStyle(.glass)
-            .controlSize(.small)
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
+            .glassEffect(.regular.interactive(), in: .capsule)
+        }
+    }
+
+    private func selectSubject(_ subject: String) {
+        withAnimation(reduceMotion ? nil : WhispMotion.control) {
+            selectedSubject = subject
         }
     }
 }
@@ -317,8 +346,10 @@ private struct LectureRow: View {
             HStack(spacing: 5) {
                 Circle().fill(statusColor).frame(width: 5, height: 5)
                 Text(session.subject).foregroundStyle(.secondary).lineLimit(1)
-                Text("·").foregroundStyle(.tertiary)
-                Text(session.status.title).foregroundStyle(.secondary).lineLimit(1)
+                if session.status != .review {
+                    Text("·").foregroundStyle(.tertiary)
+                    Text(session.status.title).foregroundStyle(.secondary).lineLimit(1)
+                }
                 if !session.fallbackIntervals.isEmpty {
                     Image(systemName: "cpu")
                         .foregroundStyle(session.hasPendingBackfill ? .orange : .secondary)

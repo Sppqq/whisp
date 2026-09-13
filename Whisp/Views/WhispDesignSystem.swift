@@ -33,6 +33,17 @@ enum WhispMetrics {
     static let settingsMinHeight: CGFloat = 700
 }
 
+enum WhispMotion {
+    static let navigation = Animation.snappy(duration: 0.32, extraBounce: 0.04)
+    static let content = Animation.easeInOut(duration: 0.24)
+    static let control = Animation.snappy(duration: 0.22, extraBounce: 0.02)
+
+    static let contentTransition = AnyTransition.asymmetric(
+        insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .center)),
+        removal: .opacity
+    )
+}
+
 struct WhispGlassSurface<Content: View>: View {
     private let tint: Color?
     private let content: Content

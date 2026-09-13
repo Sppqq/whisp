@@ -10,7 +10,7 @@ enum LectureStatus: String, Codable, CaseIterable, Sendable {
         case .paused: "Пауза"
         case .processing: "Обработка"
         case .awaitingBackfill: "Ожидает дорасшифровки AI"
-        case .review: "Проверка"
+        case .review: "Готово"
         case .uploading: "Загрузка"
         case .synced: "Синхронизировано"
         case .failed: "Ошибка"

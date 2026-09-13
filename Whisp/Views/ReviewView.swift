@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ReviewView: View {
     @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var tab = "student"
     @State private var audioSource = AudioSource.microphone
     @State private var isPreviewMode = true
@@ -166,7 +167,7 @@ struct ReviewView: View {
             remindersSection
 
             VStack(alignment: .leading, spacing: 12) {
-                Picker("Документ", selection: $tab) {
+                Picker("Документ", selection: animatedTabSelection) {
                     Text("Тетрадь").tag("student")
                     Text("Разбор").tag("notes")
                     Text("К зачёту").tag("quiz")
@@ -178,7 +179,7 @@ struct ReviewView: View {
 
                 HStack(spacing: 10) {
                     if tab != "quiz" || quizViewMode == "markdown" {
-                        Picker("Режим", selection: $isPreviewMode) {
+                        Picker("Режим", selection: animatedPreviewSelection) {
                             Label("Правка", systemImage: "pencil").tag(false)
                             Label("Просмотр", systemImage: "eye").tag(true)
                         }
@@ -217,6 +218,7 @@ struct ReviewView: View {
                         .help("Перегенерировать конспекты через Gemini")
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 8)
@@ -383,6 +385,9 @@ struct ReviewView: View {
                 )
                 }
             }
+            .id(reviewContentAnimationID)
+            .transition(reduceMotion ? .opacity : WhispMotion.contentTransition)
+            .animation(reduceMotion ? nil : WhispMotion.content, value: reviewContentAnimationID)
 
             HStack {
                 if model.currentSession?.status == .processing {
@@ -485,6 +490,32 @@ struct ReviewView: View {
         }
     }
 
+    private var animatedTabSelection: Binding<String> {
+        Binding(
+            get: { tab },
+            set: { newValue in
+                withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                    tab = newValue
+                }
+            }
+        )
+    }
+
+    private var animatedPreviewSelection: Binding<Bool> {
+        Binding(
+            get: { isPreviewMode },
+            set: { newValue in
+                withAnimation(reduceMotion ? nil : WhispMotion.content) {
+                    isPreviewMode = newValue
+                }
+            }
+        )
+    }
+
+    private var reviewContentAnimationID: String {
+        "\(tab)-\(isPreviewMode)-\(quizViewMode)"
+    }
+
     private var currentContent: String {
         switch tab {
         case "student":
@@ -517,7 +548,7 @@ struct ReviewView: View {
                                 metadataChip("#\(tag)", accent: true)
                             }
                             ForEach(analysis.keyConcepts.prefix(3), id: \.self) { concept in
-                                metadataChip("[[\(concept)]]")
+                                metadataChip(concept)
                             }
                         }
                         .padding(.vertical, 1)

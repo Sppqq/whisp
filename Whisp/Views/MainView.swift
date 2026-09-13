@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct MainView: View {
     @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isInspectorPresented = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
@@ -14,8 +15,11 @@ struct MainView: View {
             ZStack {
                 WhispPalette.canvas.ignoresSafeArea()
                 detail
+                    .id(detailAnimationID)
+                    .transition(reduceMotion ? .opacity : WhispMotion.contentTransition)
                 updateProgressOverlay
             }
+            .animation(reduceMotion ? nil : WhispMotion.navigation, value: detailAnimationID)
             .navigationTitle("")
         }
         .navigationSplitViewStyle(.balanced)
@@ -34,6 +38,7 @@ struct MainView: View {
                             .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
                     .controlSize(.small)
                     .labelStyle(.iconOnly)
                     .help("Новая лекция или импорт")
@@ -42,7 +47,9 @@ struct MainView: View {
                     .disabled(model.isRecording)
 
                     Button {
-                        isInspectorPresented.toggle()
+                        withAnimation(reduceMotion ? nil : WhispMotion.control) {
+                            isInspectorPresented.toggle()
+                        }
                     } label: {
                         Image(systemName: "sidebar.trailing")
                             .frame(width: 28, height: 28)
@@ -188,6 +195,16 @@ struct MainView: View {
 
     private func formattedBytes(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private var detailAnimationID: String {
+        if model.showsToday { return "today" }
+        if model.isRecording { return "recording" }
+        if let session = model.currentSession {
+            return "session-\(session.id.uuidString)-\(session.status.rawValue)"
+        }
+        if let session = model.displayedSession { return "summary-\(session.id.uuidString)" }
+        return "start"
     }
 
     @ViewBuilder private var detail: some View {
