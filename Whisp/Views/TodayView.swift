@@ -106,7 +106,7 @@ struct TodayView: View {
             summaryCard(
                 value: reviewSessions.count,
                 title: "лекций повторить",
-                icon: "rectangle.stack.badge.clock",
+                icon: "clock.arrow.circlepath",
                 color: .purple
             )
         }
@@ -196,7 +196,7 @@ struct TodayView: View {
                 emptyRow("Нет актуальных заданий", detail: "Новые поручения появятся здесь после разбора лекции.")
             } else {
                 ForEach(tasks) { item in
-                    HStack(alignment: .top, spacing: 12) {
+                    HStack(alignment: .center, spacing: 12) {
                         Button {
                             withAnimation(WhispMotion.control) {
                                 model.toggleReminderCompletion(
@@ -207,8 +207,9 @@ struct TodayView: View {
                         } label: {
                             Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
                                 .contentTransition(.symbolEffect(.replace))
-                                .font(.title3)
                                 .foregroundStyle(item.isCompleted ? WhispPalette.success : .secondary)
+                                .frame(width: 30, height: 30)
+                                .glassEffect(.regular.interactive(), in: .circle)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(item.isCompleted ? "Вернуть задание" : "Отметить выполненным")
@@ -258,10 +259,11 @@ struct TodayView: View {
                             }
                         } label: {
                             Image(systemName: "trash")
-                                .frame(width: 24, height: 24)
+                                .foregroundStyle(.red)
+                                .frame(width: 30, height: 30)
+                                .glassEffect(.regular.interactive(), in: .circle)
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
                         .help("Удалить задание")
                     }
                     .padding(12)

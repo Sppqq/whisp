@@ -47,47 +47,24 @@ struct ReviewView: View {
                         .pickerStyle(.inline)
                         .labelsHidden()
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "book.closed")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(model.currentSession?.subject ?? "Не определено")
-                                .font(.caption.weight(.medium))
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Image(systemName: "chevron.down")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 10)
-                        .frame(width: 170, height: WhispMetrics.glassFieldHeight)
-                        .contentShape(Rectangle())
+                        ReviewHeaderControlLabel(
+                            title: model.currentSession?.subject ?? "Не определено",
+                            systemImage: "book.closed"
+                        )
                     }
                     .menuStyle(.borderlessButton)
-                    .whispGlassControl()
                     .help("Предмет лекции")
 
                     Button {
                         isDatePickerPresented.toggle()
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "calendar")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(selectedLectureDateText)
-                                .font(.caption.monospacedDigit())
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Image(systemName: "chevron.down")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 10)
-                        .frame(width: 145, height: WhispMetrics.glassFieldHeight)
-                        .contentShape(Rectangle())
+                        ReviewHeaderControlLabel(
+                            title: selectedLectureDateText,
+                            systemImage: "calendar",
+                            monospaced: true
+                        )
                     }
                     .buttonStyle(.plain)
-                    .whispGlassControl()
                     .help("Дата лекции — можно выбрать дату вчерашней или более старой записи")
                     .popover(isPresented: $isDatePickerPresented, arrowEdge: .bottom) {
                         VStack(spacing: 10) {
@@ -106,16 +83,15 @@ struct ReviewView: View {
                                 Button("Сегодня") {
                                     model.updateReview(date: Date())
                                 }
-                                .buttonStyle(.plain)
-                                .font(.caption)
-                                .foregroundStyle(WhispPalette.accent)
+                                .buttonStyle(.glass)
+                                .controlSize(.small)
 
                                 Spacer()
 
                                 Button("Готово") {
                                     isDatePickerPresented = false
                                 }
-                                .buttonStyle(.glassProminent)
+                                .buttonStyle(.glass)
                                 .controlSize(.small)
                             }
                             .padding(.horizontal, 4)
@@ -700,12 +676,9 @@ struct ReviewView: View {
             Button { model.player.toggle() } label: {
                 Image(systemName: model.player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(.primary)
                     .frame(width: 34, height: 34)
-                    .glassEffect(
-                        .regular.tint(WhispPalette.accent).interactive(),
-                        in: .circle
-                    )
+                    .glassEffect(.regular.interactive(), in: .circle)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(model.player.isPlaying ? "Пауза" : "Воспроизвести")
@@ -725,6 +698,7 @@ struct ReviewView: View {
 
             Text(WhispFormatting.timestamp(model.player.currentTime)).monospacedDigit().font(.caption)
             Slider(value: Binding(get: { model.player.currentTime }, set: { model.player.seek(to: $0) }), in: 0...max(1, model.player.duration))
+                .tint(.secondary)
             Text(WhispFormatting.timestamp(model.player.duration)).monospacedDigit().font(.caption).foregroundStyle(.secondary)
 
             Menu {
@@ -743,26 +717,41 @@ struct ReviewView: View {
             } label: {
                 Text(String(format: "%.2fx", model.player.playbackRate).replacingOccurrences(of: ".00x", with: "x").replacingOccurrences(of: "0x", with: "x"))
                     .font(.caption.monospacedDigit().weight(.semibold))
-                    .frame(width: 46)
+                    .foregroundStyle(.primary)
+                    .frame(width: 64, height: 34)
+                    .glassEffect(.regular.interactive(), in: .capsule)
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.capsule)
-            .foregroundStyle(.secondary)
-            .controlSize(.small)
+            .menuStyle(.borderlessButton)
             .help("Скорость воспроизведения")
 
-            Picker("Дорожка", selection: $audioSource) {
-                Label("Микрофон", systemImage: "mic.fill").tag(AudioSource.microphone)
-                if model.currentSession?.captureSystemAudio == true {
-                    Label("Системный звук", systemImage: "waveform").tag(AudioSource.system)
+            Menu {
+                Button {
+                    audioSource = .microphone
+                } label: {
+                    Label("Микрофон", systemImage: audioSource == .microphone ? "checkmark" : "mic.fill")
                 }
+                if model.currentSession?.captureSystemAudio == true {
+                    Button {
+                        audioSource = .system
+                    } label: {
+                        Label("Системный звук", systemImage: audioSource == .system ? "checkmark" : "waveform")
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: audioSource == .microphone ? "mic.fill" : "waveform")
+                    Text(audioSource == .microphone ? "Микрофон" : "Системный звук")
+                        .lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.primary)
+                .frame(width: 134, height: 34)
+                .glassEffect(.regular.interactive(), in: .capsule)
             }
-            .labelsHidden()
-            .frame(width: 120)
-            .pickerStyle(.menu)
-            .buttonStyle(.glass)
-            .buttonBorderShape(.capsule)
-            .foregroundStyle(.secondary)
+            .menuStyle(.borderlessButton)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 10)
@@ -770,6 +759,35 @@ struct ReviewView: View {
         .padding(.horizontal, 18)
         .padding(.bottom, 8)
     }
+
+private struct ReviewHeaderControlLabel: View {
+    let title: String
+    let systemImage: String
+    var monospaced = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(title)
+                .font(monospaced ? .caption.monospacedDigit() : .caption.weight(.medium))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 10)
+        .frame(width: 155, height: WhispMetrics.glassFieldHeight)
+        .contentShape(.rect(cornerRadius: WhispMetrics.controlCornerRadius))
+        .glassEffect(
+            .regular.interactive(),
+            in: .rect(cornerRadius: WhispMetrics.controlCornerRadius)
+        )
+    }
+}
 
     private var transcriptModeBanner: some View {
         let tint = WhispPalette.accent

@@ -55,42 +55,40 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            VStack(alignment: .leading, spacing: 4) {
-                Button {
-                    withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
-                        columnVisibility = .detailOnly
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(SettingsPage.allCases) { item in
+                        settingsNavigationButton(item)
                     }
-                } label: {
-                    WhispGlassIconActionLabel(systemImage: "sidebar.leading", size: 30)
                 }
-                .buttonStyle(.plain)
-                .help("Скрыть боковую панель")
-                .accessibilityLabel("Скрыть боковую панель")
-                .padding(.leading, 12)
-                .padding(.top, 8)
-
-                ScrollView {
-                    VStack(spacing: 6) {
-                        ForEach(SettingsPage.allCases) { item in
-                            settingsNavigationButton(item)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
             }
-            .navigationTitle("Whisp")
             .navigationSplitViewColumnWidth(min: 180, ideal: 205, max: 240)
             .toolbar(removing: .sidebarToggle)
         } detail: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(selectedPage.rawValue)
-                            .font(.largeTitle.weight(.semibold))
-                        Text(pageSubtitle)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(selectedPage.rawValue)
+                                .font(.largeTitle.weight(.semibold))
+                            Text(pageSubtitle)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(appVersionLabel)
+                                .font(.caption.monospacedDigit().weight(.medium))
+                                .foregroundStyle(.secondary)
+                            if !testResult.isEmpty {
+                                Text(testResult)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(isSuccessfulTestResult ? WhispPalette.success : .red)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
 
                     pageContent
@@ -100,41 +98,12 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .top)
             }
             .background(WhispPalette.canvas)
-            .navigationTitle("Настройки")
         }
         .navigationSplitViewStyle(.balanced)
         .background(WhispPalette.canvas)
-        .toolbar {
-            if columnVisibility == .detailOnly {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
-                            columnVisibility = .all
-                        }
-                    } label: {
-                        WhispGlassIconActionLabel(systemImage: "sidebar.leading", size: 30)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Показать боковую панель")
-                    .accessibilityLabel("Показать боковую панель")
-                }
-            }
-
-            ToolbarItem(placement: .primaryAction) {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(appVersionLabel)
-                        .font(.caption.monospacedDigit().weight(.medium))
-                        .foregroundStyle(.secondary)
-                    if !testResult.isEmpty {
-                        Text(testResult)
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(isSuccessfulTestResult ? WhispPalette.success : .red)
-                            .lineLimit(1)
-                    }
-                }
-            }
-        }
+        .toolbarVisibility(.hidden, for: .windowToolbar)
         .onAppear {
+            columnVisibility = .all
             geminiKeys = store.geminiAPIKeys
             geminiKey = store.geminiAPIKey
             customProviders = store.customProviders

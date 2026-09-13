@@ -86,6 +86,9 @@ enum MarkdownPreviewParser {
                 let parsed = callout(from: quoted)
                 blocks.append(.callout(title: parsed.title, body: parsed.body))
                 index = next - 1
+            } else if let important = importantQuote(from: line) {
+                finishParagraph()
+                blocks.append(.callout(title: important.title, body: important.body))
             } else if line.hasPrefix(">") {
                 finishParagraph()
                 blocks.append(.quote(stripQuote(line)))
@@ -147,6 +150,21 @@ enum MarkdownPreviewParser {
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
         return (title.isEmpty ? "Заметка" : title, body)
+    }
+
+    private static func importantQuote(from line: String) -> (title: String, body: String)? {
+        guard let match = line.range(
+            of: "^>\\s*\\*\\*([^*]+)\\*\\*\\s*(.*)$",
+            options: .regularExpression
+        ) else { return nil }
+        let content = String(line[match])
+            .replacingOccurrences(of: "^>\\s*", with: "", options: .regularExpression)
+        guard let titleEnd = content.range(of: "**", options: [], range: content.index(content.startIndex, offsetBy: 2)..<content.endIndex) else {
+            return nil
+        }
+        let title = String(content[content.index(content.startIndex, offsetBy: 2)..<titleEnd.lowerBound])
+        let body = String(content[titleEnd.upperBound...]).trimmingCharacters(in: .whitespaces)
+        return (title, body)
     }
 
     private static func attachmentName(from line: String) -> String? {
@@ -342,8 +360,7 @@ enum MarkdownDisplayFormatting {
             ("\\\\vec\\{([^{}]+)\\}", "$1⃗"),
             ("\\\\frac\\{([^{}]+)\\}\\{([^{}]+)\\}", "($1)/($2)"),
             ("\\\\sqrt\\{([^{}]+)\\}", "√($1)"),
-            ("\\\\(?:mathrm|text)\\{([^{}]+)\\}", "$1"),
-            ("_\\{([^{}]+)\\}", "₍$1₎")
+            ("\\\\(?:mathrm|text)\\{([^{}]+)\\}", "$1")
         ]
         for (pattern, replacement) in patterns {
             value = value.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
@@ -360,10 +377,8 @@ enum MarkdownDisplayFormatting {
         for (source, replacement) in symbols {
             value = value.replacingOccurrences(of: source, with: replacement)
         }
+        value = readableSubscripts(value)
         value = value
-            .replacingOccurrences(of: "_0", with: "₀")
-            .replacingOccurrences(of: "_1", with: "₁")
-            .replacingOccurrences(of: "_2", with: "₂")
             .replacingOccurrences(of: "^2", with: "²")
             .replacingOccurrences(of: "^3", with: "³")
 
@@ -371,5 +386,41 @@ enum MarkdownDisplayFormatting {
             .replacingOccurrences(of: "\\(", with: "")
             .replacingOccurrences(of: "\\)", with: "")
             .replacingOccurrences(of: "$", with: "")
+    }
+
+    private static func readableSubscripts(_ source: String) -> String {
+        let braced = source.replacingOccurrences(
+            of: "_\\{([^{}]+)\\}",
+            with: "_$1",
+            options: .regularExpression
+        )
+        let expression = try? NSRegularExpression(pattern: "_([A-Za-zА-Яа-я0-9]+)")
+        guard let expression else { return braced }
+        var result = braced
+        let matches = expression.matches(in: result, range: NSRange(result.startIndex..., in: result)).reversed()
+        for match in matches {
+            guard let range = Range(match.range(at: 1), in: result) else { continue }
+            let raw = String(result[range])
+            let converted = subscriptText(raw)
+            let fullRange = Range(match.range(at: 0), in: result)!
+            result.replaceSubrange(fullRange, with: converted)
+        }
+        return result
+    }
+
+    private static func subscriptText(_ source: String) -> String {
+        let symbols: [Character: Character] = [
+            "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
+            "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+            "a": "ₐ", "e": "ₑ", "h": "ₕ", "i": "ᵢ", "j": "ⱼ",
+            "k": "ₖ", "l": "ₗ", "m": "ₘ", "n": "ₙ", "o": "ₒ",
+            "p": "ₚ", "r": "ᵣ", "s": "ₛ", "t": "ₜ", "u": "ᵤ",
+            "v": "ᵥ", "x": "ₓ", "y": "ᵧ"
+        ]
+        let converted = source.map { symbols[$0] ?? $0 }
+        if zip(source, converted).allSatisfy({ $0 == $1 }) {
+            return "₍\(source)₎"
+        }
+        return String(converted)
     }
 }

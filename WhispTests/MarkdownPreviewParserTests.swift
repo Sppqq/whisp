@@ -70,8 +70,15 @@ final class MarkdownPreviewParserTests: XCTestCase {
 
     func testLatexCommandsBecomeReadableSymbols() {
         XCTAssertEqual(
-            MarkdownDisplayFormatting.readableFormula("$x \\to y$, $g \\approx 9{,}8$, $v_0^2 \\mp a \\cdot t^2$"),
-            "x → y, g ≈ 9,8, v₀² ∓ a · t²"
+            MarkdownDisplayFormatting.readableFormula("$x \\to y$, $g \\approx 9{,}8$, $v_0^2 \\mp a_y \\cdot t^2$"),
+            "x → y, g ≈ 9,8, v₀² ∓ aᵧ · t²"
+        )
+    }
+
+    func testImportantQuoteBecomesCallout() {
+        XCTAssertEqual(
+            MarkdownPreviewParser.parse("> **NB!** Формулу достаточно вывести из базового уравнения."),
+            [.callout(title: "NB!", body: "Формулу достаточно вывести из базового уравнения.")]
         )
     }
 }
