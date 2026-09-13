@@ -1022,6 +1022,34 @@ final class AppModel {
         }
     }
 
+    func toggleReminderCompletion(sessionID: UUID, reminderID: UUID) {
+        mutateReminderSession(sessionID: sessionID) { session in
+            session.toggleReminderCompletion(reminderID)
+        }
+    }
+
+    func deleteReminder(sessionID: UUID, reminderID: UUID) {
+        mutateReminderSession(sessionID: sessionID) { session in
+            session.deleteReminder(reminderID)
+        }
+    }
+
+    private func mutateReminderSession(
+        sessionID: UUID,
+        mutation: (inout LectureSession) -> Void
+    ) {
+        guard var session = sessions.first(where: { $0.id == sessionID })
+                ?? (currentSession?.id == sessionID ? currentSession : nil) else { return }
+        mutation(&session)
+        if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
+            sessions[index] = session
+        }
+        if currentSession?.id == sessionID {
+            currentSession = session
+        }
+        Task { try? await store.save(session) }
+    }
+
     func createRemindersForExistingAnalyses() async {
         guard !isBusy, !isCreatingBatchReminders else { return }
         guard !settingsStore.settings.lessonSchedule.isEmpty else {

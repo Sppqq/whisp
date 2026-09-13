@@ -609,11 +609,46 @@ struct ReviewView: View {
                     .foregroundStyle(.secondary)
 
                 ForEach(reminders) { reminder in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(reminder.title).font(.callout.weight(.medium))
-                        Text(reminder.notes).font(.caption).foregroundStyle(.secondary)
+                    let isCompleted = session.completedReminderIDs.contains(reminder.id)
+                    HStack(alignment: .top, spacing: 10) {
+                        Button {
+                            withAnimation(WhispMotion.control) {
+                                model.toggleReminderCompletion(
+                                    sessionID: session.id,
+                                    reminderID: reminder.id
+                                )
+                            }
+                        } label: {
+                            Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
+                                .contentTransition(.symbolEffect(.replace))
+                                .foregroundStyle(isCompleted ? WhispPalette.success : .secondary)
+                        }
+                        .buttonStyle(.plain)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(reminder.title)
+                                .font(.callout.weight(.medium))
+                                .strikethrough(isCompleted)
+                            Text(reminder.notes).font(.caption).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Button(role: .destructive) {
+                            withAnimation(WhispMotion.content) {
+                                model.deleteReminder(
+                                    sessionID: session.id,
+                                    reminderID: reminder.id
+                                )
+                            }
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Удалить задание")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .opacity(isCompleted ? 0.72 : 1)
                 }
             }
             .padding(12)

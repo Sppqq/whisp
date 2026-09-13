@@ -287,6 +287,7 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
     var userEditedNotes = false
     var userEditedStudentNotes = false
     var createdReminderIDs: [String] = []
+    var completedReminderIDs: Set<UUID> = []
 
     init(
         id: UUID = UUID(),
@@ -318,7 +319,8 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
         userEditedFinal: Bool = false,
         userEditedNotes: Bool = false,
         userEditedStudentNotes: Bool = false,
-        createdReminderIDs: [String] = []
+        createdReminderIDs: [String] = [],
+        completedReminderIDs: Set<UUID> = []
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -350,6 +352,7 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
         self.userEditedNotes = userEditedNotes
         self.userEditedStudentNotes = userEditedStudentNotes
         self.createdReminderIDs = createdReminderIDs
+        self.completedReminderIDs = completedReminderIDs
     }
 
     init(from decoder: Decoder) throws {
@@ -384,6 +387,7 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
         userEditedNotes = try container.decodeIfPresent(Bool.self, forKey: .userEditedNotes) ?? false
         userEditedStudentNotes = try container.decodeIfPresent(Bool.self, forKey: .userEditedStudentNotes) ?? false
         createdReminderIDs = try container.decodeIfPresent([String].self, forKey: .createdReminderIDs) ?? []
+        completedReminderIDs = try container.decodeIfPresent(Set<UUID>.self, forKey: .completedReminderIDs) ?? []
     }
 
     var duration: TimeInterval {
@@ -397,6 +401,19 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
 
     var hasPendingBackfill: Bool {
         fallbackIntervals.contains { ![.accepted, .declined].contains($0.status) }
+    }
+
+    mutating func toggleReminderCompletion(_ reminderID: UUID) {
+        if completedReminderIDs.contains(reminderID) {
+            completedReminderIDs.remove(reminderID)
+        } else {
+            completedReminderIDs.insert(reminderID)
+        }
+    }
+
+    mutating func deleteReminder(_ reminderID: UUID) {
+        analysis?.reminders.removeAll { $0.id == reminderID }
+        completedReminderIDs.remove(reminderID)
     }
 }
 

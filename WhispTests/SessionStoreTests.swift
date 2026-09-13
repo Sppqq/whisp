@@ -10,10 +10,13 @@ final class SessionStoreTests: XCTestCase {
         session.status = .recording
         session.startedAt = Date()
         session.importedAudioPath = "Исходник-ex.m4a"
+        let completedReminderID = UUID()
+        session.completedReminderIDs = [completedReminderID]
         try await store.save(session)
         let loaded = try await store.load(session.id)
         XCTAssertEqual(loaded.id, session.id)
         XCTAssertEqual(loaded.importedAudioPath, session.importedAudioPath)
+        XCTAssertEqual(loaded.completedReminderIDs, [completedReminderID])
         let recoverable = try await store.recoverableSessions().map(\.id)
         XCTAssertEqual(recoverable, [session.id])
     }
@@ -43,6 +46,31 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(session.subject, "Физика")
         XCTAssertEqual(session.quizMarkdown, "")
         XCTAssertEqual(session.studentNotesMarkdown, "")
+        XCTAssertTrue(session.completedReminderIDs.isEmpty)
+    }
+
+    func testReminderCanBeCompletedRestoredAndDeleted() {
+        let reminder = ReminderDraft(title: "Сделать упражнение", notes: "№ 5")
+        var session = LectureSession(analysis: AnalysisResult(
+            title: "Алгебра",
+            subject: "Математика",
+            confidence: 1,
+            alternatives: [],
+            summary: "",
+            detailedNotes: "",
+            reminders: [reminder]
+        ))
+
+        session.toggleReminderCompletion(reminder.id)
+        XCTAssertTrue(session.completedReminderIDs.contains(reminder.id))
+
+        session.toggleReminderCompletion(reminder.id)
+        XCTAssertFalse(session.completedReminderIDs.contains(reminder.id))
+
+        session.toggleReminderCompletion(reminder.id)
+        session.deleteReminder(reminder.id)
+        XCTAssertTrue(session.analysis?.reminders.isEmpty == true)
+        XCTAssertFalse(session.completedReminderIDs.contains(reminder.id))
     }
 
     func testLegacySettingsKeepExistingValuesAndDefaultToGemini() throws {

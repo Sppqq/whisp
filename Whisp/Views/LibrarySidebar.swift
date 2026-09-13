@@ -209,6 +209,7 @@ struct LibrarySidebar: View {
         let taskCount = model.sessions.reduce(0) { total, session in
             let active = (session.analysis?.reminders ?? []).filter { draft in
                 guard !draft.isInClassAssessmentInstruction else { return false }
+                guard !session.completedReminderIDs.contains(draft.id) else { return false }
                 return model.reminderService.resolvedDueDate(
                     for: draft,
                     subject: session.subject,

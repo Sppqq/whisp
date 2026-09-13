@@ -5,6 +5,7 @@ private struct DashboardTask: Identifiable {
     let draft: ReminderDraft
     let session: LectureSession
     let dueDate: Date
+    let isCompleted: Bool
 }
 
 struct TodayView: View {
@@ -30,11 +31,15 @@ struct TodayView: View {
                     id: "\(session.id.uuidString)-\(draft.id.uuidString)",
                     draft: draft,
                     session: session,
-                    dueDate: dueDate
+                    dueDate: dueDate,
+                    isCompleted: session.completedReminderIDs.contains(draft.id)
                 )
             }
         }
-        .sorted { $0.dueDate < $1.dueDate }
+        .sorted {
+            if $0.isCompleted != $1.isCompleted { return !$0.isCompleted }
+            return $0.dueDate < $1.dueDate
+        }
     }
 
     private var reviewSessions: [LectureSession] {
@@ -93,7 +98,7 @@ struct TodayView: View {
                 color: WhispPalette.accent
             )
             summaryCard(
-                value: tasks.count,
+                value: tasks.filter { !$0.isCompleted }.count,
                 title: "актуальных заданий",
                 icon: "checklist",
                 color: WhispPalette.warning
@@ -190,25 +195,48 @@ struct TodayView: View {
             if tasks.isEmpty {
                 emptyRow("Нет актуальных заданий", detail: "Новые поручения появятся здесь после разбора лекции.")
             } else {
-                ForEach(tasks.prefix(6)) { item in
-                    Button {
-                        model.selectSession(item.session.id)
-                    } label: {
-                        HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: item.session.createdReminderIDs.isEmpty ? "circle" : "checkmark.circle.fill")
-                                .foregroundStyle(item.session.createdReminderIDs.isEmpty ? WhispPalette.warning : WhispPalette.success)
-                                .padding(.top, 2)
+                ForEach(tasks) { item in
+                    HStack(alignment: .top, spacing: 12) {
+                        Button {
+                            withAnimation(WhispMotion.control) {
+                                model.toggleReminderCompletion(
+                                    sessionID: item.session.id,
+                                    reminderID: item.draft.id
+                                )
+                            }
+                        } label: {
+                            Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+                                .contentTransition(.symbolEffect(.replace))
+                                .font(.title3)
+                                .foregroundStyle(item.isCompleted ? WhispPalette.success : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(item.isCompleted ? "Вернуть задание" : "Отметить выполненным")
+
+                        Button {
+                            model.selectSession(item.session.id)
+                        } label: {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(item.draft.title)
                                     .font(.callout.weight(.semibold))
                                     .foregroundStyle(.primary)
+                                    .strikethrough(item.isCompleted)
                                     .multilineTextAlignment(.leading)
                                 Text("\(item.session.subject) · \(item.session.title)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
-                            Spacer()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        if item.isCompleted {
+                            Text("Выполнено")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(WhispPalette.success)
+                        } else {
                             Text(item.dueDate.formatted(
                                 Date.FormatStyle()
                                     .day()
@@ -220,11 +248,40 @@ struct TodayView: View {
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
-                        .padding(12)
-                        .contentShape(Rectangle())
+
+                        Button(role: .destructive) {
+                            withAnimation(WhispMotion.content) {
+                                model.deleteReminder(
+                                    sessionID: item.session.id,
+                                    reminderID: item.draft.id
+                                )
+                            }
+                        } label: {
+                            Image(systemName: "trash")
+                                .frame(width: 24, height: 24)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Удалить задание")
                     }
-                    .buttonStyle(.plain)
+                    .padding(12)
                     .whispInteractiveGlassSurface()
+                    .opacity(item.isCompleted ? 0.72 : 1)
+                    .contextMenu {
+                        Button(item.isCompleted ? "Вернуть в активные" : "Отметить выполненным") {
+                            model.toggleReminderCompletion(
+                                sessionID: item.session.id,
+                                reminderID: item.draft.id
+                            )
+                        }
+                        Divider()
+                        Button("Удалить", role: .destructive) {
+                            model.deleteReminder(
+                                sessionID: item.session.id,
+                                reminderID: item.draft.id
+                            )
+                        }
+                    }
                 }
             }
         }
