@@ -91,10 +91,11 @@ struct WhispGlassSegment<Value: Hashable>: View {
     var minHeight: CGFloat = 32
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var selectionGlassNamespace
 
     var body: some View {
-        GlassEffectContainer(spacing: 5) {
-            HStack(spacing: 5) {
+        GlassEffectContainer(spacing: 0) {
+            HStack(spacing: 0) {
                 ForEach(options, id: \.value) { option in
                     segment(option)
                 }
@@ -120,18 +121,23 @@ struct WhispGlassSegment<Value: Hashable>: View {
                     .lineLimit(1)
             }
             .font(.callout.weight(isSelected ? .semibold : .medium))
-            .foregroundStyle(isSelected ? Color.white : Color.primary)
+            .foregroundStyle(isSelected ? Color.primary : Color.primary.opacity(0.72))
             .frame(maxWidth: .infinity, minHeight: minHeight)
             .padding(.horizontal, 10)
             .contentShape(.capsule)
+            .background {
+                if isSelected {
+                    Color.clear
+                        .glassEffect(
+                            .regular.tint(Color.primary.opacity(0.12)).interactive(),
+                            in: .capsule
+                        )
+                        .glassEffectID("selection", in: selectionGlassNamespace)
+                        .glassEffectTransition(.matchedGeometry)
+                }
+            }
         }
         .buttonStyle(.plain)
-        .glassEffect(
-            isSelected
-                ? .regular.tint(WhispPalette.accent).interactive()
-                : .regular.interactive(),
-            in: .capsule
-        )
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

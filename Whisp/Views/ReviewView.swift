@@ -200,9 +200,13 @@ struct ReviewView: View {
                         }
                     } label: {
                         Label(copied ? "Скопировано" : "Копировать", systemImage: copied ? "checkmark" : "doc.on.doc")
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 28)
+                            .glassEffect(.regular.interactive(), in: .capsule)
                     }
-                    .buttonStyle(.glass)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
                     .help("Скопировать Markdown в буфер обмена")
 
                     if tab != "quiz",
@@ -213,7 +217,7 @@ struct ReviewView: View {
                         } label: {
                             Label(model.currentSession?.analysis == nil ? "Создать" : "Перегенерировать", systemImage: "sparkles")
                         }
-                        .buttonStyle(.glass)
+                        .buttonStyle(.glassProminent)
                         .controlSize(.small)
                         .disabled(model.isGeneratingNotes)
                         .help("Перегенерировать конспекты через Gemini")
@@ -642,33 +646,38 @@ struct ReviewView: View {
                 model.player.skip(by: -15)
             } label: {
                 Image(systemName: "gobackward.15")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .glassEffect(.regular.interactive(), in: .circle)
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
-            .font(.system(size: 13))
+            .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .frame(width: 28, height: 28)
             .help("Назад на 15 секунд")
             .accessibilityLabel("Назад на 15 секунд")
 
             Button { model.player.toggle() } label: {
-                Image(systemName: model.player.isPlaying ? "pause.fill" : "play.fill").frame(width: 20)
+                Image(systemName: model.player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 34, height: 34)
+                    .glassEffect(
+                        .regular.tint(WhispPalette.accent).interactive(),
+                        in: .circle
+                    )
             }
-            .buttonStyle(.glassProminent)
-            .buttonBorderShape(.circle)
-            .controlSize(.small)
+            .buttonStyle(.plain)
             .accessibilityLabel(model.player.isPlaying ? "Пауза" : "Воспроизвести")
 
             Button {
                 model.player.skip(by: 15)
             } label: {
                 Image(systemName: "goforward.15")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .glassEffect(.regular.interactive(), in: .circle)
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
-            .font(.system(size: 13))
+            .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .frame(width: 28, height: 28)
             .help("Вперёд на 15 секунд")
             .accessibilityLabel("Вперёд на 15 секунд")
 
