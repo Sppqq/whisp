@@ -53,6 +53,7 @@ final class AppModel {
     var showBackfillComparison = false
     var showSyncConflict = false
     var showPostUpdateScreen = false
+    var showsToday = false
     private(set) var previousAppVersion = ""
     var syncConflictPath = ""
     var backfillBefore = ""
@@ -173,6 +174,7 @@ final class AppModel {
         guard !isRecording else { return }
         resetSessionTasks()
         player.stop()
+        showsToday = false
         currentSession = nil
         selectedSessionID = nil
         importedFileName = nil
@@ -187,6 +189,7 @@ final class AppModel {
         guard !isRecording else { return }
         guard id != currentSession?.id else { return }
         resetSessionTasks()
+        showsToday = false
         selectedSessionID = id
         guard let id else {
             currentSession = nil
@@ -204,6 +207,16 @@ final class AppModel {
         importedFileName = currentSession?.importedAudioPath
         lastError = nil
         beginBackfillMonitorIfNeeded()
+    }
+
+    func showTodayDashboard() {
+        guard !isRecording else { return }
+        resetSessionTasks()
+        currentSession = nil
+        selectedSessionID = nil
+        importedFileName = nil
+        lastError = nil
+        showsToday = true
     }
 
     func deleteSession(_ id: UUID) {
@@ -265,6 +278,9 @@ final class AppModel {
                 currentSession = pending
                 selectedSessionID = pending.id
                 beginBackfillMonitorIfNeeded()
+            }
+            if currentSession == nil, recoverableSession == nil, !needsInitialSetup {
+                showsToday = !sessions.isEmpty || !settingsStore.settings.lessonSchedule.isEmpty
             }
             try await store.removeExpiredSessions(retentionDays: settingsStore.settings.localRetentionDays)
         } catch { lastError = error.localizedDescription }

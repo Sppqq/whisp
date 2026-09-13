@@ -3,7 +3,13 @@ import Foundation
 
 @MainActor
 final class ReminderService {
-    private let store = EKEventStore()
+    private let store: EKEventStore
+    private let calendar: Calendar
+
+    init(store: EKEventStore = EKEventStore(), calendar: Calendar = .current) {
+        self.store = store
+        self.calendar = calendar
+    }
 
     struct ReminderListOption: Identifiable, Hashable, Sendable {
         let id: String
@@ -34,10 +40,10 @@ final class ReminderService {
         guard try await requestAccess() else {
             throw ReminderServiceError.accessDenied
         }
-        let calendar = listIdentifier.flatMap { identifier in
+        let reminderList = listIdentifier.flatMap { identifier in
             store.calendars(for: .reminder).first { $0.calendarIdentifier == identifier }
         } ?? store.defaultCalendarForNewReminders()
-        guard let calendar else {
+        guard let reminderList else {
             throw ReminderServiceError.noReminderList
         }
 
@@ -55,8 +61,8 @@ final class ReminderService {
             let dueHint = draft.dueHint.trimmingCharacters(in: .whitespacesAndNewlines)
             let deadline = dueHint.isEmpty ? "" : "\nСрок в лекции: \(dueHint)"
             reminder.notes = "\(draft.notes.trimmingCharacters(in: .whitespacesAndNewlines))\(deadline)\n\nИсточник: \(source)"
-            reminder.calendar = calendar
-            reminder.dueDateComponents = Calendar.current.dateComponents([.calendar, .year, .month, .day, .hour, .minute], from: dueDate)
+            reminder.calendar = reminderList
+            reminder.dueDateComponents = calendar.dateComponents([.calendar, .year, .month, .day, .hour, .minute], from: dueDate)
             try store.save(reminder, commit: true)
             identifiers.append(reminder.calendarItemIdentifier)
         }
@@ -101,13 +107,11 @@ final class ReminderService {
     /// Remind the student the evening before the lesson, leaving time to do
     /// homework or pack something instead of notifying at the classroom door.
     func preparationDate(before lessonDate: Date) -> Date {
-        let calendar = Calendar.current
         let previousDay = calendar.date(byAdding: .day, value: -1, to: lessonDate) ?? lessonDate
         return calendar.date(bySettingHour: 19, minute: 0, second: 0, of: previousDay) ?? previousDay
     }
 
     func nextLessonDate(subject: String, after date: Date, schedule: [LessonScheduleEntry]) -> Date {
-        let calendar = Calendar.current
         let normalizedSubject = subject.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let candidates = schedule.filter {
             normalizedSubject.isEmpty || $0.subject.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedSubject
@@ -151,7 +155,6 @@ final class ReminderService {
         after date: Date,
         schedule: [LessonScheduleEntry]
     ) -> Date? {
-        let calendar = Calendar.current
         let candidates = schedule.filter {
             $0.weekday == weekday && (subject.isEmpty || $0.subject.caseInsensitiveCompare(subject) == .orderedSame)
         }
@@ -169,7 +172,6 @@ final class ReminderService {
     }
 
     private func lessonInFollowingWeek(subject: String, after date: Date, schedule: [LessonScheduleEntry]) -> Date? {
-        let calendar = Calendar.current
         let weekday = calendar.component(.weekday, from: date)
         let daysFromMonday = (weekday + 5) % 7
         guard let nextMonday = calendar.date(byAdding: .day, value: 7 - daysFromMonday, to: calendar.startOfDay(for: date)) else {

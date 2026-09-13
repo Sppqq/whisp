@@ -222,7 +222,9 @@ struct MainView: View {
                 .padding(.top, 8)
             }
 
-            if model.isRecording {
+            if model.showsToday {
+                TodayView(model: model)
+            } else if model.isRecording {
                 RecordingView(model: model)
             } else if model.currentSession?.status == .processing {
                 ProcessingView(model: model)

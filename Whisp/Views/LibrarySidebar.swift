@@ -23,6 +23,7 @@ struct LibrarySidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            todayButton
             subjectFilters
 
             if model.isRestoringFromWebDAV {
@@ -139,6 +140,66 @@ struct LibrarySidebar: View {
         .padding(.horizontal, 14)
         .padding(.top, 14)
         .padding(.bottom, 10)
+    }
+
+    private var todayButton: some View {
+        Group {
+            if model.showsToday {
+                todayButtonLabel
+                    .buttonStyle(.glassProminent)
+            } else {
+                todayButtonLabel
+                    .buttonStyle(.glass)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 8)
+    }
+
+    private var todayButtonLabel: some View {
+        Button {
+            model.showTodayDashboard()
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "sun.max.fill")
+                    .foregroundStyle(model.showsToday ? Color.white : WhispPalette.accent)
+                Text("Сегодня")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                if todayBadgeCount > 0 {
+                    Text("\(todayBadgeCount)")
+                        .font(.caption2.monospacedDigit().weight(.bold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(
+                            model.showsToday ? Color.white.opacity(0.18) : WhispPalette.accent.opacity(0.12),
+                            in: Capsule()
+                        )
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+        }
+        .disabled(model.isRecording)
+        .accessibilityLabel(todayBadgeCount > 0 ? "Сегодня, \(todayBadgeCount) дел" : "Сегодня")
+    }
+
+    private var todayBadgeCount: Int {
+        let reviewCount = StudyDashboardPlanner.reviewSessions(from: model.sessions).count
+        let startOfToday = Calendar.current.startOfDay(for: Date())
+        let taskCount = model.sessions.reduce(0) { total, session in
+            let active = (session.analysis?.reminders ?? []).filter { draft in
+                guard !draft.isInClassAssessmentInstruction else { return false }
+                return model.reminderService.resolvedDueDate(
+                    for: draft,
+                    subject: session.subject,
+                    after: session.startedAt ?? session.createdAt,
+                    schedule: model.settingsStore.settings.lessonSchedule
+                ).map { $0 >= startOfToday } ?? false
+            }
+            return total + active.count
+        }
+        return reviewCount + taskCount
     }
 
     @ViewBuilder
