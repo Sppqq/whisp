@@ -41,6 +41,7 @@ enum MarkdownPreviewBlock: Equatable {
     case quote(String)
     case callout(title: String, body: String)
     case attachment(String)
+    case table(headers: [String], rows: [[String]])
     case divider
 
 }
@@ -91,6 +92,10 @@ enum MarkdownPreviewParser {
             } else if let attachment = attachmentName(from: line) {
                 finishParagraph()
                 blocks.append(.attachment(attachment))
+            } else if let table = table(from: lines, startingAt: index) {
+                finishParagraph()
+                blocks.append(.table(headers: table.headers, rows: table.rows))
+                index = table.endIndex
             } else if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("• ") {
                 finishParagraph()
                 blocks.append(.bullet(String(line.dropFirst(2))))
@@ -147,6 +152,37 @@ enum MarkdownPreviewParser {
     private static func attachmentName(from line: String) -> String? {
         guard line.hasPrefix("![["), line.hasSuffix("]]"), line.count > 5 else { return nil }
         return String(line.dropFirst(3).dropLast(2))
+    }
+
+    private static func table(
+        from lines: [String],
+        startingAt index: Int
+    ) -> (headers: [String], rows: [[String]], endIndex: Int)? {
+        guard index + 1 < lines.count,
+              let headers = tableCells(from: lines[index]),
+              let separator = tableCells(from: lines[index + 1]),
+              headers.count > 1,
+              separator.count == headers.count,
+              separator.allSatisfy({ $0.range(of: "^:?-+:?$", options: .regularExpression) != nil }) else {
+            return nil
+        }
+
+        var rows: [[String]] = []
+        var cursor = index + 2
+        while cursor < lines.count, let cells = tableCells(from: lines[cursor]) {
+            guard cells.count == headers.count else { break }
+            rows.append(cells)
+            cursor += 1
+        }
+        return (headers, rows, cursor - 1)
+    }
+
+    private static func tableCells(from line: String) -> [String]? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("|"), trimmed.hasSuffix("|") else { return nil }
+        return trimmed.dropFirst().dropLast().split(separator: "|", omittingEmptySubsequences: false).map {
+            String($0).trimmingCharacters(in: .whitespaces)
+        }
     }
 }
 
@@ -216,6 +252,8 @@ private struct MarkdownPreviewBlockView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+        case .table(let headers, let rows):
+            MarkdownPreviewTable(headers: headers, rows: rows)
         case .divider:
             Divider().opacity(0.55).padding(.vertical, 4)
         }
@@ -227,6 +265,51 @@ private struct MarkdownPreviewBlockView: View {
         case 2: .title3.weight(.semibold)
         default: .headline
         }
+    }
+}
+
+private struct MarkdownPreviewTable: View {
+    let headers: [String]
+    let rows: [[String]]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            VStack(spacing: 0) {
+                tableRow(headers, isHeader: true)
+                Divider().opacity(0.65)
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    tableRow(row, isHeader: false)
+                    if index < rows.count - 1 {
+                        Divider().opacity(0.4)
+                    }
+                }
+            }
+            .padding(.horizontal, 4)
+            .frame(minWidth: 700, alignment: .leading)
+            .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
+        }
+    }
+
+    private func tableRow(_ cells: [String], isHeader: Bool) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(Array(cells.enumerated()), id: \.offset) { index, cell in
+                Text(MarkdownDisplayFormatting.attributed(cell))
+                    .font(isHeader ? .callout.weight(.semibold) : .callout)
+                    .lineSpacing(3)
+                    .frame(width: columnWidth(at: index), alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, isHeader ? 10 : 9)
+
+                if index < cells.count - 1 {
+                    Divider().opacity(0.4)
+                }
+            }
+        }
+    }
+
+    private func columnWidth(at index: Int) -> CGFloat {
+        if index == 0, headers[index].count <= 3 { return 38 }
+        return headers.count <= 3 ? 290 : 210
     }
 }
 
@@ -259,20 +342,31 @@ enum MarkdownDisplayFormatting {
             ("\\\\vec\\{([^{}]+)\\}", "$1⃗"),
             ("\\\\frac\\{([^{}]+)\\}\\{([^{}]+)\\}", "($1)/($2)"),
             ("\\\\sqrt\\{([^{}]+)\\}", "√($1)"),
-            ("\\\\(?:mathrm|text)\\{([^{}]+)\\}", "$1")
+            ("\\\\(?:mathrm|text)\\{([^{}]+)\\}", "$1"),
+            ("_\\{([^{}]+)\\}", "₍$1₎")
         ]
         for (pattern, replacement) in patterns {
             value = value.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
         }
         let symbols = [
-            "\\uparrow": "↑", "\\downarrow": "↓", "\\rightarrow": "→",
-            "\\leftarrow": "←", "\\cdot": "·", "\\times": "×",
-            "\\Delta": "Δ", "\\leq": "≤", "\\geq": "≥", "\\neq": "≠",
-            "\\pm": "±", "\\left": "", "\\right": ""
+            ("\\uparrow", "↑"), ("\\downarrow", "↓"), ("\\rightarrow", "→"),
+            ("\\leftarrow", "←"), ("\\to", "→"), ("\\cdot", "·"), ("\\times", "×"),
+            ("\\Delta", "Δ"), ("\\leq", "≤"), ("\\geq", "≥"), ("\\neq", "≠"),
+            ("\\approx", "≈"), ("\\implies", "⇒"), ("\\pm", "±"), ("\\mp", "∓"),
+            ("\\alpha", "α"), ("\\beta", "β"), ("\\eta", "η"),
+            ("\\sin", "sin"), ("\\cos", "cos"), ("\\left", ""), ("\\right", ""),
+            ("\\%", "%"), ("\\/", "/"), ("{,}", ","), ("\\;", " "), ("\\,", " ")
         ]
         for (source, replacement) in symbols {
             value = value.replacingOccurrences(of: source, with: replacement)
         }
+        value = value
+            .replacingOccurrences(of: "_0", with: "₀")
+            .replacingOccurrences(of: "_1", with: "₁")
+            .replacingOccurrences(of: "_2", with: "₂")
+            .replacingOccurrences(of: "^2", with: "²")
+            .replacingOccurrences(of: "^3", with: "³")
+
         return value
             .replacingOccurrences(of: "\\(", with: "")
             .replacingOccurrences(of: "\\)", with: "")

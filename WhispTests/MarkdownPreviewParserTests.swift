@@ -42,4 +42,36 @@ final class MarkdownPreviewParserTests: XCTestCase {
             [.paragraph("Один абзац"), .paragraph("Один абзац")]
         )
     }
+
+    func testMarkdownTableBecomesStructuredPreviewBlock() {
+        let markdown = """
+        ### Формулы
+
+        | № | Закон | По вертикали |
+        | :-: | :--- | :--- |
+        | 1 | $$v = v_0 \\pm a \\cdot t$$ | $$v = v_0 \\pm g \\cdot t$$ |
+        | 2 | $$S = \\frac{a \\cdot t^2}{2}$$ | $$h = \\frac{g \\cdot t^2}{2}$$ |
+        """
+
+        XCTAssertEqual(
+            MarkdownPreviewParser.parse(markdown),
+            [
+                .heading(level: 3, text: "Формулы"),
+                .table(
+                    headers: ["№", "Закон", "По вертикали"],
+                    rows: [
+                        ["1", "$$v = v_0 \\pm a \\cdot t$$", "$$v = v_0 \\pm g \\cdot t$$"],
+                        ["2", "$$S = \\frac{a \\cdot t^2}{2}$$", "$$h = \\frac{g \\cdot t^2}{2}$$"]
+                    ]
+                )
+            ]
+        )
+    }
+
+    func testLatexCommandsBecomeReadableSymbols() {
+        XCTAssertEqual(
+            MarkdownDisplayFormatting.readableFormula("$x \\to y$, $g \\approx 9{,}8$, $v_0^2 \\mp a \\cdot t^2$"),
+            "x → y, g ≈ 9,8, v₀² ∓ a · t²"
+        )
+    }
 }
