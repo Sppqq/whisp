@@ -190,12 +190,28 @@ final class SettingsStore {
         activeProviderPreset?.transport ?? .gemini
     }
 
+    var activeProviderRequiresAPIKey: Bool {
+        if usesGemini { return true }
+        if let preset = activeProviderPreset {
+            return preset.requiresAPIKey
+        }
+        return false
+    }
+
+    var isActiveProviderConfigured: Bool {
+        guard activeProviderEndpoint != nil else { return false }
+        if activeProviderRequiresAPIKey {
+            return !activeProviderAPIKeys.isEmpty
+        }
+        return true
+    }
+
     var activeProviderSupportsLiveTranscription: Bool {
         activeProviderPreset?.supportsLiveTranscription ?? false
     }
 
     var activeProviderSupportsRemoteTranscription: Bool {
-        activeProviderTransport != .anthropic
+        activeProviderPreset?.supportsRemoteTranscription ?? (activeProviderTransport != .anthropic)
     }
 
     func configuration(for preset: ProviderPreset) -> ProviderConfiguration {

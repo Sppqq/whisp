@@ -21,19 +21,20 @@ enum MarkdownExporter {
             ? session.analysis.map { renderStudentNotebook($0) } ?? ""
             : stored
         guard !body.isEmpty else { return "" }
+        let bodyWithReminders = addingReminders(to: body, session: session)
 
-        let hasNavigation = body.contains("> [!abstract]")
-        let hasAudio = body.contains("![[Микрофон.m4a]]") || body.contains("![[Системный звук.m4a]]")
+        let hasNavigation = bodyWithReminders.contains("> [!abstract]")
+        let hasAudio = bodyWithReminders.contains("![[Микрофон.m4a]]") || bodyWithReminders.contains("![[Системный звук.m4a]]")
         let additions = [
             hasNavigation ? nil : graphNavigation(session: session, includeTags: true),
             hasAudio ? nil : audioLinks(session: session)
         ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-        guard !additions.isEmpty else { return body }
+        guard !additions.isEmpty else { return bodyWithReminders }
         let inserted = additions.joined(separator: "\n\n")
 
         // Preserve frontmatter at the beginning so MarkdownPreview can hide it.
-        let lines = body.components(separatedBy: .newlines)
+        let lines = bodyWithReminders.components(separatedBy: .newlines)
         if lines.first?.trimmingCharacters(in: .whitespaces) == "---",
            let closing = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) {
             let closingOffset = closing + 1
@@ -43,7 +44,7 @@ enum MarkdownExporter {
                 .joined(separator: "\n\n")
         }
 
-        return insertAfterTitleIfNeeded(body, inserted)
+        return insertAfterTitleIfNeeded(bodyWithReminders, inserted)
     }
 
     private static func insertAfterTitleIfNeeded(_ body: String, _ inserted: String) -> String {
@@ -71,7 +72,7 @@ enum MarkdownExporter {
         let finalBody = transcriptBody(session.finalTranscript)
         let notesBody: String
         if let storedNotes = storedMarkdownBody(session.notesMarkdown) {
-            notesBody = WhispFormatting.formatMarkdownNotes(storedNotes)
+            notesBody = WhispFormatting.formatMarkdownNotes(addingReminders(to: storedNotes, session: session))
         } else if let analysis = session.analysis {
             notesBody = WhispFormatting.formatMarkdownNotes(renderAnalysis(analysis))
         } else {
@@ -80,7 +81,7 @@ enum MarkdownExporter {
 
         let studentBody: String
         if let storedStudentNotes = storedMarkdownBody(session.studentNotesMarkdown) {
-            studentBody = WhispFormatting.formatMarkdownNotes(storedStudentNotes)
+            studentBody = WhispFormatting.formatMarkdownNotes(addingReminders(to: storedStudentNotes, session: session))
         } else if let analysis = session.analysis {
             studentBody = WhispFormatting.formatMarkdownNotes(renderStudentNotebook(analysis))
         } else {
@@ -238,6 +239,7 @@ enum MarkdownExporter {
             \(items)
             """
         }
+        result += remindersMarkdown(analysis.reminders)
         return result
     }
 
@@ -261,7 +263,29 @@ enum MarkdownExporter {
             \(items)
             """
         }
+        result += remindersMarkdown(analysis.reminders)
         return result
+    }
+
+    private static func addingReminders(to body: String, session: LectureSession) -> String {
+        guard let reminders = session.analysis?.reminders,
+              !reminders.isEmpty,
+              !body.contains("Задания к следующему уроку") else { return body }
+        return body + remindersMarkdown(reminders)
+    }
+
+    private static func remindersMarkdown(_ reminders: [ReminderDraft]) -> String {
+        guard !reminders.isEmpty else { return "" }
+        let items = reminders.map { reminder in
+            "- **\(reminder.title)**\n  \(reminder.notes)"
+        }.joined(separator: "\n")
+        return """
+
+
+        ## ✅ Задания к следующему уроку
+
+        \(items)
+        """
     }
 
     private static func audioLinks(session: LectureSession, availableAudio: Set<String>? = nil) -> String {

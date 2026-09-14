@@ -2,6 +2,12 @@ import SwiftUI
 
 struct MarkdownPreview: View {
     let markdown: String
+    var onScrollOffsetChange: ((CGFloat) -> Void)?
+
+    init(markdown: String, onScrollOffsetChange: ((CGFloat) -> Void)? = nil) {
+        self.markdown = markdown
+        self.onScrollOffsetChange = onScrollOffsetChange
+    }
 
     private var blocks: [MarkdownPreviewBlock] {
         MarkdownPreviewParser.parse(markdown)
@@ -28,6 +34,11 @@ struct MarkdownPreview: View {
             .padding(.vertical, 28)
             .frame(maxWidth: .infinity, alignment: .center)
         }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y + geometry.contentInsets.top
+        } action: { _, offset in
+            onScrollOffsetChange?(offset)
+        }
         .background(WhispPalette.content)
         .textSelection(.enabled)
     }
@@ -41,6 +52,7 @@ enum MarkdownPreviewBlock: Equatable {
     case quote(String)
     case callout(title: String, body: String)
     case attachment(String)
+    case table(headers: [String], rows: [[String]])
     case divider
 
 }
@@ -85,12 +97,19 @@ enum MarkdownPreviewParser {
                 let parsed = callout(from: quoted)
                 blocks.append(.callout(title: parsed.title, body: parsed.body))
                 index = next - 1
+            } else if let important = importantQuote(from: line) {
+                finishParagraph()
+                blocks.append(.callout(title: important.title, body: important.body))
             } else if line.hasPrefix(">") {
                 finishParagraph()
                 blocks.append(.quote(stripQuote(line)))
             } else if let attachment = attachmentName(from: line) {
                 finishParagraph()
                 blocks.append(.attachment(attachment))
+            } else if let table = table(from: lines, startingAt: index) {
+                finishParagraph()
+                blocks.append(.table(headers: table.headers, rows: table.rows))
+                index = table.endIndex
             } else if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("• ") {
                 finishParagraph()
                 blocks.append(.bullet(String(line.dropFirst(2))))
@@ -144,9 +163,55 @@ enum MarkdownPreviewParser {
         return (title.isEmpty ? "Заметка" : title, body)
     }
 
+    private static func importantQuote(from line: String) -> (title: String, body: String)? {
+        guard let match = line.range(
+            of: "^>\\s*\\*\\*([^*]+)\\*\\*\\s*(.*)$",
+            options: .regularExpression
+        ) else { return nil }
+        let content = String(line[match])
+            .replacingOccurrences(of: "^>\\s*", with: "", options: .regularExpression)
+        guard let titleEnd = content.range(of: "**", options: [], range: content.index(content.startIndex, offsetBy: 2)..<content.endIndex) else {
+            return nil
+        }
+        let title = String(content[content.index(content.startIndex, offsetBy: 2)..<titleEnd.lowerBound])
+        let body = String(content[titleEnd.upperBound...]).trimmingCharacters(in: .whitespaces)
+        return (title, body)
+    }
+
     private static func attachmentName(from line: String) -> String? {
         guard line.hasPrefix("![["), line.hasSuffix("]]"), line.count > 5 else { return nil }
         return String(line.dropFirst(3).dropLast(2))
+    }
+
+    private static func table(
+        from lines: [String],
+        startingAt index: Int
+    ) -> (headers: [String], rows: [[String]], endIndex: Int)? {
+        guard index + 1 < lines.count,
+              let headers = tableCells(from: lines[index]),
+              let separator = tableCells(from: lines[index + 1]),
+              headers.count > 1,
+              separator.count == headers.count,
+              separator.allSatisfy({ $0.range(of: "^:?-+:?$", options: .regularExpression) != nil }) else {
+            return nil
+        }
+
+        var rows: [[String]] = []
+        var cursor = index + 2
+        while cursor < lines.count, let cells = tableCells(from: lines[cursor]) {
+            guard cells.count == headers.count else { break }
+            rows.append(cells)
+            cursor += 1
+        }
+        return (headers, rows, cursor - 1)
+    }
+
+    private static func tableCells(from line: String) -> [String]? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("|"), trimmed.hasSuffix("|") else { return nil }
+        return trimmed.dropFirst().dropLast().split(separator: "|", omittingEmptySubsequences: false).map {
+            String($0).trimmingCharacters(in: .whitespaces)
+        }
     }
 }
 
@@ -216,6 +281,8 @@ private struct MarkdownPreviewBlockView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+        case .table(let headers, let rows):
+            MarkdownPreviewTable(headers: headers, rows: rows)
         case .divider:
             Divider().opacity(0.55).padding(.vertical, 4)
         }
@@ -227,6 +294,51 @@ private struct MarkdownPreviewBlockView: View {
         case 2: .title3.weight(.semibold)
         default: .headline
         }
+    }
+}
+
+private struct MarkdownPreviewTable: View {
+    let headers: [String]
+    let rows: [[String]]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            VStack(spacing: 0) {
+                tableRow(headers, isHeader: true)
+                Divider().opacity(0.65)
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    tableRow(row, isHeader: false)
+                    if index < rows.count - 1 {
+                        Divider().opacity(0.4)
+                    }
+                }
+            }
+            .padding(.horizontal, 4)
+            .frame(minWidth: 700, alignment: .leading)
+            .whispQuietSurface(cornerRadius: WhispMetrics.controlCornerRadius)
+        }
+    }
+
+    private func tableRow(_ cells: [String], isHeader: Bool) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(Array(cells.enumerated()), id: \.offset) { index, cell in
+                Text(MarkdownDisplayFormatting.attributed(cell))
+                    .font(isHeader ? .callout.weight(.semibold) : .callout)
+                    .lineSpacing(3)
+                    .frame(width: columnWidth(at: index), alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, isHeader ? 10 : 9)
+
+                if index < cells.count - 1 {
+                    Divider().opacity(0.4)
+                }
+            }
+        }
+    }
+
+    private func columnWidth(at index: Int) -> CGFloat {
+        if index == 0, headers[index].count <= 3 { return 38 }
+        return headers.count <= 3 ? 290 : 210
     }
 }
 
@@ -265,17 +377,61 @@ enum MarkdownDisplayFormatting {
             value = value.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
         }
         let symbols = [
-            "\\uparrow": "↑", "\\downarrow": "↓", "\\rightarrow": "→",
-            "\\leftarrow": "←", "\\cdot": "·", "\\times": "×",
-            "\\Delta": "Δ", "\\leq": "≤", "\\geq": "≥", "\\neq": "≠",
-            "\\pm": "±", "\\left": "", "\\right": ""
+            ("\\uparrow", "↑"), ("\\downarrow", "↓"), ("\\rightarrow", "→"),
+            ("\\leftarrow", "←"), ("\\to", "→"), ("\\cdot", "·"), ("\\times", "×"),
+            ("\\Delta", "Δ"), ("\\leq", "≤"), ("\\geq", "≥"), ("\\neq", "≠"),
+            ("\\approx", "≈"), ("\\implies", "⇒"), ("\\pm", "±"), ("\\mp", "∓"),
+            ("\\alpha", "α"), ("\\beta", "β"), ("\\eta", "η"),
+            ("\\sin", "sin"), ("\\cos", "cos"), ("\\left", ""), ("\\right", ""),
+            ("\\%", "%"), ("\\/", "/"), ("{,}", ","), ("\\;", " "), ("\\,", " ")
         ]
         for (source, replacement) in symbols {
             value = value.replacingOccurrences(of: source, with: replacement)
         }
+        value = readableSubscripts(value)
+        value = value
+            .replacingOccurrences(of: "^2", with: "²")
+            .replacingOccurrences(of: "^3", with: "³")
+
         return value
             .replacingOccurrences(of: "\\(", with: "")
             .replacingOccurrences(of: "\\)", with: "")
             .replacingOccurrences(of: "$", with: "")
+    }
+
+    private static func readableSubscripts(_ source: String) -> String {
+        let braced = source.replacingOccurrences(
+            of: "_\\{([^{}]+)\\}",
+            with: "_$1",
+            options: .regularExpression
+        )
+        let expression = try? NSRegularExpression(pattern: "_([A-Za-zА-Яа-я0-9]+)")
+        guard let expression else { return braced }
+        var result = braced
+        let matches = expression.matches(in: result, range: NSRange(result.startIndex..., in: result)).reversed()
+        for match in matches {
+            guard let range = Range(match.range(at: 1), in: result) else { continue }
+            let raw = String(result[range])
+            let converted = subscriptText(raw)
+            let fullRange = Range(match.range(at: 0), in: result)!
+            result.replaceSubrange(fullRange, with: converted)
+        }
+        return result
+    }
+
+    private static func subscriptText(_ source: String) -> String {
+        let symbols: [Character: Character] = [
+            "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
+            "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+            "a": "ₐ", "e": "ₑ", "h": "ₕ", "i": "ᵢ", "j": "ⱼ",
+            "k": "ₖ", "l": "ₗ", "m": "ₘ", "n": "ₙ", "o": "ₒ",
+            "p": "ₚ", "r": "ᵣ", "s": "ₛ", "t": "ₜ", "u": "ᵤ",
+            "v": "ᵥ", "x": "ₓ", "y": "ᵧ"
+        ]
+        let converted = source.map { symbols[$0] ?? $0 }
+        if zip(source, converted).allSatisfy({ $0 == $1 }) {
+            return "₍\(source)₎"
+        }
+        return String(converted)
     }
 }

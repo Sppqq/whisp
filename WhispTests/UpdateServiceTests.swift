@@ -69,9 +69,57 @@ final class UpdateServiceTests: XCTestCase {
 
     func testProviderPresetsIncludeRequestedServices() {
         let ids = Set(ProviderPreset.allCases.map(\.rawValue))
-        XCTAssertTrue(ids.isSuperset(of: ["gemini", "openai", "anthropic", "xai", "openrouter", "custom-openai-compatible"]))
+        XCTAssertTrue(ids.isSuperset(of: [
+            "gemini", "openai", "anthropic", "xai", "openrouter",
+            "ollama", "lm-studio", "unsloth", "custom-openai-compatible"
+        ]))
         XCTAssertEqual(ProviderPreset.openAI.transport, .openAICompatible)
         XCTAssertEqual(ProviderPreset.anthropic.transport, .anthropic)
         XCTAssertEqual(ProviderPreset.gemini.transport, .gemini)
+        XCTAssertEqual(ProviderPreset.ollama.transport, .openAICompatible)
+        XCTAssertEqual(ProviderPreset.lmStudio.transport, .openAICompatible)
+        XCTAssertEqual(ProviderPreset.unsloth.transport, .openAICompatible)
+
+        XCTAssertFalse(ProviderPreset.ollama.requiresAPIKey)
+        XCTAssertFalse(ProviderPreset.lmStudio.requiresAPIKey)
+        XCTAssertFalse(ProviderPreset.unsloth.requiresAPIKey)
+        XCTAssertTrue(ProviderPreset.gemini.requiresAPIKey)
+        XCTAssertTrue(ProviderPreset.openAI.requiresAPIKey)
+        XCTAssertTrue(ProviderPreset.anthropic.requiresAPIKey)
+
+        XCTAssertFalse(ProviderPreset.ollama.supportsRemoteTranscription)
+        XCTAssertFalse(ProviderPreset.lmStudio.supportsRemoteTranscription)
+        XCTAssertFalse(ProviderPreset.unsloth.supportsRemoteTranscription)
+        XCTAssertFalse(ProviderPreset.anthropic.supportsRemoteTranscription)
+        XCTAssertTrue(ProviderPreset.openAI.supportsRemoteTranscription)
+        XCTAssertTrue(ProviderPreset.gemini.supportsRemoteTranscription)
+
+        XCTAssertTrue(ProviderPreset.ollama.defaultConfiguration.baseURL.contains("11434"))
+        XCTAssertTrue(ProviderPreset.lmStudio.defaultConfiguration.baseURL.contains("1234"))
+        XCTAssertTrue(ProviderPreset.unsloth.defaultConfiguration.baseURL.contains("8000"))
+    }
+
+    func testExtractJSONHandlesMarkdownFencesAndReasoning() {
+        let rawJSON = """
+        {"title":"Тест","subject":"Математика","confidence":0.9,"alternatives":[],"summary":"Кратко","detailedNotes":"Конспект"}
+        """
+        XCTAssertEqual(GeminiAPIClient.extractJSON(from: rawJSON), rawJSON)
+
+        let fenced = """
+        ```json
+        {"title":"Тест","subject":"Математика","confidence":0.9,"alternatives":[],"summary":"Кратко","detailedNotes":"Конспект"}
+        ```
+        """
+        XCTAssertEqual(GeminiAPIClient.extractJSON(from: fenced), rawJSON)
+
+        let reasoning = """
+        <think>
+        Думаем о лекции...
+        </think>
+        ```json
+        {"title":"Тест","subject":"Математика","confidence":0.9,"alternatives":[],"summary":"Кратко","detailedNotes":"Конспект"}
+        ```
+        """
+        XCTAssertEqual(GeminiAPIClient.extractJSON(from: reasoning), rawJSON)
     }
 }

@@ -93,4 +93,29 @@ final class MarkdownExporterTests: XCTestCase {
         XCTAssertEqual(preview.components(separatedBy: "> [!abstract]").count - 1, 1)
         XCTAssertEqual(preview.components(separatedBy: "![[Микрофон.m4a]]").count - 1, 1)
     }
+
+    func testRemindersAreIncludedInStoredAndPreviewNotes() {
+        var session = LectureSession()
+        session.title = "История"
+        session.studentNotesMarkdown = "## Конспект\n\nТекст."
+        session.notesMarkdown = "## Разбор\n\nТекст."
+        session.analysis = AnalysisResult(
+            title: "История",
+            subject: "История",
+            confidence: 1,
+            alternatives: [],
+            summary: "",
+            detailedNotes: "",
+            reminders: [ReminderDraft(title: "Принести карту", notes: "Подготовить карту Восточной Европы к следующему уроку.")]
+        )
+
+        let bundle = MarkdownExporter.render(session: session)
+        let preview = MarkdownExporter.reviewStudentNotebook(session: session)
+
+        for text in [bundle.studentNotebook, bundle.notes, preview] {
+            XCTAssertTrue(text.contains("## ✅ Задания к следующему уроку"))
+            XCTAssertTrue(text.contains("**Принести карту**"))
+            XCTAssertTrue(text.contains("Подготовить карту Восточной Европы"))
+        }
+    }
 }

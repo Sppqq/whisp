@@ -23,6 +23,7 @@ final class AppModel {
     let audioCapture = AudioCaptureService()
     let player = AudioPlayerController()
     let updateService = UpdateService()
+    let reminderService = ReminderService()
 
     @ObservationIgnored private var librarySearchIndex = LibrarySearchIndex()
     @ObservationIgnored private var librarySearchIndexNeedsRebuild = true
@@ -52,6 +53,7 @@ final class AppModel {
     var showBackfillComparison = false
     var showSyncConflict = false
     var showPostUpdateScreen = false
+    var showsToday = false
     private(set) var previousAppVersion = ""
     var syncConflictPath = ""
     var backfillBefore = ""
@@ -123,6 +125,11 @@ final class AppModel {
     var batchCurrentTitle = ""
     var batchSuccessCount = 0
     var batchFailureCount = 0
+    var isCreatingBatchReminders = false
+    var batchReminderTotalCount = 0
+    var batchReminderCurrentIndex = 0
+    var batchReminderSuccessCount = 0
+    var batchReminderFailureCount = 0
     var showBatchRegenerateSheet = false
     var batchForceOverwrite = true
     var batchLogs: [ProcessingLogEntry] = []
@@ -167,6 +174,7 @@ final class AppModel {
         guard !isRecording else { return }
         resetSessionTasks()
         player.stop()
+        showsToday = false
         currentSession = nil
         selectedSessionID = nil
         importedFileName = nil
@@ -181,6 +189,7 @@ final class AppModel {
         guard !isRecording else { return }
         guard id != currentSession?.id else { return }
         resetSessionTasks()
+        showsToday = false
         selectedSessionID = id
         guard let id else {
             currentSession = nil
@@ -198,6 +207,16 @@ final class AppModel {
         importedFileName = currentSession?.importedAudioPath
         lastError = nil
         beginBackfillMonitorIfNeeded()
+    }
+
+    func showTodayDashboard() {
+        guard !isRecording else { return }
+        resetSessionTasks()
+        currentSession = nil
+        selectedSessionID = nil
+        importedFileName = nil
+        lastError = nil
+        showsToday = true
     }
 
     func deleteSession(_ id: UUID) {
@@ -243,11 +262,10 @@ final class AppModel {
             sessions = try await store.loadAll()
             let needsInitialSetup = !onboardingCompleted
                 && sessions.isEmpty
-                && settingsStore.activeProviderAPIKeys.isEmpty
-                && settingsStore.activeProviderEndpoint == nil
+                && !settingsStore.isActiveProviderConfigured
             showOnboarding = needsInitialSetup
             showSettings = !needsInitialSetup
-                && (settingsStore.activeProviderAPIKeys.isEmpty || settingsStore.activeProviderEndpoint == nil)
+                && !settingsStore.isActiveProviderConfigured
             if let uploading = sessions.first(where: { $0.status == .uploading }) {
                 currentSession = uploading
                 selectedSessionID = uploading.id
@@ -260,6 +278,9 @@ final class AppModel {
                 currentSession = pending
                 selectedSessionID = pending.id
                 beginBackfillMonitorIfNeeded()
+            }
+            if currentSession == nil, recoverableSession == nil, !needsInitialSetup {
+                showsToday = !sessions.isEmpty || !settingsStore.settings.lessonSchedule.isEmpty
             }
             try await store.removeExpiredSessions(retentionDays: settingsStore.settings.localRetentionDays)
         } catch { lastError = error.localizedDescription }
@@ -496,13 +517,13 @@ final class AppModel {
                 throw GeminiAPIError(
                     code: 400,
                     status: "UNSUPPORTED",
-                    message: "Anthropic создаёт конспекты по готовому тексту, но не расшифровывает аудио. Для импорта выберите Gemini или OpenAI-совместимый провайдер.",
+                    message: "\(settingsStore.activeProviderName) создаёт конспекты по готовому тексту, но не расшифровывает аудио. Для импорта аудио выберите Gemini или OpenAI-совместимый провайдер, либо запишите аудио через Whisp (с локальным Whisper).",
                     retryAfter: nil
                 )
             }
-            guard !settingsStore.activeProviderAPIKeys.isEmpty else {
-                addProcessingLog("Ошибка: не указан API key активного провайдера")
-                throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала добавьте API key активного провайдера в Настройках", retryAfter: nil)
+            guard settingsStore.isActiveProviderConfigured else {
+                addProcessingLog("Ошибка: активный провайдер не настроен")
+                throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала настройте активный провайдер в Настройках", retryAfter: nil)
             }
 
             statusMessage = "Расшифровываем импортированную запись"
@@ -966,6 +987,126 @@ final class AppModel {
         return await testActiveProvider()
     }
 
+    func createRemindersForCurrentSession() async {
+        guard var session = currentSession else { return }
+        guard let drafts = session.analysis?.reminders, !drafts.isEmpty else {
+            statusMessage = "В этой лекции заданий не найдено"
+            return
+        }
+        guard session.createdReminderIDs.isEmpty else {
+            statusMessage = "Напоминания для этой лекции уже добавлены"
+            return
+        }
+        guard !settingsStore.settings.lessonSchedule.isEmpty else {
+            statusMessage = "Сначала добавьте расписание уроков в настройках"
+            return
+        }
+
+        do {
+            let ids = try await reminderService.createReminders(
+                drafts: drafts,
+                session: session,
+                schedule: settingsStore.settings.lessonSchedule,
+                listIdentifier: settingsStore.settings.reminderListIdentifier
+            )
+            session.createdReminderIDs = ids
+            if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+                sessions[index] = session
+            }
+            currentSession = session
+            try await store.save(session)
+            statusMessage = "Добавлено напоминаний: \(ids.count)"
+        } catch {
+            statusMessage = error.localizedDescription
+            lastError = error.localizedDescription
+        }
+    }
+
+    func toggleReminderCompletion(sessionID: UUID, reminderID: UUID) {
+        mutateReminderSession(sessionID: sessionID) { session in
+            session.toggleReminderCompletion(reminderID)
+        }
+    }
+
+    func deleteReminder(sessionID: UUID, reminderID: UUID) {
+        mutateReminderSession(sessionID: sessionID) { session in
+            session.deleteReminder(reminderID)
+        }
+    }
+
+    private func mutateReminderSession(
+        sessionID: UUID,
+        mutation: (inout LectureSession) -> Void
+    ) {
+        guard var session = sessions.first(where: { $0.id == sessionID })
+                ?? (currentSession?.id == sessionID ? currentSession : nil) else { return }
+        mutation(&session)
+        if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
+            sessions[index] = session
+        }
+        if currentSession?.id == sessionID {
+            currentSession = session
+        }
+        Task { try? await store.save(session) }
+    }
+
+    func createRemindersForExistingAnalyses() async {
+        guard !isBusy, !isCreatingBatchReminders else { return }
+        guard !settingsStore.settings.lessonSchedule.isEmpty else {
+            statusMessage = "Сначала добавьте расписание уроков в настройках"
+            return
+        }
+        let eligible = sessions.filter {
+            $0.analysis != nil
+                && $0.createdReminderIDs.isEmpty
+                && (!$0.finalTranscript.isEmpty || !$0.rawTranscript.isEmpty)
+        }
+        guard !eligible.isEmpty else {
+            statusMessage = "Готовых разборов для повторной проверки не найдено"
+            return
+        }
+
+        isCreatingBatchReminders = true
+        batchReminderTotalCount = eligible.count
+        batchReminderCurrentIndex = 0
+        batchReminderSuccessCount = 0
+        batchReminderFailureCount = 0
+        defer { isCreatingBatchReminders = false }
+
+        for (index, original) in eligible.enumerated() {
+            if Task.isCancelled { break }
+            batchReminderCurrentIndex = index + 1
+            statusMessage = "Анализируем лекцию \(index + 1)/\(eligible.count)…"
+            guard sessions.contains(where: { $0.id == original.id }) else { continue }
+            await regenerateAnalysis(for: original.id, forceOverwriteNotes: false)
+            guard var session = sessions.first(where: { $0.id == original.id }),
+                  session.lastError == nil,
+                  let drafts = session.analysis?.reminders,
+                  !drafts.isEmpty else { continue }
+            if !session.createdReminderIDs.isEmpty {
+                batchReminderSuccessCount += 1
+                continue
+            }
+            do {
+                let ids = try await reminderService.createReminders(
+                    drafts: drafts,
+                    session: session,
+                    schedule: settingsStore.settings.lessonSchedule,
+                    listIdentifier: settingsStore.settings.reminderListIdentifier
+                )
+                session.createdReminderIDs = ids
+                if let sessionIndex = sessions.firstIndex(where: { $0.id == session.id }) {
+                    sessions[sessionIndex] = session
+                }
+                try await store.save(session)
+                batchReminderSuccessCount += 1
+            } catch {
+                batchReminderFailureCount += 1
+            }
+        }
+        statusMessage = "Напоминания добавлены: \(batchReminderSuccessCount), ошибок: \(batchReminderFailureCount)"
+    }
+
     func testActiveProvider() async -> String {
         geminiState = .checking
         proxyState = settingsStore.proxy.isEnabled ? .checking : .disabled
@@ -974,7 +1115,11 @@ final class AppModel {
             geminiState = .available
             let count = settingsStore.activeProviderAPIKeys.count
             let name = settingsStore.activeProviderName
-            return count > 1 ? "\(name) доступен (\(count) ключей)" : "\(name) доступен"
+            if settingsStore.activeProviderRequiresAPIKey {
+                return count > 1 ? "\(name) доступен (\(count) ключей)" : "\(name) доступен"
+            } else {
+                return "\(name) доступен"
+            }
         } catch {
             let message = connectionMessage(for: error)
             geminiState = .unavailable(message)
@@ -1061,6 +1206,21 @@ final class AppModel {
                 break
             }
         }
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCannotConnectToHost {
+            if let preset = settingsStore.activeProviderPreset {
+                let endpoint = settingsStore.activeProviderEndpoint?.absoluteString ?? preset.defaultConfiguration.baseURL
+                switch preset {
+                case .ollama:
+                    return "Не удалось подключиться к Ollama на \(endpoint). Убедитесь, что сервер запущен (`ollama serve`)."
+                case .lmStudio:
+                    return "Не удалось подключиться к LM Studio на \(endpoint). Убедитесь, что запущен Local Server в LM Studio."
+                case .unsloth:
+                    return "Не удалось подключиться к Unsloth на \(endpoint). Убедитесь, что локальный сервер запущен."
+                default:
+                    break
+                }
+            }
+        }
         return error.localizedDescription
     }
 
@@ -1093,13 +1253,13 @@ final class AppModel {
                     throw GeminiAPIError(
                         code: 400,
                         status: "UNSUPPORTED",
-                        message: "Anthropic создаёт конспекты по готовому тексту, но не расшифровывает аудио. Сначала выберите Gemini или OpenAI-совместимый провайдер для расшифровки.",
+                        message: "\(settingsStore.activeProviderName) создаёт конспекты по готовому тексту, но не расшифровывает аудио. Во время записи речь распознаётся через локальный Whisper.",
                         retryAfter: nil
                     )
                 }
                 session.finalTranscript = TranscriptMerger.merge(session.rawTranscript)
                 session.lastError = nil
-            } else if !settingsStore.activeProviderAPIKeys.isEmpty {
+            } else if settingsStore.isActiveProviderConfigured {
                 do {
                     statusMessage = "Финальная расшифровка: \(settingsStore.activeProviderName)"
                     let finalService = FinalTranscriptionService(
@@ -1120,7 +1280,7 @@ final class AppModel {
                 }
             } else {
                 if session.rawTranscript.isEmpty {
-                    throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала добавьте API key активного провайдера", retryAfter: nil)
+                    throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала настройте активный провайдер в Настройках", retryAfter: nil)
                 }
                 session.finalTranscript = TranscriptMerger.merge(session.rawTranscript)
             }
@@ -1178,7 +1338,7 @@ final class AppModel {
         defer { isGeneratingNotes = false }
 
         var analysisError: String?
-        if !settingsStore.activeProviderAPIKeys.isEmpty, !session.finalTranscript.isEmpty {
+        if settingsStore.isActiveProviderConfigured, !session.finalTranscript.isEmpty {
             do {
                 statusMessage = "Создаём конспект через \(settingsStore.activeProviderName)..."
                 addProcessingLog("Начало анализа и составления конспекта...")
@@ -1252,6 +1412,23 @@ final class AppModel {
                     session = sessions[idx]
                 }
                 session.analysis = analysis
+                if settingsStore.settings.remindersEnabled,
+                   session.createdReminderIDs.isEmpty,
+                   !analysis.reminders.isEmpty,
+                   !settingsStore.settings.lessonSchedule.isEmpty {
+                    do {
+                        let ids = try await reminderService.createReminders(
+                            drafts: analysis.reminders,
+                            session: session,
+                            schedule: settingsStore.settings.lessonSchedule,
+                            listIdentifier: settingsStore.settings.reminderListIdentifier
+                        )
+                        session.createdReminderIDs = ids
+                        statusMessage = "Конспект готов, напоминания добавлены"
+                    } catch {
+                        addProcessingLog("Напоминания не созданы: \(error.localizedDescription)")
+                    }
+                }
                 session.title = WhispFormatting.datedTitle(title: analysis.title, date: session.startedAt ?? session.createdAt)
                 session.subject = analysis.confidence >= 0.65 ? analysis.subject : "Не определено"
                 if forceOverwriteNotes || !session.userEditedStudentNotes {
@@ -1488,8 +1665,8 @@ final class AppModel {
             lastError = "Стенограмма пуста, невозможно составить вопросы"
             return
         }
-        guard !settingsStore.activeProviderAPIKeys.isEmpty else {
-            lastError = "Укажите API key активного провайдера в настройках"
+        guard settingsStore.isActiveProviderConfigured else {
+            lastError = "Настройте активный провайдер в настройках"
             return
         }
 
@@ -1604,7 +1781,7 @@ final class AppModel {
         backfillMonitor?.cancel()
         guard currentSession?.hasPendingBackfill == true,
               settingsStore.activeProviderSupportsRemoteTranscription,
-              !settingsStore.activeProviderAPIKeys.isEmpty else { return }
+              settingsStore.isActiveProviderConfigured else { return }
         let sessionID = currentSession?.id
         backfillMonitor = Task { [weak self] in
             var delay = 60.0
@@ -1749,7 +1926,7 @@ final class AppModel {
                 retryAfter: nil
             )
         }
-        guard !settingsStore.activeProviderAPIKeys.isEmpty else {
+        if settingsStore.activeProviderRequiresAPIKey && settingsStore.activeProviderAPIKeys.isEmpty {
             throw GeminiAPIError(
                 code: 401,
                 status: "API_KEY",

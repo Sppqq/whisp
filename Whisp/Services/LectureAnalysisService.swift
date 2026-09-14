@@ -42,6 +42,7 @@ actor LectureAnalysisService {
         var alternatives: [String]?
         var tags: [String]?
         var keyConcepts: [String]?
+        var reminders: [ReminderDraft]?
         var summary: String
     }
 
@@ -74,6 +75,7 @@ actor LectureAnalysisService {
         // 1. Быстрый этап метаданных (название, предмет, теги, краткая суть)
         await onStatus?("Определяем тему и предмет через \(model)...")
         let metadata = try await extractMetadata(transcript: fullTranscript, subjects: subjects, onStatus: onStatus)
+        let reminders = (metadata.reminders ?? []).filter { !$0.isInClassAssessmentInstruction }
 
         var partialResult = AnalysisResult(
             title: metadata.title,
@@ -84,7 +86,8 @@ actor LectureAnalysisService {
             detailedNotes: "",
             studentNotebook: "",
             tags: metadata.tags ?? [],
-            keyConcepts: metadata.keyConcepts ?? []
+            keyConcepts: metadata.keyConcepts ?? [],
+            reminders: reminders
         )
         await onMetadata?(partialResult)
 
@@ -226,6 +229,7 @@ actor LectureAnalysisService {
         - alternatives: массив до 3 альтернативных предметов
         - tags: массив из 3-6 тегов для Obsidian (например: ["лекция", "математика", "интегралы"])
         - keyConcepts: массив из 3-7 ключевых понятий и терминов для графа связей Obsidian (например: ["Определенный интеграл", "Формула Ньютона-Лейбница"])
+        - reminders: массив до 5 конкретных поручений, которые студент должен выполнить ДО будущего урока. Только то, что реально сказано в расшифровке: сделать дома, выучить, прочитать, принести, подготовить или отдельно напомнить преподавателю. Не добавляй общие советы и не выдумывай задания. НЕ добавляй действия, которые выполняются прямо во время проверочной, контрольной, самостоятельной, теста, зачёта или экзамена (например, «решить минимум 4 задания на проверочной»), а также описание формата такой работы. Если сомневаешься, лучше не создавай напоминание. У каждого элемента короткий title (до 60 символов), подробные notes без воды и dueHint — дословная формулировка срока из лекции (например, «в следующую среду», «на следующей неделе», «через 1 урок»); если срока нет, пустая строка
         - summary: краткая суть лекции (1-2 ёмких абзаца без воды)
 
         РАСШИФРОВКА:
@@ -241,9 +245,14 @@ actor LectureAnalysisService {
                 "alternatives": ["type": "ARRAY", "items": ["type": "STRING"], "description": "До 3 альтернативных предметов"],
                 "tags": ["type": "ARRAY", "items": ["type": "STRING"], "description": "Массив из 3-6 тегов для Obsidian"],
                 "keyConcepts": ["type": "ARRAY", "items": ["type": "STRING"], "description": "Массив из 3-7 ключевых понятий"],
+                "reminders": ["type": "ARRAY", "items": ["type": "OBJECT", "properties": [
+                    "title": ["type": "STRING", "description": "Короткое название задания до 60 символов"],
+                    "notes": ["type": "STRING", "description": "Детали задания без воды"],
+                    "dueHint": ["type": "STRING", "description": "Формулировка срока из лекции или пустая строка"]
+                ], "required": ["title", "notes", "dueHint"]], "description": "Реальные задания из лекции, до 5"],
                 "summary": ["type": "STRING", "description": "Краткая суть лекции (1-2 абзаца)"]
             ],
-            "required": ["title", "subject", "confidence", "alternatives", "tags", "keyConcepts", "summary"]
+            "required": ["title", "subject", "confidence", "alternatives", "tags", "keyConcepts", "reminders", "summary"]
         ]
 
         let text = try await generateText(prompt: prompt, responseSchema: schema, onStatus: onStatus)
@@ -257,6 +266,7 @@ actor LectureAnalysisService {
                 alternatives: [],
                 tags: ["лекция"],
                 keyConcepts: [],
+                reminders: [],
                 summary: "Конспект лекции."
             )
         }

@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct MainView: View {
     @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isInspectorPresented = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
@@ -14,8 +15,11 @@ struct MainView: View {
             ZStack {
                 WhispPalette.canvas.ignoresSafeArea()
                 detail
+                    .id(detailAnimationID)
+                    .transition(reduceMotion ? .opacity : WhispMotion.contentTransition)
                 updateProgressOverlay
             }
+            .animation(reduceMotion ? nil : WhispMotion.navigation, value: detailAnimationID)
             .navigationTitle("")
         }
         .navigationSplitViewStyle(.balanced)
@@ -30,11 +34,9 @@ struct MainView: View {
                     Button {
                         model.showStartScreen()
                     } label: {
-                        Image(systemName: "plus")
-                            .frame(width: 28, height: 28)
+                        WhispGlassIconActionLabel(systemImage: "plus", size: 30)
                     }
-                    .buttonStyle(.glass)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
                     .labelStyle(.iconOnly)
                     .help("Новая лекция или импорт")
                     .accessibilityLabel("Новая лекция или импорт")
@@ -42,7 +44,9 @@ struct MainView: View {
                     .disabled(model.isRecording)
 
                     Button {
-                        isInspectorPresented.toggle()
+                        withAnimation(reduceMotion ? nil : WhispMotion.control) {
+                            isInspectorPresented.toggle()
+                        }
                     } label: {
                         Image(systemName: "sidebar.trailing")
                             .frame(width: 28, height: 28)
@@ -190,6 +194,16 @@ struct MainView: View {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
+    private var detailAnimationID: String {
+        if model.showsToday { return "today" }
+        if model.isRecording { return "recording" }
+        if let session = model.currentSession {
+            return "session-\(session.id.uuidString)-\(session.status.rawValue)"
+        }
+        if let session = model.displayedSession { return "summary-\(session.id.uuidString)" }
+        return "start"
+    }
+
     @ViewBuilder private var detail: some View {
         VStack(spacing: 0) {
             if let activeID = model.activeProcessingSessionID, model.currentSession?.id != activeID {
@@ -222,7 +236,9 @@ struct MainView: View {
                 .padding(.top, 8)
             }
 
-            if model.isRecording {
+            if model.showsToday {
+                TodayView(model: model)
+            } else if model.isRecording {
                 RecordingView(model: model)
             } else if model.currentSession?.status == .processing {
                 ProcessingView(model: model)
@@ -583,14 +599,12 @@ private struct StartView: View {
                             Label("Что записывать", systemImage: "waveform")
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(.secondary)
-                            Picker("Что записывать", selection: $captureMode) {
-                                ForEach(CaptureMode.allCases) { mode in
-                                    Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                            WhispGlassSegment(
+                                selection: $captureMode,
+                                options: CaptureMode.allCases.map { mode in
+                                    (mode, mode.rawValue, mode.icon)
                                 }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
-                            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                            )
                             Text(captureMode == .microphone
                                  ? "Записывается только микрофон."
                                  : "Микрофон и звук приложений сохранятся отдельными дорожками.")

@@ -23,5 +23,7 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Whisp создаёт напоминания о заданиях, которые прозвучали на уроке.</string>
 </dict>
 </plist>

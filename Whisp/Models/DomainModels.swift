@@ -10,7 +10,7 @@ enum LectureStatus: String, Codable, CaseIterable, Sendable {
         case .paused: "Пауза"
         case .processing: "Обработка"
         case .awaitingBackfill: "Ожидает дорасшифровки AI"
-        case .review: "Проверка"
+        case .review: "Готово"
         case .uploading: "Загрузка"
         case .synced: "Синхронизировано"
         case .failed: "Ошибка"
@@ -115,6 +115,7 @@ struct AnalysisResult: Codable, Hashable, Sendable {
     var studentNotebook: String = ""
     var tags: [String] = []
     var keyConcepts: [String] = []
+    var reminders: [ReminderDraft] = []
 
     init(
         title: String,
@@ -125,7 +126,8 @@ struct AnalysisResult: Codable, Hashable, Sendable {
         detailedNotes: String,
         studentNotebook: String = "",
         tags: [String] = [],
-        keyConcepts: [String] = []
+        keyConcepts: [String] = [],
+        reminders: [ReminderDraft] = []
     ) {
         self.title = title
         self.subject = subject
@@ -136,6 +138,7 @@ struct AnalysisResult: Codable, Hashable, Sendable {
         self.studentNotebook = studentNotebook
         self.tags = tags
         self.keyConcepts = keyConcepts
+        self.reminders = reminders
     }
 
     init(from decoder: Decoder) throws {
@@ -149,6 +152,65 @@ struct AnalysisResult: Codable, Hashable, Sendable {
         studentNotebook = try container.decodeIfPresent(String.self, forKey: .studentNotebook) ?? ""
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         keyConcepts = try container.decodeIfPresent([String].self, forKey: .keyConcepts) ?? []
+        reminders = try container.decodeIfPresent([ReminderDraft].self, forKey: .reminders) ?? []
+    }
+}
+
+struct ReminderDraft: Codable, Hashable, Sendable, Identifiable {
+    var id = UUID()
+    var title: String
+    var notes: String
+    var dueHint: String
+
+    init(title: String, notes: String, dueHint: String = "") {
+        self.title = title
+        self.notes = notes
+        self.dueHint = dueHint
+    }
+
+    /// Instructions that describe work performed during an assessment are not
+    /// useful preparation reminders. Keep preparation for the assessment,
+    /// but omit its in-class format and solving requirements.
+    var isInClassAssessmentInstruction: Bool {
+        let text = "\(title) \(notes)".trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let preparationWords = ["подготов", "повтор", "выуч", "прочита", "принес", "возьми", "взять"]
+        guard !preparationWords.contains(where: text.contains) else { return false }
+
+        let assessmentMarkers = [
+            "провероч", "контрольн", "самостоятельн", "тест", "экзамен",
+            "зачет", "зачёт", "письменн"
+        ]
+        let actionWords = ["выполн", "реш", "напис", "сдел"]
+        guard assessmentMarkers.contains(where: text.contains),
+              actionWords.contains(where: text.contains) else { return false }
+
+        return true
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? "Задание"
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        dueHint = try container.decodeIfPresent(String.self, forKey: .dueHint) ?? ""
+    }
+}
+
+struct LessonScheduleEntry: Codable, Hashable, Sendable, Identifiable {
+    var id = UUID()
+    var subject = "Новый предмет"
+    /// ISO weekday: Monday = 2 ... Sunday = 1, matching Calendar.component(.weekday).
+    var weekday = 2
+    var hour = 9
+    var minute = 0
+    var durationMinutes = 90
+
+    var timeLabel: String {
+        String(format: "%02d:%02d", hour, minute)
+    }
+
+    var weekdayLabel: String {
+        Calendar.current.weekdaySymbols[(weekday + 5) % 7]
     }
 }
 
@@ -224,6 +286,8 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
     var userEditedFinal = false
     var userEditedNotes = false
     var userEditedStudentNotes = false
+    var createdReminderIDs: [String] = []
+    var completedReminderIDs: Set<UUID> = []
 
     init(
         id: UUID = UUID(),
@@ -254,7 +318,9 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
         remoteETag: String? = nil,
         userEditedFinal: Bool = false,
         userEditedNotes: Bool = false,
-        userEditedStudentNotes: Bool = false
+        userEditedStudentNotes: Bool = false,
+        createdReminderIDs: [String] = [],
+        completedReminderIDs: Set<UUID> = []
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -285,6 +351,8 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
         self.userEditedFinal = userEditedFinal
         self.userEditedNotes = userEditedNotes
         self.userEditedStudentNotes = userEditedStudentNotes
+        self.createdReminderIDs = createdReminderIDs
+        self.completedReminderIDs = completedReminderIDs
     }
 
     init(from decoder: Decoder) throws {
@@ -318,6 +386,8 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
         userEditedFinal = try container.decodeIfPresent(Bool.self, forKey: .userEditedFinal) ?? false
         userEditedNotes = try container.decodeIfPresent(Bool.self, forKey: .userEditedNotes) ?? false
         userEditedStudentNotes = try container.decodeIfPresent(Bool.self, forKey: .userEditedStudentNotes) ?? false
+        createdReminderIDs = try container.decodeIfPresent([String].self, forKey: .createdReminderIDs) ?? []
+        completedReminderIDs = try container.decodeIfPresent(Set<UUID>.self, forKey: .completedReminderIDs) ?? []
     }
 
     var duration: TimeInterval {
@@ -331,6 +401,19 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
 
     var hasPendingBackfill: Bool {
         fallbackIntervals.contains { ![.accepted, .declined].contains($0.status) }
+    }
+
+    mutating func toggleReminderCompletion(_ reminderID: UUID) {
+        if completedReminderIDs.contains(reminderID) {
+            completedReminderIDs.remove(reminderID)
+        } else {
+            completedReminderIDs.insert(reminderID)
+        }
+    }
+
+    mutating func deleteReminder(_ reminderID: UUID) {
+        analysis?.reminders.removeAll { $0.id == reminderID }
+        completedReminderIDs.remove(reminderID)
     }
 }
 
@@ -456,6 +539,9 @@ enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     case anthropic
     case xAI = "xai"
     case openRouter = "openrouter"
+    case ollama = "ollama"
+    case lmStudio = "lm-studio"
+    case unsloth = "unsloth"
     case customOpenAICompatible = "custom-openai-compatible"
 
     var id: String { rawValue }
@@ -467,6 +553,9 @@ enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .anthropic: "Anthropic"
         case .xAI: "xAI"
         case .openRouter: "OpenRouter"
+        case .ollama: "Ollama"
+        case .lmStudio: "LM Studio"
+        case .unsloth: "Unsloth"
         case .customOpenAICompatible: "Свой OpenAI-совместимый"
         }
     }
@@ -478,6 +567,9 @@ enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .anthropic: "text.bubble"
         case .xAI: "xmark"
         case .openRouter: "arrow.triangle.branch"
+        case .ollama: "cube"
+        case .lmStudio: "laptopcomputer"
+        case .unsloth: "flame"
         case .customOpenAICompatible: "server.rack"
         }
     }
@@ -486,11 +578,25 @@ enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .gemini: .gemini
         case .anthropic: .anthropic
-        case .openAI, .xAI, .openRouter, .customOpenAICompatible: .openAICompatible
+        case .openAI, .xAI, .openRouter, .ollama, .lmStudio, .unsloth, .customOpenAICompatible: .openAICompatible
         }
     }
 
     var supportsLiveTranscription: Bool { self == .gemini }
+
+    var requiresAPIKey: Bool {
+        switch self {
+        case .ollama, .lmStudio, .unsloth, .customOpenAICompatible: false
+        default: true
+        }
+    }
+
+    var supportsRemoteTranscription: Bool {
+        switch self {
+        case .anthropic, .ollama, .lmStudio, .unsloth: false
+        default: true
+        }
+    }
 
     var defaultConfiguration: ProviderConfiguration {
         switch self {
@@ -524,6 +630,24 @@ enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
                 transcriptionModel: "openai/whisper-1",
                 analysisModel: "openai/gpt-4o-mini"
             )
+        case .ollama:
+            ProviderConfiguration(
+                baseURL: "http://localhost:11434/v1",
+                transcriptionModel: "whisper",
+                analysisModel: "llama3.2"
+            )
+        case .lmStudio:
+            ProviderConfiguration(
+                baseURL: "http://localhost:1234/v1",
+                transcriptionModel: "whisper",
+                analysisModel: "qwen2.5-7b-instruct"
+            )
+        case .unsloth:
+            ProviderConfiguration(
+                baseURL: "http://localhost:8000/v1",
+                transcriptionModel: "whisper",
+                analysisModel: "unsloth/Llama-3.2-3B-Instruct"
+            )
         case .customOpenAICompatible:
             ProviderConfiguration(
                 baseURL: "",
@@ -548,10 +672,13 @@ struct WhispSettings: Codable, Sendable {
     var hotkeyFinish = "⌥⌘."
     var preferredMicrophoneID: UInt32?
     var appearance: WhispAppearance = .system
+    var lessonSchedule: [LessonScheduleEntry] = []
+    var remindersEnabled = true
+    var reminderListIdentifier: String?
 
     private enum CodingKeys: String, CodingKey {
         case subjects, customVocabulary, localRetentionDays, geminiModel, geminiLiveModel, analysisModel
-        case activeProviderID, providerConfigurations, hotkeyRecord, hotkeyFinish, preferredMicrophoneID, appearance
+        case activeProviderID, providerConfigurations, hotkeyRecord, hotkeyFinish, preferredMicrophoneID, appearance, lessonSchedule, remindersEnabled, reminderListIdentifier
     }
 
     init() {}
@@ -572,6 +699,9 @@ struct WhispSettings: Codable, Sendable {
         hotkeyFinish = try values.decodeIfPresent(String.self, forKey: .hotkeyFinish) ?? "⌥⌘."
         preferredMicrophoneID = try values.decodeIfPresent(UInt32.self, forKey: .preferredMicrophoneID)
         appearance = try values.decodeIfPresent(WhispAppearance.self, forKey: .appearance) ?? .system
+        lessonSchedule = try values.decodeIfPresent([LessonScheduleEntry].self, forKey: .lessonSchedule) ?? []
+        remindersEnabled = try values.decodeIfPresent(Bool.self, forKey: .remindersEnabled) ?? true
+        reminderListIdentifier = try values.decodeIfPresent(String.self, forKey: .reminderListIdentifier)
     }
 
     static let defaultSubjects = [

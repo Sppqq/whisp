@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LibrarySidebar: View {
     @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var searchText = ""
     @State private var selectedSubject = "Все"
@@ -23,6 +24,7 @@ struct LibrarySidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            todayButton
             subjectFilters
 
             if model.isRestoringFromWebDAV {
@@ -77,15 +79,28 @@ struct LibrarySidebar: View {
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
             .disabled(model.isRecording)
-            .onChange(of: model.selectedSessionID) { _, id in model.selectSession(id) }
+            .onChange(of: model.selectedSessionID) { _, id in
+                guard !(model.showsToday && id == nil) else { return }
+                withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                    model.selectSession(id)
+                }
+            }
+            .animation(reduceMotion ? nil : WhispMotion.content, value: filteredSessions.map(\.id))
 
             Divider().opacity(0.55)
             HStack {
                 SettingsLink {
                     Label("Настройки", systemImage: "gearshape")
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 10)
+                        .frame(minHeight: 34)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .glassEffect(
+                            .regular.interactive(),
+                            in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
+                        )
                 }
-                .buttonStyle(.glass)
+                .buttonStyle(.plain)
                 Spacer()
                 Text("⌘,").font(.caption.monospaced()).foregroundStyle(.tertiary)
             }
@@ -127,11 +142,9 @@ struct LibrarySidebar: View {
             Spacer()
 
             Button { model.showStartScreen() } label: {
-                Image(systemName: "plus")
-                    .frame(width: 26, height: 26)
+                WhispGlassIconActionLabel(systemImage: "plus", size: 30)
             }
-            .buttonStyle(.glassProminent)
-            .controlSize(.small)
+            .buttonStyle(.plain)
             .help("Новая лекция или импорт")
             .accessibilityLabel("Новая лекция или импорт")
             .disabled(model.isRecording)
@@ -139,6 +152,79 @@ struct LibrarySidebar: View {
         .padding(.horizontal, 14)
         .padding(.top, 14)
         .padding(.bottom, 10)
+    }
+
+    private var todayButton: some View {
+        Group {
+            if model.showsToday {
+                todayButtonLabel
+                    .foregroundStyle(.primary)
+                    .glassEffect(
+                        .regular.tint(Color.primary.opacity(0.08)).interactive(),
+                        in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
+                    )
+            } else {
+                todayButtonLabel
+                    .foregroundStyle(.primary)
+                    .glassEffect(
+                        .regular.interactive(),
+                        in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
+                    )
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 8)
+    }
+
+    private var todayButtonLabel: some View {
+        Button {
+            withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                model.showTodayDashboard()
+            }
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "sun.max.fill")
+                    .foregroundStyle(.primary)
+                Text("Сегодня")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                if todayBadgeCount > 0 {
+                    Text("\(todayBadgeCount)")
+                        .font(.caption2.monospacedDigit().weight(.bold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(
+                            Color.primary.opacity(model.showsToday ? 0.12 : 0.07),
+                            in: Capsule()
+                        )
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+            .contentShape(.rect(cornerRadius: WhispMetrics.compactCornerRadius))
+        }
+        .buttonStyle(.plain)
+        .disabled(model.isRecording)
+        .accessibilityLabel(todayBadgeCount > 0 ? "Сегодня, \(todayBadgeCount) дел" : "Сегодня")
+    }
+
+    private var todayBadgeCount: Int {
+        let reviewCount = StudyDashboardPlanner.reviewSessions(from: model.sessions).count
+        let startOfToday = Calendar.current.startOfDay(for: Date())
+        let taskCount = model.sessions.reduce(0) { total, session in
+            let active = (session.analysis?.reminders ?? []).filter { draft in
+                guard !draft.isInClassAssessmentInstruction else { return false }
+                guard !session.completedReminderIDs.contains(draft.id) else { return false }
+                return model.reminderService.resolvedDueDate(
+                    for: draft,
+                    subject: session.subject,
+                    after: session.startedAt ?? session.createdAt,
+                    schedule: model.settingsStore.settings.lessonSchedule
+                ).map { $0 >= startOfToday } ?? false
+            }
+            return total + active.count
+        }
+        return reviewCount + taskCount
     }
 
     @ViewBuilder
@@ -204,23 +290,34 @@ struct LibrarySidebar: View {
     @ViewBuilder
     private func subjectFilterButton(_ subject: String) -> some View {
         if selectedSubject == subject {
-            Button { selectedSubject = subject } label: {
+            Button { selectSubject(subject) } label: {
                 Text(subject)
                     .font(.caption2.weight(.semibold))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
             }
-            .buttonStyle(.glassProminent)
-            .controlSize(.small)
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
+            .glassEffect(
+                .regular.tint(Color.primary.opacity(0.08)).interactive(),
+                in: .capsule
+            )
         } else {
-            Button { selectedSubject = subject } label: {
+            Button { selectSubject(subject) } label: {
                 Text(subject)
                     .font(.caption2)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
             }
-            .buttonStyle(.glass)
-            .controlSize(.small)
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
+            .glassEffect(.regular.interactive(), in: .capsule)
+        }
+    }
+
+    private func selectSubject(_ subject: String) {
+        withAnimation(reduceMotion ? nil : WhispMotion.control) {
+            selectedSubject = subject
         }
     }
 }
@@ -256,8 +353,10 @@ private struct LectureRow: View {
             HStack(spacing: 5) {
                 Circle().fill(statusColor).frame(width: 5, height: 5)
                 Text(session.subject).foregroundStyle(.secondary).lineLimit(1)
-                Text("·").foregroundStyle(.tertiary)
-                Text(session.status.title).foregroundStyle(.secondary).lineLimit(1)
+                if session.status != .review {
+                    Text("·").foregroundStyle(.tertiary)
+                    Text(session.status.title).foregroundStyle(.secondary).lineLimit(1)
+                }
                 if !session.fallbackIntervals.isEmpty {
                     Image(systemName: "cpu")
                         .foregroundStyle(session.hasPendingBackfill ? .orange : .secondary)

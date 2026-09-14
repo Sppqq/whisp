@@ -29,8 +29,19 @@ enum WhispMetrics {
     static let glassFieldHeight: CGFloat = 34
     static let windowMinWidth: CGFloat = 1_120
     static let windowMinHeight: CGFloat = 720
-    static let settingsMinWidth: CGFloat = 900
+    static let settingsMinWidth: CGFloat = 1_400
     static let settingsMinHeight: CGFloat = 700
+}
+
+enum WhispMotion {
+    static let navigation = Animation.snappy(duration: 0.32, extraBounce: 0.04)
+    static let content = Animation.easeInOut(duration: 0.24)
+    static let control = Animation.snappy(duration: 0.22, extraBounce: 0.02)
+
+    static let contentTransition = AnyTransition.asymmetric(
+        insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .center)),
+        removal: .opacity
+    )
 }
 
 struct WhispGlassSurface<Content: View>: View {
@@ -74,6 +85,82 @@ struct WhispGlassGroup<Content: View>: View {
     }
 }
 
+struct WhispGlassSegment<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [(value: Value, title: String, icon: String?)]
+    var minHeight: CGFloat = 32
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var selectionGlassNamespace
+
+    var body: some View {
+        ZStack {
+            Color.clear
+                .frame(height: minHeight + 8)
+                .glassEffect(.regular, in: .capsule)
+
+            HStack(spacing: 0) {
+                ForEach(options, id: \.value) { option in
+                    ZStack {
+                        if selection == option.value {
+                            Capsule()
+                                .fill(Color.primary.opacity(0.10))
+                                .overlay {
+                                    Capsule()
+                                        .stroke(Color.white.opacity(0.30), lineWidth: 1)
+                                }
+                                .shadow(color: Color.black.opacity(0.10), radius: 5, y: 2)
+                                .matchedGeometryEffect(
+                                    id: "selection-lens",
+                                    in: selectionGlassNamespace
+                                )
+                        }
+
+                        Color.clear
+                    }
+                    .frame(maxWidth: .infinity, minHeight: minHeight)
+                }
+            }
+            .padding(4)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: minHeight + 8)
+        .overlay {
+            HStack(spacing: 0) {
+                ForEach(options, id: \.value) { option in
+                    segment(option)
+                }
+            }
+            .padding(4)
+        }
+    }
+
+    @ViewBuilder
+    private func segment(_ option: (value: Value, title: String, icon: String?)) -> some View {
+        let isSelected = selection == option.value
+        Button {
+            withAnimation(reduceMotion ? nil : WhispMotion.control) {
+                selection = option.value
+            }
+        } label: {
+            HStack(spacing: 6) {
+                if let icon = option.icon {
+                    Image(systemName: icon)
+                }
+                Text(option.title)
+                    .lineLimit(1)
+            }
+            .font(.callout.weight(isSelected ? .semibold : .medium))
+            .foregroundStyle(isSelected ? Color.primary : Color.primary.opacity(0.72))
+            .frame(maxWidth: .infinity, minHeight: minHeight)
+            .padding(.horizontal, 10)
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 struct WhispStatusMark: View {
     let color: Color
     let title: String
@@ -83,6 +170,37 @@ struct WhispStatusMark: View {
         Label(title, systemImage: icon)
             .font(.caption)
             .foregroundStyle(color)
+    }
+}
+
+/// Neutral Liquid Glass label for ordinary actions. Accent colors are reserved
+/// for state (success, warning, recording) instead of being painted on every
+/// clickable control.
+struct WhispGlassActionLabel: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .font(.callout.weight(.medium))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 36)
+            .glassEffect(.regular.interactive(), in: .capsule)
+    }
+}
+
+struct WhispGlassIconActionLabel: View {
+    let systemImage: String
+    var foregroundStyle: Color = .primary
+    var size: CGFloat = 32
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.callout.weight(.medium))
+            .foregroundStyle(foregroundStyle)
+            .frame(width: size, height: size)
+            .glassEffect(.regular.interactive(), in: .circle)
     }
 }
 
@@ -117,6 +235,14 @@ extension View {
             .regular.interactive(),
             in: .rect(cornerRadius: cornerRadius)
         )
+    }
+
+    func whispGlassPanel(cornerRadius: CGFloat = WhispMetrics.surfaceCornerRadius) -> some View {
+        glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+    }
+
+    func whispInteractiveGlassSurface(cornerRadius: CGFloat = WhispMetrics.controlCornerRadius) -> some View {
+        glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
     }
 
     /// A plain text field with the app-wide Liquid Glass field treatment.

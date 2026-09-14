@@ -3,6 +3,7 @@ import SwiftUI
 private enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
     case provider = "Провайдер"
     case audio = "Звук"
+    case schedule = "Расписание"
     case storage = "Хранилище"
     case appearance = "Вид"
     case subjects = "Предметы"
@@ -13,6 +14,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .provider: "point.3.connected.trianglepath.dotted"
         case .audio: "waveform.badge.mic"
+        case .schedule: "calendar"
         case .storage: "externaldrive"
         case .appearance: "circle.lefthalf.filled"
         case .subjects: "books.vertical"
@@ -25,6 +27,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
 struct SettingsView: View {
     @Bindable var model: AppModel
     @Bindable var store: SettingsStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page: SettingsPage? = .provider
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var geminiKey = ""
@@ -40,6 +43,8 @@ struct SettingsView: View {
     @State private var webDAVPassword = ""
     @State private var testResult = ""
     @State private var isTestingAll = false
+    @State private var remindersAccessStatus = ""
+    @State private var reminderLists: [ReminderService.ReminderListOption] = []
 
     init(model: AppModel) {
         self._model = Bindable(wrappedValue: model)
@@ -50,52 +55,55 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            List(SettingsPage.allCases, selection: $page) { item in
-                Label(item.rawValue, systemImage: item.icon)
-                    .tag(item)
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(SettingsPage.allCases) { item in
+                        settingsNavigationButton(item)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
             }
-            .listStyle(.sidebar)
-            .navigationTitle("Whisp")
             .navigationSplitViewColumnWidth(min: 180, ideal: 205, max: 240)
+            .toolbar(removing: .sidebarToggle)
         } detail: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(selectedPage.rawValue)
-                            .font(.largeTitle.weight(.semibold))
-                        Text(pageSubtitle)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(selectedPage.rawValue)
+                                .font(.largeTitle.weight(.semibold))
+                            Text(pageSubtitle)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(appVersionLabel)
+                                .font(.caption.monospacedDigit().weight(.medium))
+                                .foregroundStyle(.secondary)
+                            if !testResult.isEmpty {
+                                Text(testResult)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(isSuccessfulTestResult ? WhispPalette.success : .red)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
 
                     pageContent
                 }
                 .padding(30)
-                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: selectedPage == .schedule ? 1_300 : 720, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
             .background(WhispPalette.canvas)
-            .navigationTitle("Настройки")
         }
         .navigationSplitViewStyle(.balanced)
         .background(WhispPalette.canvas)
-        .tint(WhispPalette.accent)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(appVersionLabel)
-                        .font(.caption.monospacedDigit().weight(.medium))
-                        .foregroundStyle(.secondary)
-                    if !testResult.isEmpty {
-                        Text(testResult)
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(isSuccessfulTestResult ? WhispPalette.success : .red)
-                            .lineLimit(1)
-                    }
-                }
-            }
-        }
+        .toolbarVisibility(.hidden, for: .windowToolbar)
         .onAppear {
+            columnVisibility = .all
             geminiKeys = store.geminiAPIKeys
             geminiKey = store.geminiAPIKey
             customProviders = store.customProviders
@@ -122,6 +130,34 @@ struct SettingsView: View {
         .onChange(of: store.webDAV) { model.webDAVState = .unchecked }
     }
 
+    @ViewBuilder
+    private func settingsNavigationButton(_ item: SettingsPage) -> some View {
+        let isSelected = selectedPage == item
+        Button {
+            withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                page = item
+            }
+        } label: {
+            Label(item.rawValue, systemImage: item.icon)
+                .font(.callout.weight(isSelected ? .semibold : .regular))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+                .padding(.horizontal, 11)
+                .contentShape(.rect(cornerRadius: WhispMetrics.compactCornerRadius))
+        }
+        .buttonStyle(.plain)
+        .background {
+            if isSelected {
+                Color.clear
+                    .glassEffect(
+                        .regular.interactive(),
+                        in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
+                    )
+            }
+        }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
     private var appVersionLabel: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
@@ -141,6 +177,7 @@ struct SettingsView: View {
         switch selectedPage {
         case .provider: providerPage
         case .audio: audioPage
+        case .schedule: schedulePage
         case .storage: storagePage
         case .appearance: appearancePage
         case .subjects: subjectsPage
@@ -166,6 +203,7 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .tint(.primary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .whispGlassControl()
@@ -203,7 +241,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Text("#\(index + 1)")
                                 .font(.caption.monospacedDigit().weight(.bold))
-                                .foregroundStyle(WhispPalette.accent)
+                                .foregroundStyle(.secondary)
                                 .frame(width: 28, alignment: .leading)
 
                             Text(maskKey(key))
@@ -224,22 +262,18 @@ struct SettingsView: View {
                                             _ = await model.testSingleGeminiKey(key)
                                         }
                                     } label: {
-                                        Image(systemName: "arrow.clockwise")
-                                            .font(.caption2)
+                                        WhispGlassIconActionLabel(systemImage: "arrow.clockwise")
                                     }
-                                    .buttonStyle(.glass)
-                                    .foregroundStyle(.secondary)
+                                    .buttonStyle(.plain)
                                     .help("Проверить этот ключ")
 
                                     Button {
                                         NSPasteboard.general.clearContents()
                                         NSPasteboard.general.setString(key, forType: .string)
                                     } label: {
-                                        Image(systemName: "doc.on.doc")
-                                            .font(.caption2)
+                                        WhispGlassIconActionLabel(systemImage: "doc.on.doc")
                                     }
-                                    .buttonStyle(.glass)
-                                    .foregroundStyle(.secondary)
+                                    .buttonStyle(.plain)
                                     .help("Скопировать ключ")
 
                                     Button(role: .destructive) {
@@ -248,11 +282,9 @@ struct SettingsView: View {
                                             saveSecrets()
                                         }
                                     } label: {
-                                        Image(systemName: "trash")
-                                            .font(.caption2)
+                                        WhispGlassIconActionLabel(systemImage: "trash", foregroundStyle: .red)
                                     }
-                                    .buttonStyle(.glass)
-                                    .foregroundStyle(.secondary)
+                                    .buttonStyle(.plain)
                                     .disabled(geminiKeys.count <= 1)
                                     .help(geminiKeys.count <= 1 ? "Должен остаться хотя бы один ключ" : "Удалить этот ключ")
                                 }
@@ -455,23 +487,43 @@ struct SettingsView: View {
         if let provider = store.activeProviderPreset, provider != .gemini {
             SettingsCard(
                 title: provider.title,
-                caption: "API key хранится отдельно. URL и модели можно заменить под свой аккаунт.",
+                caption: provider.requiresAPIKey
+                    ? "API key хранится отдельно. URL и модели можно заменить под свой аккаунт."
+                    : "Локальный сервис. URL и модели можно настроить под запущенный инстанс.",
                 icon: provider.icon
             ) {
                 VStack(alignment: .leading, spacing: 10) {
                     TextField("Базовый URL API", text: providerConfigurationBinding(provider, keyPath: \.baseURL))
                         .whispGlassField()
                     HStack {
-                        TextField("Модель расшифровки", text: providerConfigurationBinding(provider, keyPath: \.transcriptionModel))
-                            .whispGlassField()
+                        if provider.supportsRemoteTranscription {
+                            TextField("Модель расшифровки", text: providerConfigurationBinding(provider, keyPath: \.transcriptionModel))
+                                .whispGlassField()
+                        }
                         TextField("Модель для конспекта", text: providerConfigurationBinding(provider, keyPath: \.analysisModel))
                             .whispGlassField()
                     }
-                    SecureField("API key", text: providerAPIKeyBinding(provider))
+
+                    SecureField(provider.requiresAPIKey ? "API key" : "API key (необязательно)", text: providerAPIKeyBinding(provider))
                     .whispGlassField()
 
                     if provider == .anthropic {
                         Label("Anthropic используется для конспектов; для расшифровки аудио выберите Gemini или OpenAI-совместимый API.", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if provider == .ollama {
+                        Label("Ollama работает локально (по умолчанию http://localhost:11434/v1). API key не требуется. Whisp расшифровывает аудио локальным Whisper, а Ollama строит конспект.", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if provider == .lmStudio {
+                        Label("LM Studio работает локально (Local Server на http://localhost:1234/v1). API key не требуется. Расшифровка выполняется локальным Whisper, а конспект строит активная модель LM Studio.", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if provider == .unsloth {
+                        Label("Unsloth работает через OpenAI-совместимый сервер (обычно http://localhost:8000/v1). При локальном запуске API key не требуется.", systemImage: "info.circle")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -524,6 +576,247 @@ struct SettingsView: View {
         }
     }
 
+    private var schedulePage: some View {
+        VStack(spacing: 16) {
+            SettingsCard(
+                title: "Расписание уроков",
+                caption: "Whisp напоминает о подготовке вечером перед нужным уроком.",
+                icon: "calendar"
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Создавать напоминания автоматически", isOn: $store.settings.remindersEnabled)
+                        .toggleStyle(.switch)
+
+                    HStack {
+                        Button {
+                            Task {
+                                do {
+                                    let lists = try await model.reminderService.availableLists()
+                                    reminderLists = lists
+                                    if store.settings.reminderListIdentifier == nil {
+                                        store.settings.reminderListIdentifier = lists.first?.id
+                                    }
+                                    remindersAccessStatus = lists.isEmpty ? "Списки не найдены" : "Доступ разрешён"
+                                } catch {
+                                    remindersAccessStatus = error.localizedDescription
+                                }
+                            }
+                        } label: {
+                            Label("Разрешить доступ к Reminders", systemImage: "checklist")
+                        }
+                        .buttonStyle(.glass)
+                        if !remindersAccessStatus.isEmpty {
+                            Text(remindersAccessStatus)
+                                .font(.caption)
+                                .foregroundStyle(remindersAccessStatus == "Доступ разрешён" ? WhispPalette.success : .secondary)
+                        }
+                    }
+
+                    Button {
+                        Task { await model.createRemindersForExistingAnalyses() }
+                    } label: {
+                        Label(
+                            model.isCreatingBatchReminders
+                                ? "Добавляем \(model.batchReminderCurrentIndex)/\(model.batchReminderTotalCount)…"
+                                : "Проверить готовые разборы и создать напоминания",
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                    }
+                    .buttonStyle(.glass)
+                    .disabled(model.isCreatingBatchReminders || model.isBusy)
+
+                    Text("Однократно заново проанализирует готовые разборы, найдёт задания и добавит их в выбранный список Reminders. Лекции с уже созданными напоминаниями пропускаются.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if !reminderLists.isEmpty {
+                        Picker("Список Reminders", selection: Binding(
+                            get: { store.settings.reminderListIdentifier },
+                            set: { store.settings.reminderListIdentifier = $0 }
+                        )) {
+                            Text("Системный по умолчанию").tag(String?.none)
+                            ForEach(reminderLists) { list in
+                                Text(list.title).tag(Optional(list.id))
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .whispGlassControl()
+                    }
+
+                    Text("Если в лекции прозвучит конкретное задание — например, «к следующему уроку принести отчёт» — Whisp добавит его в Apple Reminders и напомнит накануне в 19:00. Инструкции, которые нужно выполнять прямо на проверочной, не добавляются.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text("Выберите предмет и время в нужном дне. Предметы берутся из раздела «Предметы».")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    scheduleTable
+                }
+            }
+        }
+    }
+
+    private var scheduleTable: some View {
+        VStack(spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(scheduleWeekdays, id: \.self) { day in
+                    scheduleDayHeader(day: day)
+                        .frame(maxWidth: .infinity, alignment: .top)
+                }
+            }
+
+            ScrollView(.vertical, showsIndicators: true) {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .top), count: 7),
+                    alignment: .leading,
+                    spacing: 12
+                ) {
+                    ForEach(scheduleWeekdays, id: \.self) { day in
+                        scheduleDayColumn(day: day)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .frame(maxHeight: 560)
+        }
+    }
+
+    private var scheduleWeekdays: [Int] { [2, 3, 4, 5, 6, 7, 1] }
+
+    private func scheduleDayHeader(day: Int) -> some View {
+        HStack {
+            Text(scheduleDayName(day))
+                .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Spacer(minLength: 4)
+            Button {
+                store.settings.lessonSchedule.append(
+                    LessonScheduleEntry(subject: model.activeSubjects.first ?? "Новый предмет", weekday: day)
+                )
+            } label: {
+                Image(systemName: "plus")
+            }
+            .buttonStyle(.borderless)
+            .help("Добавить урок")
+        }
+        .padding(10)
+        .frame(minHeight: 40, alignment: .leading)
+        .whispQuietSurface()
+    }
+
+    private func scheduleDayColumn(day: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach($store.settings.lessonSchedule) { entry in
+                if entry.wrappedValue.weekday == day {
+                    scheduleRow(entry: entry)
+                }
+            }
+
+            if !store.settings.lessonSchedule.contains(where: { $0.weekday == day }) {
+                Text("Нет уроков")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, minHeight: 70, alignment: .center)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .whispQuietSurface()
+    }
+
+    private func scheduleRow(entry: Binding<LessonScheduleEntry>) -> some View {
+        let entryID = entry.wrappedValue.id
+        let subjects = model.activeSubjects.contains(entry.wrappedValue.subject)
+            ? model.activeSubjects
+            : [entry.wrappedValue.subject] + model.activeSubjects
+        let durations = Array(Set([45, 60, 75, 90, 105, 120, 135, 150, 180, 240, entry.wrappedValue.durationMinutes])).sorted()
+        return VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Предмет")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Picker("Предмет", selection: entry.subject) {
+                    ForEach(subjects, id: \.self) { subject in
+                        Text(subject).tag(subject)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Начало")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                DatePicker(
+                    "Начало",
+                    selection: scheduleTimeBinding(entry: entry),
+                    displayedComponents: .hourAndMinute
+                )
+                .datePickerStyle(.field)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Длительность")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Picker("Длительность", selection: entry.durationMinutes) {
+                    ForEach(durations, id: \.self) { duration in
+                        Text("\(duration) мин").tag(duration)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack {
+                Spacer(minLength: 0)
+                Button(role: .destructive) {
+                    store.settings.lessonSchedule.removeAll { $0.id == entryID }
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(12)
+        .whispQuietSurface()
+    }
+
+    private func scheduleTimeBinding(entry: Binding<LessonScheduleEntry>) -> Binding<Date> {
+        let calendar = Calendar.current
+        return Binding(
+            get: {
+                calendar.date(from: DateComponents(hour: entry.wrappedValue.hour, minute: entry.wrappedValue.minute)) ?? Date()
+            },
+            set: { date in
+                entry.wrappedValue.hour = calendar.component(.hour, from: date)
+                entry.wrappedValue.minute = calendar.component(.minute, from: date)
+            }
+        )
+    }
+
+    private func scheduleDayName(_ day: Int) -> String {
+        switch day {
+        case 1: "Воскресенье"
+        case 2: "Понедельник"
+        case 3: "Вторник"
+        case 4: "Среда"
+        case 5: "Четверг"
+        case 6: "Пятница"
+        case 7: "Суббота"
+        default: "—"
+        }
+    }
+
     private var storagePage: some View {
         VStack(spacing: 16) {
             SettingsCard(
@@ -531,7 +824,7 @@ struct SettingsView: View {
                 caption: "Способ хранения Gemini API key, пароля прокси и пароля WebDAV на этом Mac.",
                 icon: "lock.shield"
             ) {
-                Picker("Хранилище секретов", selection: Binding(
+                WhispGlassSegment(selection: Binding(
                     get: { store.secretStorageMode },
                     set: { newMode in
                         do {
@@ -546,14 +839,9 @@ struct SettingsView: View {
                             testResult = error.localizedDescription
                         }
                     }
-                )) {
-                    ForEach(SecretStorageMode.allCases) { mode in
-                        Label(mode.title, systemImage: mode.icon).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                ), options: SecretStorageMode.allCases.map { mode in
+                    (mode, mode.title, mode.icon)
+                })
 
                 Label(store.secretStorageMode.description, systemImage: "info.circle")
                     .font(.caption)
@@ -635,7 +923,7 @@ struct SettingsView: View {
     }
 
     private var subjectsPage: some View {
-        SettingsCard(title: "Предметы", caption: "Gemini выбирает только из включённых дисциплин.", icon: "books.vertical") {
+        SettingsCard(title: "Предметы", caption: "Свои дисциплины используются в AI-классификации, выборе лекции и расписании.", icon: "books.vertical") {
             SubjectsSettingsContent(store: store)
         }
     }
@@ -676,17 +964,12 @@ struct SettingsView: View {
                     .padding(.vertical, 5)
                     .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
 
-                Picker("Канал обновлений", selection: Binding(
+                WhispGlassSegment(selection: Binding(
                     get: { model.updateService.updateChannel },
                     set: { model.updateService.updateChannel = $0 }
-                )) {
-                    ForEach(UpdateChannel.allCases) { channel in
-                        Text(channel.title).tag(channel)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                ), options: UpdateChannel.allCases.map { channel in
+                    (channel, channel.title, channel == .stable ? "checkmark.seal" : "testtube.2")
+                })
 
                 Label(model.updateService.updateChannel.description, systemImage: "info.circle")
                     .font(.caption)
@@ -800,6 +1083,7 @@ struct SettingsView: View {
         switch selectedPage {
         case .provider: "Сервис, ключи и сетевое подключение"
         case .audio: "Источники записи"
+        case .schedule: "Дни и время занятий"
         case .storage: "Obsidian и локальные файлы"
         case .appearance: "Светлая, тёмная или системная тема"
         case .subjects: "Список дисциплин для классификации"
@@ -856,14 +1140,12 @@ struct SettingsView: View {
             caption: "Выберите спокойную светлую или тёмную сцену для работы с лекциями.",
             icon: "circle.lefthalf.filled"
         ) {
-            Picker("Тема", selection: $store.settings.appearance) {
-                ForEach(WhispAppearance.allCases) { appearance in
-                    Label(appearance.title, systemImage: appearance.icon).tag(appearance)
+            WhispGlassSegment(
+                selection: $store.settings.appearance,
+                options: WhispAppearance.allCases.map { appearance in
+                    (appearance, appearance.title, appearance.icon)
                 }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+            )
 
             Label(
                 "Системная тема следует за macOS. Настройка применяется сразу, включая окно настроек.",
@@ -921,7 +1203,7 @@ private struct SettingsCard<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack(alignment: .top, spacing: 11) {
-                Image(systemName: icon).font(.system(size: 15, weight: .medium)).foregroundStyle(WhispPalette.accent)
+                Image(systemName: icon).font(.system(size: 15, weight: .medium)).foregroundStyle(.primary)
                     .frame(width: 30, height: 30)
                     .whispQuietSurface(cornerRadius: 8)
                 VStack(alignment: .leading, spacing: 2) {
@@ -933,7 +1215,7 @@ private struct SettingsCard<Content: View>: View {
         }
         .padding(19)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
+        .whispGlassPanel(cornerRadius: WhispMetrics.surfaceCornerRadius)
     }
 }
 
@@ -956,6 +1238,10 @@ private struct SubjectsSettingsContent: View {
     @State private var newSubject = ""
     var body: some View {
         VStack(spacing: 10) {
+            Text("Оставьте переключатель включённым, чтобы Whisp предлагал предмет при анализе лекций.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
             ForEach($store.settings.subjects) { $subject in
                 HStack {
                     Toggle("", isOn: $subject.isEnabled)
@@ -976,12 +1262,15 @@ private struct SubjectsSettingsContent: View {
             HStack {
                 TextField("Новый предмет", text: $newSubject)
                     .whispGlassField()
-                Button("Добавить") {
+                Button("Добавить свой предмет") {
                     let name = newSubject.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !name.isEmpty else { return }
+                    guard !name.isEmpty,
+                          !store.settings.subjects.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { return }
                     store.settings.subjects.append(SubjectItem(name: name, order: store.settings.subjects.count))
                     newSubject = ""
-                }.buttonStyle(.glass)
+                }
+                .buttonStyle(.glass)
+                .disabled(newSubject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
     }

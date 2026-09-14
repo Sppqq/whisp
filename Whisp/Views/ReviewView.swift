@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ReviewView: View {
     @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var tab = "student"
     @State private var audioSource = AudioSource.microphone
     @State private var isPreviewMode = true
@@ -11,9 +12,13 @@ struct ReviewView: View {
     @State private var editingSegment: TranscriptSegment?
     @State private var editingSegmentIsRaw = false
     @State private var isDatePickerPresented = false
+    @State private var isReadingChromeCollapsed = false
+    @State private var lastReadingScrollOffset: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
+            if !isReadingChromeCollapsed {
+                VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
                     TextField("Название пары", text: Binding(
@@ -46,47 +51,24 @@ struct ReviewView: View {
                         .pickerStyle(.inline)
                         .labelsHidden()
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "book.closed")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(model.currentSession?.subject ?? "Не определено")
-                                .font(.caption.weight(.medium))
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Image(systemName: "chevron.down")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 10)
-                        .frame(width: 170, height: WhispMetrics.glassFieldHeight)
-                        .contentShape(Rectangle())
+                        ReviewHeaderControlLabel(
+                            title: model.currentSession?.subject ?? "Не определено",
+                            systemImage: "book.closed"
+                        )
                     }
                     .menuStyle(.borderlessButton)
-                    .whispGlassControl()
                     .help("Предмет лекции")
 
                     Button {
                         isDatePickerPresented.toggle()
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "calendar")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(selectedLectureDateText)
-                                .font(.caption.monospacedDigit())
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Image(systemName: "chevron.down")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 10)
-                        .frame(width: 145, height: WhispMetrics.glassFieldHeight)
-                        .contentShape(Rectangle())
+                        ReviewHeaderControlLabel(
+                            title: selectedLectureDateText,
+                            systemImage: "calendar",
+                            monospaced: true
+                        )
                     }
                     .buttonStyle(.plain)
-                    .whispGlassControl()
                     .help("Дата лекции — можно выбрать дату вчерашней или более старой записи")
                     .popover(isPresented: $isDatePickerPresented, arrowEdge: .bottom) {
                         VStack(spacing: 10) {
@@ -105,16 +87,15 @@ struct ReviewView: View {
                                 Button("Сегодня") {
                                     model.updateReview(date: Date())
                                 }
-                                .buttonStyle(.plain)
-                                .font(.caption)
-                                .foregroundStyle(WhispPalette.accent)
+                                .buttonStyle(.glass)
+                                .controlSize(.small)
 
                                 Spacer()
 
                                 Button("Готово") {
                                     isDatePickerPresented = false
                                 }
-                                .buttonStyle(.glassProminent)
+                                .buttonStyle(.glass)
                                 .controlSize(.small)
                             }
                             .padding(.horizontal, 4)
@@ -163,27 +144,34 @@ struct ReviewView: View {
                 .background(Color.orange.opacity(0.08), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
             }
 
+            remindersSection
+
             VStack(alignment: .leading, spacing: 12) {
-                Picker("Документ", selection: $tab) {
-                    Text("Тетрадь").tag("student")
-                    Text("Разбор").tag("notes")
-                    Text("К зачёту").tag("quiz")
-                    Label("Стенограмма", systemImage: "text.quote").tag("final")
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                WhispGlassSegment(
+                    selection: animatedTabSelection,
+                    options: [
+                        ("student", "Тетрадь", "book.closed"),
+                        ("notes", "Разбор", "doc.text.magnifyingglass"),
+                        ("quiz", "К зачёту", "graduationcap"),
+                        ("final", "Стенограмма", "text.quote")
+                    ]
+                )
 
                 HStack(spacing: 10) {
                     if tab != "quiz" || quizViewMode == "markdown" {
-                        Picker("Режим", selection: $isPreviewMode) {
-                            Label("Правка", systemImage: "pencil").tag(false)
-                            Label("Просмотр", systemImage: "eye").tag(true)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 154)
-                        .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                        WhispGlassSegment(
+                            selection: animatedPreviewSelection,
+                            options: [
+                                (false, "Правка", "pencil"),
+                                (true, "Просмотр", "eye")
+                            ],
+                            minHeight: 28
+                        )
+                        .frame(width: 220)
+                    } else {
+                        Color.clear
+                            .frame(width: 220, height: 36)
+                            .accessibilityHidden(true)
                     }
 
                     Button {
@@ -196,9 +184,13 @@ struct ReviewView: View {
                         }
                     } label: {
                         Label(copied ? "Скопировано" : "Копировать", systemImage: copied ? "checkmark" : "doc.on.doc")
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 32)
+                            .glassEffect(.regular.interactive(), in: .capsule)
                     }
-                    .buttonStyle(.glass)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
                     .help("Скопировать Markdown в буфер обмена")
 
                     if tab != "quiz",
@@ -208,13 +200,25 @@ struct ReviewView: View {
                             Task { await model.regenerateAnalysis(forceOverwriteNotes: true) }
                         } label: {
                             Label(model.currentSession?.analysis == nil ? "Создать" : "Перегенерировать", systemImage: "sparkles")
+                                .font(.callout.weight(.medium))
+                                .foregroundStyle(Color.white)
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 32)
+                                .glassEffect(
+                                    .regular.tint(WhispPalette.accent).interactive(),
+                                    in: .capsule
+                                )
                         }
-                        .buttonStyle(.glass)
-                        .controlSize(.small)
+                        .buttonStyle(.plain)
                         .disabled(model.isGeneratingNotes)
                         .help("Перегенерировать конспекты через Gemini")
+                    } else {
+                        Color.clear
+                            .frame(width: 170, height: 32)
+                            .accessibilityHidden(true)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 8)
@@ -242,6 +246,13 @@ struct ReviewView: View {
             if tab == "final" {
                 transcriptModeBanner
             }
+                }
+                .transition(
+                    reduceMotion
+                        ? .opacity
+                        : .move(edge: .top).combined(with: .opacity)
+                )
+            }
 
             Group {
                 switch tab {
@@ -264,7 +275,10 @@ struct ReviewView: View {
                             .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
                         }
                         if isPreviewMode {
-                            MarkdownPreview(markdown: currentContent)
+                            MarkdownPreview(
+                                markdown: currentContent,
+                                onScrollOffsetChange: updateReadingChrome
+                            )
                         } else {
                             editor(binding: Binding(get: { model.currentSession?.studentNotesMarkdown ?? "" }, set: { model.updateReview(studentNotes: $0) }))
                         }
@@ -335,14 +349,15 @@ struct ReviewView: View {
 
                                     Spacer()
 
-                                    Picker("Вид", selection: $quizViewMode) {
-                                        Text("Тренажёр").tag("interactive")
-                                        Text("Markdown").tag("markdown")
-                                    }
-                                    .pickerStyle(.segmented)
-                                    .labelsHidden()
-                                    .frame(width: 200)
-                                    .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
+                                    WhispGlassSegment(
+                                        selection: $quizViewMode,
+                                        options: [
+                                            ("interactive", "Тренажёр", "rectangle.stack"),
+                                            ("markdown", "Markdown", "chevron.left.forwardslash.chevron.right")
+                                        ],
+                                        minHeight: 28
+                                    )
+                                    .frame(width: 260)
 
                                     Button {
                                         Task { await model.generateQuiz() }
@@ -356,10 +371,14 @@ struct ReviewView: View {
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
                                 .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+                                .frame(maxWidth: 860)
+                                .padding(.horizontal, 32)
+                                .frame(maxWidth: .infinity, alignment: .center)
 
                                 if quizViewMode == "interactive" {
                                     InteractiveQuizView(
                                         markdown: model.currentSession?.quizMarkdown ?? "",
+                                        onScrollOffsetChange: updateReadingChrome,
                                         progress: Binding(
                                             get: { model.currentSession?.quizProgress ?? QuizProgress() },
                                             set: { model.updateQuizProgress($0) }
@@ -381,6 +400,9 @@ struct ReviewView: View {
                 )
                 }
             }
+            .id(reviewContentAnimationID)
+            .transition(reduceMotion ? .opacity : WhispMotion.contentTransition)
+            .animation(reduceMotion ? nil : WhispMotion.content, value: reviewContentAnimationID)
 
             HStack {
                 if model.currentSession?.status == .processing {
@@ -461,7 +483,30 @@ struct ReviewView: View {
         }
         .task { await model.loadPlayback(source: audioSource) }
         .onChange(of: audioSource) { Task { await model.loadPlayback(source: audioSource) } }
+        .onChange(of: tab) {
+            revealReadingChrome(resetOffset: true)
+        }
+        .onChange(of: model.currentSession?.id) {
+            revealReadingChrome(resetOffset: true)
+        }
         .background(WhispPalette.canvas)
+        .overlay(alignment: .topTrailing) {
+            if isReadingChromeCollapsed {
+                Button {
+                    revealReadingChrome(resetOffset: false)
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                }
+                .buttonStyle(.plain)
+                .help("Показать панель лекции")
+                .accessibilityLabel("Показать панель лекции")
+                .padding(12)
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
+        }
         .sheet(item: $editingSegment) { segment in
             TranscriptSegmentEditor(
                 segment: segment,
@@ -481,6 +526,57 @@ struct ReviewView: View {
                 }
             )
         }
+    }
+
+    private var animatedTabSelection: Binding<String> {
+        Binding(
+            get: { tab },
+            set: { newValue in
+                withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                    tab = newValue
+                }
+            }
+        )
+    }
+
+    private func updateReadingChrome(_ offset: CGFloat) {
+        let delta = offset - lastReadingScrollOffset
+        lastReadingScrollOffset = offset
+
+        if offset < 12 {
+            revealReadingChrome(resetOffset: false)
+        } else if delta > 4, offset > 42, !isReadingChromeCollapsed {
+            withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                isReadingChromeCollapsed = true
+            }
+        } else if delta < -4, isReadingChromeCollapsed {
+            revealReadingChrome(resetOffset: false)
+        }
+    }
+
+    private func revealReadingChrome(resetOffset: Bool) {
+        if resetOffset {
+            lastReadingScrollOffset = 0
+        }
+        guard isReadingChromeCollapsed else { return }
+        withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+            isReadingChromeCollapsed = false
+        }
+    }
+
+    private var animatedPreviewSelection: Binding<Bool> {
+        Binding(
+            get: { isPreviewMode },
+            set: { newValue in
+                withAnimation(reduceMotion ? nil : WhispMotion.content) {
+                    isPreviewMode = newValue
+                }
+            }
+        )
+    }
+
+    private var reviewContentAnimationID: String {
+        "\(tab)-\(isPreviewMode)-\(quizViewMode)"
     }
 
     private var currentContent: String {
@@ -505,9 +601,9 @@ struct ReviewView: View {
                !(analysis.tags.isEmpty && analysis.keyConcepts.isEmpty) {
                 HStack(spacing: 10) {
                     Label("МЕТАДАННЫЕ", systemImage: "tag")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .tracking(0.5)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.primary.opacity(0.72))
 
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
@@ -515,7 +611,7 @@ struct ReviewView: View {
                                 metadataChip("#\(tag)", accent: true)
                             }
                             ForEach(analysis.keyConcepts.prefix(3), id: \.self) { concept in
-                                metadataChip("[[\(concept)]]")
+                                metadataChip(concept)
                             }
                         }
                         .padding(.vertical, 1)
@@ -523,8 +619,91 @@ struct ReviewView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+                .whispGlassPanel(cornerRadius: WhispMetrics.compactCornerRadius)
             }
+        }
+    }
+
+    @ViewBuilder private var remindersSection: some View {
+        if let session = model.currentSession,
+           let reminders = session.analysis?.reminders,
+           !reminders.isEmpty {
+            let nextLesson = ReminderService().nextLessonDate(
+                subject: session.subject,
+                after: session.startedAt ?? session.createdAt,
+                schedule: model.settingsStore.settings.lessonSchedule
+            )
+            let reminderDate = ReminderService().preparationDate(before: nextLesson)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label("Задания к следующему уроку", systemImage: "checklist")
+                        .font(.headline)
+                    Spacer()
+                    if session.createdReminderIDs.isEmpty {
+                        Button {
+                            Task { await model.createRemindersForCurrentSession() }
+                        } label: {
+                            Label("Добавить в Reminders", systemImage: "plus")
+                        }
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.small)
+                    } else {
+                        Label("Добавлено", systemImage: "checkmark.circle.fill")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(WhispPalette.success)
+                    }
+                }
+
+                Text("Напомнить: \(reminderDate.formatted(date: .abbreviated, time: .shortened)) — вечером накануне")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(reminders) { reminder in
+                    let isCompleted = session.completedReminderIDs.contains(reminder.id)
+                    HStack(alignment: .top, spacing: 10) {
+                        Button {
+                            withAnimation(WhispMotion.control) {
+                                model.toggleReminderCompletion(
+                                    sessionID: session.id,
+                                    reminderID: reminder.id
+                                )
+                            }
+                        } label: {
+                            Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
+                                .contentTransition(.symbolEffect(.replace))
+                                .foregroundStyle(isCompleted ? WhispPalette.success : .secondary)
+                        }
+                        .buttonStyle(.plain)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(reminder.title)
+                                .font(.callout.weight(.medium))
+                                .strikethrough(isCompleted)
+                            Text(reminder.notes).font(.caption).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Button(role: .destructive) {
+                            withAnimation(WhispMotion.content) {
+                                model.deleteReminder(
+                                    sessionID: session.id,
+                                    reminderID: reminder.id
+                                )
+                            }
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Удалить задание")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .opacity(isCompleted ? 0.72 : 1)
+                }
+            }
+            .padding(12)
+            .whispGlassPanel(cornerRadius: WhispMetrics.compactCornerRadius)
+            .padding(.horizontal, 18)
         }
     }
 
@@ -534,11 +713,11 @@ struct ReviewView: View {
             .lineLimit(1)
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
-            .background(
-                accent ? WhispPalette.accent.opacity(0.10) : WhispPalette.content.opacity(0.7),
+            .glassEffect(
+                .regular,
                 in: .capsule
             )
-            .foregroundStyle(accent ? WhispPalette.accent : .secondary)
+            .foregroundStyle(accent ? Color.primary.opacity(0.92) : .secondary)
     }
 
     private var readingTimeText: String {
@@ -559,35 +738,41 @@ struct ReviewView: View {
                 model.player.skip(by: -15)
             } label: {
                 Image(systemName: "gobackward.15")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .glassEffect(.regular.interactive(), in: .circle)
             }
             .buttonStyle(.plain)
-            .font(.system(size: 13))
             .foregroundStyle(.secondary)
-            .frame(width: 28, height: 28)
             .help("Назад на 15 секунд")
             .accessibilityLabel("Назад на 15 секунд")
 
             Button { model.player.toggle() } label: {
-                Image(systemName: model.player.isPlaying ? "pause.fill" : "play.fill").frame(width: 20)
+                Image(systemName: model.player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 34, height: 34)
+                    .glassEffect(.regular.interactive(), in: .circle)
             }
-            .buttonStyle(.glassProminent)
-            .controlSize(.small)
+            .buttonStyle(.plain)
             .accessibilityLabel(model.player.isPlaying ? "Пауза" : "Воспроизвести")
 
             Button {
                 model.player.skip(by: 15)
             } label: {
                 Image(systemName: "goforward.15")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .glassEffect(.regular.interactive(), in: .circle)
             }
             .buttonStyle(.plain)
-            .font(.system(size: 13))
             .foregroundStyle(.secondary)
-            .frame(width: 28, height: 28)
             .help("Вперёд на 15 секунд")
             .accessibilityLabel("Вперёд на 15 секунд")
 
             Text(WhispFormatting.timestamp(model.player.currentTime)).monospacedDigit().font(.caption)
             Slider(value: Binding(get: { model.player.currentTime }, set: { model.player.seek(to: $0) }), in: 0...max(1, model.player.duration))
+                .tint(.secondary)
             Text(WhispFormatting.timestamp(model.player.duration)).monospacedDigit().font(.caption).foregroundStyle(.secondary)
 
             Menu {
@@ -606,31 +791,77 @@ struct ReviewView: View {
             } label: {
                 Text(String(format: "%.2fx", model.player.playbackRate).replacingOccurrences(of: ".00x", with: "x").replacingOccurrences(of: "0x", with: "x"))
                     .font(.caption.monospacedDigit().weight(.semibold))
-                    .frame(width: 46)
+                    .foregroundStyle(.primary)
+                    .frame(width: 64, height: 34)
+                    .glassEffect(.regular.interactive(), in: .capsule)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .controlSize(.small)
+            .menuStyle(.borderlessButton)
             .help("Скорость воспроизведения")
 
-            Picker("Дорожка", selection: $audioSource) {
-                Label("Микрофон", systemImage: "mic.fill").tag(AudioSource.microphone)
-                if model.currentSession?.captureSystemAudio == true {
-                    Label("Системный звук", systemImage: "waveform").tag(AudioSource.system)
+            Menu {
+                Button {
+                    audioSource = .microphone
+                } label: {
+                    Label("Микрофон", systemImage: audioSource == .microphone ? "checkmark" : "mic.fill")
                 }
+                if model.currentSession?.captureSystemAudio == true {
+                    Button {
+                        audioSource = .system
+                    } label: {
+                        Label("Системный звук", systemImage: audioSource == .system ? "checkmark" : "waveform")
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: audioSource == .microphone ? "mic.fill" : "waveform")
+                    Text(audioSource == .microphone ? "Микрофон" : "Системный звук")
+                        .lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.primary)
+                .frame(width: 134, height: 34)
+                .glassEffect(.regular.interactive(), in: .capsule)
             }
-            .labelsHidden()
-            .frame(width: 120)
-            .pickerStyle(.menu)
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .menuStyle(.borderlessButton)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 10)
-        .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
+        .whispGlassPanel()
         .padding(.horizontal, 18)
         .padding(.bottom, 8)
     }
+
+private struct ReviewHeaderControlLabel: View {
+    let title: String
+    let systemImage: String
+    var monospaced = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(title)
+                .font(monospaced ? .caption.monospacedDigit() : .caption.weight(.medium))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 10)
+        .frame(width: 155, height: WhispMetrics.glassFieldHeight)
+        .contentShape(.rect(cornerRadius: WhispMetrics.controlCornerRadius))
+        .glassEffect(
+            .regular.interactive(),
+            in: .rect(cornerRadius: WhispMetrics.controlCornerRadius)
+        )
+    }
+}
 
     private var transcriptModeBanner: some View {
         let tint = WhispPalette.accent
@@ -776,6 +1007,11 @@ struct ReviewView: View {
                             .listStyle(.inset)
                             .scrollContentBackground(.hidden)
                             .background(WhispPalette.content)
+                            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                                geometry.contentOffset.y + geometry.contentInsets.top
+                            } action: { _, offset in
+                                updateReadingChrome(offset)
+                            }
                             .onChange(of: model.player.currentTime) { _, newTime in
                                 guard model.player.isPlaying else { return }
                                 if let current = filtered.first(where: { newTime >= $0.start && newTime <= $0.end }) {
@@ -797,13 +1033,21 @@ struct ReviewView: View {
     private func editor(binding: Binding<String>) -> some View {
         Group {
             if isPreviewMode {
-                MarkdownPreview(markdown: binding.wrappedValue)
+                MarkdownPreview(
+                    markdown: binding.wrappedValue,
+                    onScrollOffsetChange: updateReadingChrome
+                )
             } else {
                 TextEditor(text: binding)
                     .font(.system(.body, design: .monospaced))
                     .padding(12)
                     .scrollContentBackground(.hidden)
                     .background(WhispPalette.content)
+                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.contentOffset.y + geometry.contentInsets.top
+                    } action: { _, offset in
+                        updateReadingChrome(offset)
+                    }
             }
         }
     }
@@ -1065,6 +1309,7 @@ enum QuizParser {
 
 struct InteractiveQuizView: View {
     let markdown: String
+    var onScrollOffsetChange: ((CGFloat) -> Void)? = nil
     @Binding var progress: QuizProgress
 
     var body: some View {
@@ -1332,7 +1577,15 @@ struct InteractiveQuizView: View {
                     }
                 }
             }
-            .padding(20)
+            .frame(maxWidth: 860, alignment: .leading)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 28)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y + geometry.contentInsets.top
+        } action: { _, offset in
+            onScrollOffsetChange?(offset)
         }
         .background(WhispPalette.content)
     }
