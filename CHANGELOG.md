@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-- Текстовая генерация Gemini переведена на Interactions API, чтобы Gemini 3.x не ошибочно попадал в fallback-цепочку после отказа legacy `generateContent`; JSON-схема ответа автоматически приводится к формату этого API.
+## [1.1.15-alpha.1] - 2026-09-17
 
 ### Добавлено
 
