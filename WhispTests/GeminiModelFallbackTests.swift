@@ -14,4 +14,11 @@ final class GeminiModelFallbackTests: XCTestCase {
     func testWhispSettingsDefaultToGemini38ForNotes() {
         XCTAssertEqual(WhispSettings().analysisModel, GeminiAPIClient.defaultAnalysisModel)
     }
+
+    func testLegacyProviderSettingMigratesToBothRoutes() throws {
+        let data = #"{"activeProviderID":"ollama"}"#.data(using: .utf8)!
+        let settings = try JSONDecoder().decode(WhispSettings.self, from: data)
+        XCTAssertEqual(settings.transcriptionProviderID, "ollama")
+        XCTAssertEqual(settings.analysisProviderID, "ollama")
+    }
 }

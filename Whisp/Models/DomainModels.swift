@@ -521,6 +521,16 @@ enum ProviderTransport: String, Codable, Sendable {
     case anthropic
 }
 
+enum ProviderRole: String, CaseIterable, Sendable {
+    case transcription
+    case analysis
+}
+
+enum ProviderSelection {
+    /// Built-in local Whisper. It has no network endpoint or API key.
+    static let localWhisperID = "local-whisper"
+}
+
 struct ProviderConfiguration: Codable, Hashable, Sendable {
     var baseURL: String
     var transcriptionModel: String
@@ -667,6 +677,11 @@ struct WhispSettings: Codable, Sendable {
     var analysisModel = "gemini-3.8-flash"
     /// `gemini` remains the default provider for new installations.
     var activeProviderID = "gemini"
+    /// Provider used to turn recorded audio into timestamped text. Older
+    /// settings are migrated from `activeProviderID` during decoding.
+    var transcriptionProviderID = "gemini"
+    /// Provider used to turn the transcript into notes, metadata and quizzes.
+    var analysisProviderID = "gemini"
     var providerConfigurations: [String: ProviderConfiguration] = [:]
     var hotkeyRecord = "⌥⌘R"
     var hotkeyFinish = "⌥⌘."
@@ -678,7 +693,7 @@ struct WhispSettings: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case subjects, customVocabulary, localRetentionDays, geminiModel, geminiLiveModel, analysisModel
-        case activeProviderID, providerConfigurations, hotkeyRecord, hotkeyFinish, preferredMicrophoneID, appearance, lessonSchedule, remindersEnabled, reminderListIdentifier
+        case activeProviderID, transcriptionProviderID, analysisProviderID, providerConfigurations, hotkeyRecord, hotkeyFinish, preferredMicrophoneID, appearance, lessonSchedule, remindersEnabled, reminderListIdentifier
     }
 
     init() {}
@@ -694,6 +709,8 @@ struct WhispSettings: Codable, Sendable {
         geminiLiveModel = try values.decodeIfPresent(String.self, forKey: .geminiLiveModel) ?? "gemini-3.5-transcribe-live"
         analysisModel = try values.decodeIfPresent(String.self, forKey: .analysisModel) ?? "gemini-3.8-flash"
         activeProviderID = try values.decodeIfPresent(String.self, forKey: .activeProviderID) ?? "gemini"
+        transcriptionProviderID = try values.decodeIfPresent(String.self, forKey: .transcriptionProviderID) ?? activeProviderID
+        analysisProviderID = try values.decodeIfPresent(String.self, forKey: .analysisProviderID) ?? activeProviderID
         providerConfigurations = try values.decodeIfPresent([String: ProviderConfiguration].self, forKey: .providerConfigurations) ?? [:]
         hotkeyRecord = try values.decodeIfPresent(String.self, forKey: .hotkeyRecord) ?? "⌥⌘R"
         hotkeyFinish = try values.decodeIfPresent(String.self, forKey: .hotkeyFinish) ?? "⌥⌘."
