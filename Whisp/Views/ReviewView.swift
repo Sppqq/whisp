@@ -17,7 +17,6 @@ struct ReviewView: View {
     @State private var readingScrollTravel: CGFloat = 0
 
     private let readingChromeCollapseTravel: CGFloat = 56
-    private let readingChromeRevealTravel: CGFloat = 72
 
     var body: some View {
         VStack(spacing: 0) {
@@ -494,7 +493,7 @@ struct ReviewView: View {
             revealReadingChrome(resetOffset: true)
         }
         .background(WhispPalette.canvas)
-        .overlay(alignment: .topTrailing) {
+        .overlay(alignment: .top) {
             if isReadingChromeCollapsed {
                 Button {
                     revealReadingChrome(resetOffset: false)
@@ -549,7 +548,9 @@ struct ReviewView: View {
 
         if offset < 12 {
             readingScrollTravel = 0
-            revealReadingChrome(resetOffset: false)
+            if isReadingChromeCollapsed {
+                revealReadingChrome(resetOffset: false)
+            }
             return
         }
 
@@ -557,7 +558,9 @@ struct ReviewView: View {
         if delta > 0 {
             readingScrollTravel = max(0, readingScrollTravel) + delta
         } else {
-            readingScrollTravel = min(0, readingScrollTravel) + delta
+            // Scrolling up must not open the large header unexpectedly. It is
+            // revealed only by the chevron or an explicit context change.
+            readingScrollTravel = 0
         }
 
         if readingScrollTravel >= readingChromeCollapseTravel,
@@ -566,10 +569,6 @@ struct ReviewView: View {
             withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
                 isReadingChromeCollapsed = true
             }
-            readingScrollTravel = 0
-        } else if readingScrollTravel <= -readingChromeRevealTravel,
-                  isReadingChromeCollapsed {
-            revealReadingChrome(resetOffset: false)
             readingScrollTravel = 0
         }
     }
