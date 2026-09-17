@@ -11,6 +11,10 @@ final class ReminderService {
         self.calendar = calendar
     }
 
+    static var hasFullAccess: Bool {
+        EKEventStore.authorizationStatus(for: .reminder) == .fullAccess
+    }
+
     struct ReminderListOption: Identifiable, Hashable, Sendable {
         let id: String
         let title: String
@@ -198,7 +202,7 @@ enum ReminderServiceError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .accessDenied: "Whisp не получил доступ к Apple Reminders. Разрешите его в настройках macOS."
+        case .accessDenied: "Whisp не получил доступ к Apple Reminders. Разрешите его в настройках устройства."
         case .noReminderList: "В Apple Reminders не найден список для новых напоминаний."
         }
     }

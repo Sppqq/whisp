@@ -14,6 +14,9 @@ struct ReviewView: View {
     @State private var isDatePickerPresented = false
     @State private var isReadingChromeCollapsed = false
     @State private var lastReadingScrollOffset: CGFloat = 0
+    @State private var readingScrollTravel: CGFloat = 0
+
+    private let readingChromeCollapseTravel: CGFloat = 56
 
     var body: some View {
         VStack(spacing: 0) {
@@ -490,7 +493,7 @@ struct ReviewView: View {
             revealReadingChrome(resetOffset: true)
         }
         .background(WhispPalette.canvas)
-        .overlay(alignment: .topTrailing) {
+        .overlay(alignment: .top) {
             if isReadingChromeCollapsed {
                 Button {
                     revealReadingChrome(resetOffset: false)
@@ -544,13 +547,29 @@ struct ReviewView: View {
         lastReadingScrollOffset = offset
 
         if offset < 12 {
-            revealReadingChrome(resetOffset: false)
-        } else if delta > 4, offset > 42, !isReadingChromeCollapsed {
+            readingScrollTravel = 0
+            if isReadingChromeCollapsed {
+                revealReadingChrome(resetOffset: false)
+            }
+            return
+        }
+
+        guard abs(delta) > 0.5 else { return }
+        if delta > 0 {
+            readingScrollTravel = max(0, readingScrollTravel) + delta
+        } else {
+            // Scrolling up must not open the large header unexpectedly. It is
+            // revealed only by the chevron or an explicit context change.
+            readingScrollTravel = 0
+        }
+
+        if readingScrollTravel >= readingChromeCollapseTravel,
+           offset > 42,
+           !isReadingChromeCollapsed {
             withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
                 isReadingChromeCollapsed = true
             }
-        } else if delta < -4, isReadingChromeCollapsed {
-            revealReadingChrome(resetOffset: false)
+            readingScrollTravel = 0
         }
     }
 
@@ -558,6 +577,7 @@ struct ReviewView: View {
         if resetOffset {
             lastReadingScrollOffset = 0
         }
+        readingScrollTravel = 0
         guard isReadingChromeCollapsed else { return }
         withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
             isReadingChromeCollapsed = false

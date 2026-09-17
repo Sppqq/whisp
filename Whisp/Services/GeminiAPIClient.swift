@@ -285,16 +285,23 @@ actor GeminiAPIClient {
                 let data: Data
                 switch transport {
                 case .gemini:
-                    var generation: [String: Any] = ["temperature": 0.2]
-                    if let responseSchema {
-                        generation["responseMimeType"] = "application/json"
-                        generation["responseSchema"] = responseSchema
-                    }
-                    let body: [String: Any] = [
-                        "contents": [["role": "user", "parts": [["text": prompt]]]],
-                        "generationConfig": generation
+                    // Gemini 3.x is served through the Interactions API. The
+                    // legacy generateContent route can list these models but
+                    // may reject the actual generation request, which then
+                    // incorrectly triggers the model/key fallback chain.
+                    var body: [String: Any] = [
+                        "model": model,
+                        "store": false,
+                        "input": prompt
                     ]
-                    data = try await sendJSON(body, path: "v1beta/models/\(model):generateContent", apiKeyOverride: key)
+                    if let responseSchema {
+                        body["response_format"] = [
+                            "type": "text",
+                            "mime_type": "application/json",
+                            "schema": Self.interactionSchema(responseSchema)
+                        ]
+                    }
+                    data = try await sendJSON(body, path: "v1beta/interactions", apiKeyOverride: key)
                 case .openAICompatible:
                     var body: [String: Any] = [
                         "model": model,
@@ -424,7 +431,7 @@ actor GeminiAPIClient {
         let mime = mimeType(for: audioURL)
         let fileSize = (try? audioURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         let sizeMB = String(format: "%.1f МБ", Double(fileSize) / (1024 * 1024))
-        await onStatus?("Загрузка аудио в Google Cloud (\(sizeMB))...")
+        await onStatus?("Загрузка аудио · \(sizeMB)…")
         var uploaded = try await upload(audioURL, mimeType: mime, key: key)
         uploaded.uploadedWithKey = key
         do {
@@ -617,6 +624,24 @@ actor GeminiAPIClient {
     private func extractText(_ data: Data, transport: ProviderTransport) throws -> String {
         let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
+        if transport == .gemini {
+            if let outputText = root?["output_text"] as? String,
+               !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return outputText
+            }
+
+            let steps = root?["steps"] as? [[String: Any]] ?? []
+            for step in steps where (step["type"] as? String) == "model_output" {
+                let content = step["content"] as? [[String: Any]] ?? []
+                for part in content where (part["type"] as? String) == "text" {
+                    if let text = part["text"] as? String,
+                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        return text
+                    }
+                }
+            }
+        }
+
         if transport == .openAICompatible {
             let choices = root?["choices"] as? [[String: Any]]
             let message = choices?.first?["message"] as? [String: Any]
@@ -697,5 +722,21 @@ actor GeminiAPIClient {
             trimmed = String(trimmed[firstBrace...lastBrace])
         }
         return trimmed
+    }
+
+    private static func interactionSchema(_ value: Any) -> Any {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.reduce(into: [String: Any]()) { result, entry in
+                if entry.key == "type", let type = entry.value as? String {
+                    result[entry.key] = type.lowercased()
+                } else {
+                    result[entry.key] = interactionSchema(entry.value)
+                }
+            }
+        }
+        if let array = value as? [Any] {
+            return array.map(interactionSchema)
+        }
+        return value
     }
 }

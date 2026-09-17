@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: app.whisp
   deploymentTarget:
     macOS: "26.0"
+    iOS: "26.0"
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -60,6 +61,52 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.whisp.lectures.tests
         GENERATE_INFOPLIST_FILE: YES
+  WhispiOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: WhispiOS
+      - path: Whisp/Models
+      - path: Whisp/Utilities/Formatting.swift
+      - path: Whisp/Services/GeminiAPIClient.swift
+      - path: Whisp/Services/GeminiTranscriptionPayload.swift
+      - path: Whisp/Services/KeychainStore.swift
+      - path: Whisp/Services/LectureAnalysisService.swift
+      - path: Whisp/Services/SettingsStore.swift
+      - path: Whisp/Services/MarkdownExporter.swift
+      - path: Whisp/Services/ProxyTransport.swift
+      - path: Whisp/Services/SessionStore.swift
+      - path: Whisp/Services/TranscriptionWindow.swift
+      - path: Whisp/Services/WebDAVClient.swift
+      - path: Whisp/Services/ReminderService.swift
+      - path: Whisp/Services/StudyDashboardPlanner.swift
+      - path: Whisp/Services/LibrarySearchIndex.swift
+      - path: Whisp/Resources/Assets.xcassets
+      - path: CHANGELOG.md
+    info:
+      path: WhispiOS/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Whisp
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSMicrophoneUsageDescription: "Whisp записывает лекции для расшифровки и создания конспектов."
+        NSRemindersFullAccessUsageDescription: "Whisp создаёт напоминания о заданиях из лекций."
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UILaunchScreen: {}
+    dependencies:
+      - package: ArgmaxOSS
+        product: WhisperKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.whisp.lectures.ios
+        PRODUCT_NAME: Whisp
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        TARGETED_DEVICE_FAMILY: "1"
 schemes:
   Whisp:
     build:
@@ -69,3 +116,7 @@ schemes:
     test:
       targets:
         - WhispTests
+  WhispiOS:
+    build:
+      targets:
+        WhispiOS: all
