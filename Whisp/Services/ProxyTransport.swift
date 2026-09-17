@@ -39,6 +39,7 @@ enum ProxyTransport {
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 300
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+#if os(macOS)
         guard proxy.isEnabled, !proxy.host.isEmpty, proxy.port > 0 else { return configuration }
 
         var dictionary: [AnyHashable: Any] = [:]
@@ -64,6 +65,7 @@ enum ProxyTransport {
             }
         }
         configuration.connectionProxyDictionary = dictionary
+#endif
         return configuration
     }
 }

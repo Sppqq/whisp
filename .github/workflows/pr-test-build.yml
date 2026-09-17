@@ -58,3 +58,15 @@ jobs:
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
             test
+
+      - name: Build iPhone client
+        shell: bash
+        run: |
+          xcodebuild \
+            -project Whisp.xcodeproj \
+            -scheme WhispiOS \
+            -configuration Debug \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath "$RUNNER_TEMP/WhispiOSPR" \
+            CODE_SIGNING_ALLOWED=NO \
+            build

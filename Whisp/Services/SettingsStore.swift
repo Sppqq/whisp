@@ -333,6 +333,11 @@ final class SettingsStore {
         }
         defaults.removeObject(forKey: "proxy")
         defaults.set(try? encoder.encode(publicWebDAV), forKey: "webdav")
+        if webDAV.password.isEmpty {
+            try? keychain.remove(.webDAVPassword, mode: secretStorageMode)
+        } else {
+            try? keychain.set(webDAV.password, for: .webDAVPassword, mode: secretStorageMode)
+        }
     }
 }
 

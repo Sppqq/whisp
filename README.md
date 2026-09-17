@@ -4,11 +4,12 @@
 
 <div align="center">
   <br>
-  <strong>Нативное приложение для записи, расшифровки и разбора лекций на macOS.</strong>
+  <strong>Нативное приложение для записи, расшифровки и разбора лекций на macOS и iPhone.</strong>
   <br>
   Записывайте с микрофона или импортируйте готовое аудио, проверяйте результат и сохраняйте конспект в Obsidian.
   <br><br>
   <img alt="macOS 26+" src="https://img.shields.io/badge/macOS-26%2B-202225?style=flat-square&logo=apple&logoColor=white">
+  <img alt="iOS 26+" src="https://img.shields.io/badge/iOS-26%2B-202225?style=flat-square&logo=apple&logoColor=white">
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple_Silicon-native-202225?style=flat-square">
   <img alt="Swift 5" src="https://img.shields.io/badge/Swift-5-F25F4B?style=flat-square&logo=swift&logoColor=white">
   <img alt="Public beta" src="https://img.shields.io/badge/status-public_beta-E66B5B?style=flat-square">
@@ -86,9 +87,9 @@ Whisp фиксирует границы fallback-интервалов и поз�
 
 ### Требования
 
-- Mac с Apple Silicon;
-- macOS 26 или новее;
-- для готового DMG: только macOS 26 или новее;
+- для Mac: Apple Silicon и macOS 26 или новее;
+- для iPhone: iOS 26 или новее;
+- готовый публичный установщик пока выпускается только для macOS; iPhone-клиент собирается из исходников через Xcode;
 - для самостоятельной сборки: полный Xcode 26 или новее и [Homebrew](https://brew.sh/).
 
 ### Самостоятельная сборка
@@ -138,7 +139,7 @@ Whisp проверяет GitHub Releases при запуске. На стран�
 В разделе **«Хранилище»** можно выбрать способ хранения ключей и паролей:
 
 - **Локальные настройки** — удобны для ad-hoc сборок, но значения не шифруются отдельно;
-- **macOS Keychain** — защищает значения средствами macOS, но после пересборки система может повторно запросить доступ.
+- **Связка ключей** — защищает значения средствами системы, но после пересборки система может повторно запросить доступ.
 
 При переключении Whisp сначала записывает и проверяет секреты в новом хранилище, затем удаляет старую копию.
 
@@ -146,7 +147,9 @@ Whisp проверяет GitHub Releases при запуске. На стран�
 
 ## Известные ограничения
 
-- поддерживаются только Mac с Apple Silicon;
+- Mac-версия поддерживает только Apple Silicon, iPhone-версия — устройства с iOS 26+;
+- iPhone-клиент поддерживает облачную расшифровку, опциональный локальный Whisper fallback, WebDAV и Apple Reminders; запись системного звука остаётся функцией Mac;
+- автоматическая фоновая синхронизация библиотеки между Mac и iPhone пока не реализована: обмен выполняется вручную через WebDAV;
 - интерфейс приложения пока доступен на русском языке;
 - для облачной расшифровки пользователь предоставляет собственный Gemini API key;
 - качество конспекта зависит от качества записи и выбранной модели;
@@ -160,6 +163,16 @@ Whisp проверяет GitHub Releases при запуске. На стран�
 brew install xcodegen
 xcodegen generate
 open Whisp.xcodeproj
+```
+
+В проекте две схемы: `Whisp` для Mac и `WhispiOS` для iPhone. iOS-клиент использует общие модели, Gemini-обработку, Markdown-экспорт и формат локальной библиотеки. Запись системного звука, menu bar, глобальные горячие клавиши и DMG-updater остаются функциями Mac.
+
+Проверка iPhone-сборки без подписи:
+
+```bash
+xcodebuild -project Whisp.xcodeproj -scheme WhispiOS \
+  -destination 'generic/platform=iOS Simulator' \
+  CODE_SIGNING_ALLOWED=NO build
 ```
 
 Создание DMG:
@@ -209,7 +222,7 @@ git push origin dev
 
 `MARKETING_VERSION` в `project.yml` остаётся версией исходного проекта; CI передаёт вычисленную SemVer в `xcodebuild`, поэтому alpha/RC не требуют ручного редактирования файла.
 
-Для pull request-ов в `main` и `dev` workflow **PR test build** генерирует Xcode-проект, запускает тесты и проверяет Debug-сборку на macOS. Этот check нужно включить как required status check в Branch protection rules целевых веток.
+Для pull request-ов в `main` и `dev` workflow **PR test build** генерирует Xcode-проект, запускает тесты и проверяет Debug-сборки macOS и iPhone. Этот check нужно включить как required status check в Branch protection rules целевых веток.
 
 ## Структура проекта
 
@@ -223,13 +236,14 @@ Whisp/
 └── Views/         Запись, библиотека, проверка и настройки
 
 WhispTests/        Модульные и регрессионные тесты
+WhispiOS/          iPhone-приложение, мобильная запись и интерфейс
 scripts/           Сборка, тестирование и безопасная установка
 project.yml        Конфигурация XcodeGen
 ```
 
 ## Обратная связь
 
-Если Whisp падает, теряет фрагмент записи или некорректно восстанавливает сессию, создайте [issue](https://github.com/Sppqq/whisp/issues). Приложите версию macOS, модель Mac, шаги воспроизведения и обезличенный фрагмент лога. Не публикуйте API-ключи, пароли и содержимое личных лекций.
+Если Whisp падает, теряет фрагмент записи или некорректно восстанавливает сессию, создайте [issue](https://github.com/Sppqq/whisp/issues). Приложите версию системы, модель Mac или iPhone, шаги воспроизведения и обезличенный фрагмент лога. Не публикуйте API-ключи, пароли и содержимое личных лекций.
 
 <div align="center">
   <sub>Сделано для тех, кто хочет слушать лекцию, а не переписывать её.</sub>

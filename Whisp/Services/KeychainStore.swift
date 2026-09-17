@@ -19,7 +19,7 @@ enum SecretStorageMode: String, CaseIterable, Identifiable, Codable, Sendable {
         case .localPreferences:
             "Не вызывает системных запросов после пересборки, но хранит значения без шифрования."
         case .keychain:
-            "Шифрует значения средствами macOS. После ad-hoc пересборки система может снова запросить доступ."
+            "Шифрует значения средствами системы. После ad-hoc пересборки система может снова запросить доступ."
         }
     }
 
@@ -110,7 +110,9 @@ struct KeychainStore: Sendable {
         item[kSecMatchLimit as String] = kSecMatchLimitOne
         // A release built with a different ad-hoc signature can otherwise wait
         // on a Keychain authorization dialog hidden behind the app window.
+#if os(macOS)
         item[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+#endif
         var result: CFTypeRef?
         let status = SecItemCopyMatching(item as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
