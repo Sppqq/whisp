@@ -14,6 +14,10 @@ struct ReviewView: View {
     @State private var isDatePickerPresented = false
     @State private var isReadingChromeCollapsed = false
     @State private var lastReadingScrollOffset: CGFloat = 0
+    @State private var readingScrollTravel: CGFloat = 0
+
+    private let readingChromeCollapseTravel: CGFloat = 56
+    private let readingChromeRevealTravel: CGFloat = 72
 
     var body: some View {
         VStack(spacing: 0) {
@@ -544,13 +548,29 @@ struct ReviewView: View {
         lastReadingScrollOffset = offset
 
         if offset < 12 {
+            readingScrollTravel = 0
             revealReadingChrome(resetOffset: false)
-        } else if delta > 4, offset > 42, !isReadingChromeCollapsed {
+            return
+        }
+
+        guard abs(delta) > 0.5 else { return }
+        if delta > 0 {
+            readingScrollTravel = max(0, readingScrollTravel) + delta
+        } else {
+            readingScrollTravel = min(0, readingScrollTravel) + delta
+        }
+
+        if readingScrollTravel >= readingChromeCollapseTravel,
+           offset > 42,
+           !isReadingChromeCollapsed {
             withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
                 isReadingChromeCollapsed = true
             }
-        } else if delta < -4, isReadingChromeCollapsed {
+            readingScrollTravel = 0
+        } else if readingScrollTravel <= -readingChromeRevealTravel,
+                  isReadingChromeCollapsed {
             revealReadingChrome(resetOffset: false)
+            readingScrollTravel = 0
         }
     }
 
@@ -558,6 +578,7 @@ struct ReviewView: View {
         if resetOffset {
             lastReadingScrollOffset = 0
         }
+        readingScrollTravel = 0
         guard isReadingChromeCollapsed else { return }
         withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
             isReadingChromeCollapsed = false
