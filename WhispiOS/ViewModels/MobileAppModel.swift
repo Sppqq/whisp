@@ -470,7 +470,25 @@ final class MobileAppModel {
             session.rawTranscript = segments
             session.finalTranscript = segments
             session.fallbackIntervals = []
-            session.lastError = "Обработано локальным Whisper после ошибки сети: \(originalError.localizedDescription)"
+            session.lastError = transcriptionMode == .automatic
+                ? "Обработано локальным Whisper после ошибки сети: \(originalError.localizedDescription)"
+                : nil
+
+            if transcriptionMode == .local {
+                // The local-only mode must not call the cloud analysis service.
+                // Keep the transcript usable immediately and leave the optional
+                // AI-generated notebook empty until the user chooses a cloud mode.
+                session.status = .review
+                let rendered = MarkdownExporter.render(session: session)
+                session.studentNotesMarkdown = rendered.studentNotebook
+                session.notesMarkdown = rendered.notes
+                session.finalMarkdown = rendered.final
+                session.rawMarkdown = rendered.raw
+                await update(session)
+                processingProgress = "Готово (локальный Whisper)"
+                return
+            }
+
             let client = makeClient()
             let service = LectureAnalysisService(client: client, model: settingsStore.activeAnalysisModel, fallbackModels: settingsStore.activeAnalysisFallbackModels)
             let analysis = try await service.analyze(segments: segments, subjects: settingsStore.settings.subjects.filter(\.isEnabled).map(\.name))
