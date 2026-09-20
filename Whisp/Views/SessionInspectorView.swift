@@ -100,7 +100,8 @@ struct SessionInspectorView: View {
                 inspectorRow("Последняя синхронизация", value: syncedAt.formatted(date: .abbreviated, time: .shortened))
             }
 
-            inspectorRow("Провайдер", value: model.settingsStore.activeProviderName)
+            inspectorRow("Расшифровка", value: "\(model.settingsStore.transcriptionProviderName) · \(model.settingsStore.transcriptionProviderModel)")
+            inspectorRow("Конспект", value: "\(model.settingsStore.analysisProviderName) · \(model.settingsStore.analysisProviderModel)")
         }
     }
 

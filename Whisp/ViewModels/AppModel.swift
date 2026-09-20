@@ -262,10 +262,10 @@ final class AppModel {
             sessions = try await store.loadAll()
             let needsInitialSetup = !onboardingCompleted
                 && sessions.isEmpty
-                && !settingsStore.isActiveProviderConfigured
+                && !settingsStore.isAnalysisProviderConfigured
             showOnboarding = needsInitialSetup
             showSettings = !needsInitialSetup
-                && !settingsStore.isActiveProviderConfigured
+                && !settingsStore.isAnalysisProviderConfigured
             if let uploading = sessions.first(where: { $0.status == .uploading }) {
                 currentSession = uploading
                 selectedSessionID = uploading.id
@@ -513,26 +513,27 @@ final class AppModel {
             let durationDesc = WhispFormatting.durationDescription(duration)
             addProcessingLog("Аудио готово: \(WhispFormatting.timestamp(duration)) (\(durationDesc)).")
 
-            guard settingsStore.activeProviderSupportsRemoteTranscription else {
+            guard !settingsStore.transcriptionUsesLocalWhisper,
+                  settingsStore.transcriptionProviderPreset?.supportsRemoteTranscription != false else {
                 throw GeminiAPIError(
                     code: 400,
                     status: "UNSUPPORTED",
-                    message: "\(settingsStore.activeProviderName) создаёт конспекты по готовому тексту, но не расшифровывает аудио. Для импорта аудио выберите Gemini или OpenAI-совместимый провайдер, либо запишите аудио через Whisp (с локальным Whisper).",
+                    message: "\(settingsStore.transcriptionProviderName) не расшифровывает импортированное аудио. Выберите удалённый провайдер или используйте локальный Whisper во время записи.",
                     retryAfter: nil
                 )
             }
-            guard settingsStore.isActiveProviderConfigured else {
-                addProcessingLog("Ошибка: активный провайдер не настроен")
-                throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала настройте активный провайдер в Настройках", retryAfter: nil)
+            guard settingsStore.isTranscriptionProviderConfigured else {
+                addProcessingLog("Ошибка: провайдер расшифровки не настроен")
+                throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала настройте провайдер расшифровки в Настройках", retryAfter: nil)
             }
 
             statusMessage = "Расшифровываем импортированную запись"
-            addProcessingLog("Запуск расшифровки через \(settingsStore.activeProviderName), модель \(settingsStore.activeTranscriptionModel)...")
+            addProcessingLog("Запуск расшифровки через \(settingsStore.transcriptionProviderName), модель \(settingsStore.transcriptionProviderModel)...")
             let service = FinalTranscriptionService(
-                client: try providerClient(),
+                client: try providerClient(for: .transcription),
                 processor: processor,
-                model: settingsStore.activeTranscriptionModel,
-                providerName: settingsStore.activeProviderName,
+                model: settingsStore.transcriptionProviderModel,
+                providerName: settingsStore.transcriptionProviderName,
                 vocabulary: settingsStore.settings.customVocabulary,
                 onProgress: progressHandler(sessionID: session.id)
             )
@@ -901,8 +902,9 @@ final class AppModel {
     func backfillNow() async {
         showBackfillPrompt = false
         guard !isBusy, var session = currentSession, session.hasPendingBackfill else { return }
-        guard settingsStore.activeProviderSupportsRemoteTranscription else {
-            lastError = "Anthropic не расшифровывает аудио. Выберите Gemini или OpenAI-совместимый провайдер для дорасшифровки."
+        guard !settingsStore.transcriptionUsesLocalWhisper,
+              settingsStore.transcriptionProviderPreset?.supportsRemoteTranscription != false else {
+            lastError = "Для дорасшифровки выберите удалённый провайдер с поддержкой аудио."
             return
         }
         isWorking = true
@@ -910,8 +912,8 @@ final class AppModel {
         do {
             let directory = try await store.directory(for: session.id)
             let mix = try await ensureMix(session: session, directory: directory)
-            let client = try providerClient()
-            let service = BackfillService(client: client, model: settingsStore.activeTranscriptionModel, vocabulary: settingsStore.settings.customVocabulary, processor: processor)
+            let client = try providerClient(for: .transcription)
+            let service = BackfillService(client: client, model: settingsStore.transcriptionProviderModel, vocabulary: settingsStore.settings.customVocabulary, processor: processor)
             backfillBefore = session.finalMarkdown
             for index in session.fallbackIntervals.indices where ![.accepted, .declined].contains(session.fallbackIntervals[index].status) {
                 session.fallbackIntervals[index].status = .processing
@@ -1108,14 +1110,19 @@ final class AppModel {
     }
 
     func testActiveProvider() async -> String {
+        if settingsStore.transcriptionUsesLocalWhisper {
+            geminiState = .local
+            proxyState = .disabled
+            return "Локальный Whisper готов"
+        }
         geminiState = .checking
         proxyState = settingsStore.proxy.isEnabled ? .checking : .disabled
         do {
-            try await providerClient().probeTranscription(settingsStore.activeTranscriptionModel)
+            try await providerClient(for: .transcription).probeTranscription(settingsStore.transcriptionProviderModel)
             geminiState = .available
-            let count = settingsStore.activeProviderAPIKeys.count
-            let name = settingsStore.activeProviderName
-            if settingsStore.activeProviderRequiresAPIKey {
+            let count = settingsStore.providerAPIKeys(for: settingsStore.transcriptionProviderID).count
+            let name = settingsStore.transcriptionProviderName
+            if settingsStore.providerRequiresAPIKey(for: settingsStore.transcriptionProviderID) {
                 return count > 1 ? "\(name) доступен (\(count) ключей)" : "\(name) доступен"
             } else {
                 return "\(name) доступен"
@@ -1248,24 +1255,24 @@ final class AppModel {
             }
             processingProgress = 0.25
 
-            if !settingsStore.activeProviderSupportsRemoteTranscription {
+            if settingsStore.transcriptionUsesLocalWhisper || settingsStore.transcriptionProviderPreset?.supportsRemoteTranscription == false {
                 guard !session.rawTranscript.isEmpty else {
                     throw GeminiAPIError(
                         code: 400,
                         status: "UNSUPPORTED",
-                        message: "\(settingsStore.activeProviderName) создаёт конспекты по готовому тексту, но не расшифровывает аудио. Во время записи речь распознаётся через локальный Whisper.",
+                        message: "\(settingsStore.transcriptionProviderName) работает только с готовым текстом. Во время записи речь распознаётся через локальный Whisper.",
                         retryAfter: nil
                     )
                 }
                 session.finalTranscript = TranscriptMerger.merge(session.rawTranscript)
                 session.lastError = nil
-            } else if settingsStore.isActiveProviderConfigured {
+            } else if settingsStore.isTranscriptionProviderConfigured {
                 do {
-                    statusMessage = "Финальная расшифровка: \(settingsStore.activeProviderName)"
+                    statusMessage = "Финальная расшифровка: \(settingsStore.transcriptionProviderName)"
                     let finalService = FinalTranscriptionService(
-                        client: try providerClient(), processor: processor,
-                        model: settingsStore.activeTranscriptionModel,
-                        providerName: settingsStore.activeProviderName,
+                        client: try providerClient(for: .transcription), processor: processor,
+                        model: settingsStore.transcriptionProviderModel,
+                        providerName: settingsStore.transcriptionProviderName,
                         vocabulary: settingsStore.settings.customVocabulary,
                         onProgress: progressHandler(sessionID: session.id)
                     )
@@ -1280,7 +1287,7 @@ final class AppModel {
                 }
             } else {
                 if session.rawTranscript.isEmpty {
-                    throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала настройте активный провайдер в Настройках", retryAfter: nil)
+                    throw GeminiAPIError(code: 401, status: "API_KEY", message: "Сначала настройте провайдер расшифровки в Настройках", retryAfter: nil)
                 }
                 session.finalTranscript = TranscriptMerger.merge(session.rawTranscript)
             }
@@ -1338,9 +1345,9 @@ final class AppModel {
         defer { isGeneratingNotes = false }
 
         var analysisError: String?
-        if settingsStore.isActiveProviderConfigured, !session.finalTranscript.isEmpty {
+        if settingsStore.isAnalysisProviderConfigured, !session.finalTranscript.isEmpty {
             do {
-                statusMessage = "Создаём конспект через \(settingsStore.activeProviderName)..."
+                statusMessage = "Создаём конспект через \(settingsStore.analysisProviderName)..."
                 addProcessingLog("Начало анализа и составления конспекта...")
 
                 if forceOverwriteNotes || !session.userEditedStudentNotes {
@@ -1351,8 +1358,8 @@ final class AppModel {
                 }
 
                 let analysis = try await LectureAnalysisService(
-                    client: try providerClient(),
-                    model: settingsStore.activeAnalysisModel,
+                    client: try providerClient(for: .analysis),
+                    model: settingsStore.analysisProviderModel,
                     fallbackModels: settingsStore.activeAnalysisFallbackModels
                 )
                     .analyze(
@@ -1665,7 +1672,7 @@ final class AppModel {
             lastError = "Стенограмма пуста, невозможно составить вопросы"
             return
         }
-        guard settingsStore.isActiveProviderConfigured else {
+        guard settingsStore.isAnalysisProviderConfigured else {
             lastError = "Настройте активный провайдер в настройках"
             return
         }
@@ -1673,7 +1680,7 @@ final class AppModel {
         isGeneratingQuiz = true
         defer { isGeneratingQuiz = false }
 
-        statusMessage = "Составляем карточки и вопросы через \(settingsStore.activeProviderName)..."
+        statusMessage = "Составляем карточки и вопросы через \(settingsStore.analysisProviderName)..."
         let prompt = """
         Ты — преподаватель и наставник для подготовки к экзаменам и зачётам.
         На основе приведённой расшифровки лекции составь блок для самопроверки студента в формате Obsidian Markdown:
@@ -1705,8 +1712,8 @@ final class AppModel {
         """
 
         do {
-            let client = try providerClient()
-            let rawQuiz = try await client.generateText(prompt: prompt, model: settingsStore.activeAnalysisModel)
+            let client = try providerClient(for: .analysis)
+            let rawQuiz = try await client.generateText(prompt: prompt, model: settingsStore.analysisProviderModel)
             session.quizMarkdown = WhispFormatting.formatMarkdownNotes(rawQuiz)
             session.quizProgress.reset()
             sessions[index] = session
@@ -1723,10 +1730,10 @@ final class AppModel {
 
     private func makeCoordinator() -> TranscriptionCoordinator {
         TranscriptionCoordinator(
-            apiKey: settingsStore.activeProviderSupportsLiveTranscription ? settingsStore.geminiAPIKey : "",
+            apiKey: settingsStore.transcriptionProviderID == "gemini" ? settingsStore.geminiAPIKey : "",
             proxy: settingsStore.proxy,
             settings: settingsStore.settings,
-            liveUnavailableMessage: settingsStore.activeProviderSupportsLiveTranscription
+            liveUnavailableMessage: settingsStore.transcriptionProviderID == "gemini"
                 ? "Ключ Gemini не настроен"
                 : "Live-расшифровка доступна только через Gemini; используется локальный Whisper",
             elapsed: { [clock] in clock.elapsed() },
@@ -1780,8 +1787,9 @@ final class AppModel {
     private func beginBackfillMonitorIfNeeded() {
         backfillMonitor?.cancel()
         guard currentSession?.hasPendingBackfill == true,
-              settingsStore.activeProviderSupportsRemoteTranscription,
-              settingsStore.isActiveProviderConfigured else { return }
+              !settingsStore.transcriptionUsesLocalWhisper,
+              settingsStore.transcriptionProviderPreset?.supportsRemoteTranscription != false,
+              settingsStore.isTranscriptionProviderConfigured else { return }
         let sessionID = currentSession?.id
         backfillMonitor = Task { [weak self] in
             var delay = 60.0
@@ -1789,8 +1797,8 @@ final class AppModel {
                 do { try await Task.sleep(for: .seconds(delay)) } catch { return }
                 guard let self, self.currentSession?.id == sessionID else { return }
                 do {
-                    let client = try self.providerClient()
-                    let service = BackfillService(client: client, model: self.settingsStore.activeTranscriptionModel, vocabulary: self.settingsStore.settings.customVocabulary, processor: self.processor)
+                    let client = try self.providerClient(for: .transcription)
+                    let service = BackfillService(client: client, model: self.settingsStore.transcriptionProviderModel, vocabulary: self.settingsStore.settings.customVocabulary, processor: self.processor)
                     try await service.checkAvailability()
                     guard !Task.isCancelled, !self.isBusy,
                           var session = self.currentSession, session.id == sessionID else { return }
@@ -1801,7 +1809,7 @@ final class AppModel {
                     self.showBackfillPrompt = true
                     await service.notifyAvailable(
                         sessionTitle: session.title,
-                        providerName: self.settingsStore.activeProviderName
+                        providerName: self.settingsStore.transcriptionProviderName
                     )
                     try? await self.persistCurrent()
                     return
@@ -1917,28 +1925,30 @@ final class AppModel {
         GeminiAPIClient(apiKeys: settingsStore.geminiAPIKeys, proxy: settingsStore.proxy)
     }
 
-    private func providerClient() throws -> GeminiAPIClient {
-        guard let endpoint = settingsStore.activeProviderEndpoint else {
+    private func providerClient(for role: ProviderRole) throws -> GeminiAPIClient {
+        let providerID = role == .transcription ? settingsStore.transcriptionProviderID : settingsStore.analysisProviderID
+        guard let endpoint = settingsStore.providerEndpoint(for: providerID) else {
             throw GeminiAPIError(
                 code: -1,
                 status: "PROVIDER_URL",
-                message: "Укажите корректный базовый URL активного провайдера",
+                message: "Укажите корректный базовый URL провайдера для выбранной задачи",
                 retryAfter: nil
             )
         }
-        if settingsStore.activeProviderRequiresAPIKey && settingsStore.activeProviderAPIKeys.isEmpty {
+        let apiKeys = settingsStore.providerAPIKeys(for: providerID)
+        if settingsStore.providerRequiresAPIKey(for: providerID) && apiKeys.isEmpty {
             throw GeminiAPIError(
                 code: 401,
                 status: "API_KEY",
-                message: "Укажите API key активного провайдера",
+                message: "Укажите API key выбранного провайдера",
                 retryAfter: nil
             )
         }
         return GeminiAPIClient(
-            apiKeys: settingsStore.activeProviderAPIKeys,
+            apiKeys: apiKeys,
             proxy: settingsStore.proxy,
             baseURL: endpoint,
-            transport: settingsStore.activeProviderTransport
+            transport: settingsStore.providerTransport(for: providerID)
         )
     }
 
