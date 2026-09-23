@@ -351,7 +351,8 @@ actor GeminiAPIClient {
                     var body: [String: Any] = [
                         "model": model,
                         "messages": [["role": "user", "content": prompt]],
-                        "temperature": 0.2
+                        "temperature": 0.2,
+                        "stream": false
                     ]
                     if responseSchema != nil {
                         body["response_format"] = ["type": "json_object"]
@@ -717,6 +718,14 @@ actor GeminiAPIClient {
     }
 
     private func extractText(_ data: Data, transport: ProviderTransport) throws -> String {
+        if transport == .openAICompatible,
+           let streamText = String(data: data, encoding: .utf8),
+           streamText.contains("data:") {
+            if let text = Self.extractServerSentEventText(from: streamText) {
+                return text
+            }
+        }
+
         let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
         if transport == .gemini {
@@ -764,6 +773,34 @@ actor GeminiAPIClient {
         }
         let message = transport == .gemini ? "Gemini вернул пустой ответ" : "Провайдер вернул пустой ответ"
         throw GeminiAPIError(code: -1, status: "EMPTY", message: message, retryAfter: nil)
+    }
+
+    private static func extractServerSentEventText(from stream: String) -> String? {
+        var output = ""
+
+        for line in stream.split(whereSeparator: \.isNewline) {
+            let rawLine = String(line)
+            guard rawLine.hasPrefix("data:") else { continue }
+            let payload = rawLine.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard payload != "[DONE]",
+                  let data = payload.data(using: .utf8),
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = root["choices"] as? [[String: Any]],
+                  let choice = choices.first else { continue }
+
+            if let delta = choice["delta"] as? [String: Any],
+               let content = delta["content"] as? String {
+                output += content
+            } else if let message = choice["message"] as? [String: Any],
+                      let content = message["content"] as? String {
+                output += content
+            } else if let content = choice["text"] as? String {
+                output += content
+            }
+        }
+
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : output
     }
 
     private func parseRetryDelay(_ message: String) -> TimeInterval? {
