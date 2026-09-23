@@ -255,10 +255,47 @@ actor LectureAnalysisService {
             "required": ["title", "subject", "confidence", "alternatives", "tags", "keyConcepts", "reminders", "summary"]
         ]
 
-        let text = try await generateText(prompt: prompt, responseSchema: schema, onStatus: onStatus)
+        let text: String
+        do {
+            text = try await generateText(prompt: prompt, responseSchema: schema, onStatus: onStatus)
+        } catch let structuredError {
+            await onStatus?("Структурированный ответ не получен — запрашиваем обычный текст, чтобы продолжить…")
+            let fallbackPrompt = """
+            Ты оформляешь краткий конспект русской лекции для базы знаний Obsidian.
+            Сохрани только факты из расшифровки: тему, определения, правила, важные примеры и выводы.
+            Верни связный Markdown без JSON, вступления и комментариев о своей работе.
+
+            РАСШИФРОВКА:
+            \(sampleTranscript)
+            """
+
+            do {
+                let fallbackSummary = try await generateText(
+                    prompt: fallbackPrompt,
+                    responseSchema: nil,
+                    onStatus: onStatus
+                )
+                let cleanedSummary = fallbackSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !cleanedSummary.isEmpty else { throw structuredError }
+                return MetadataEnvelope(
+                    title: "Лекция",
+                    subject: "Не определено",
+                    confidence: 0,
+                    alternatives: [],
+                    tags: ["лекция"],
+                    keyConcepts: [],
+                    reminders: [],
+                    summary: cleanedSummary
+                )
+            } catch {
+                throw structuredError
+            }
+        }
+
         do {
             return try JSONDecoder().decode(MetadataEnvelope.self, from: Data(text.utf8))
         } catch {
+            let plainSummary = text.trimmingCharacters(in: .whitespacesAndNewlines)
             return MetadataEnvelope(
                 title: "Лекция (\(subjects.first ?? "Новая"))",
                 subject: subjects.first ?? "Не определено",
@@ -267,7 +304,7 @@ actor LectureAnalysisService {
                 tags: ["лекция"],
                 keyConcepts: [],
                 reminders: [],
-                summary: "Конспект лекции."
+                summary: plainSummary.isEmpty ? "Конспект лекции." : plainSummary
             )
         }
     }

@@ -1482,7 +1482,7 @@ final class AppModel {
         }
         processingProgress = 1
         if let analysisError {
-            statusMessage = "Расшифровка сохранена, но конспект не создан: \(analysisError)"
+            statusMessage = "Расшифровка сохранена. Конспект можно создать отдельно: \(analysisError)"
         } else {
             statusMessage = "Конспект обновлён"
         }
