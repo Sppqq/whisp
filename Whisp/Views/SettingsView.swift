@@ -59,6 +59,7 @@ private enum ProviderQuickMode: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @Bindable var model: AppModel
     @Bindable var store: SettingsStore
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page: SettingsPage? = .provider
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -113,16 +114,28 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(appVersionLabel)
-                                .font(.caption.monospacedDigit().weight(.medium))
-                                .foregroundStyle(.secondary)
-                            if !testResult.isEmpty {
-                                Text(testResult)
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(isSuccessfulTestResult ? WhispPalette.success : .red)
-                                    .lineLimit(1)
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text(appVersionLabel)
+                                    .font(.caption.monospacedDigit().weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                if !testResult.isEmpty {
+                                    Text(testResult)
+                                        .font(.caption2.weight(.medium))
+                                        .foregroundStyle(isSuccessfulTestResult ? WhispPalette.success : .red)
+                                        .lineLimit(1)
+                                }
                             }
+
+                            Button {
+                                dismiss()
+                            } label: {
+                                Label("Закрыть", systemImage: "xmark")
+                            }
+                            .buttonStyle(.glass)
+                            .controlSize(.small)
+                            .help("Закрыть настройки")
+                            .accessibilityLabel("Закрыть настройки")
                         }
                     }
 
