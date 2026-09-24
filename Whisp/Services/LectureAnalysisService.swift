@@ -480,10 +480,48 @@ actor LectureAnalysisService {
             || normalizedResult.contains("я не могу")
             || normalizedResult.contains("не могу составить")
             || normalizedResult.contains("как языковая модель")
+        if !isBadResult,
+           transport != .gemini,
+           !Self.isGrounded(result, in: part.text) {
+            await onStatus?("Ответ кастомной модели не совпал с расшифровкой — сохраняем проверенный текст фрагмента.")
+            return Self.safeTranscriptFallback(from: part.text)
+        }
         guard isBadResult else { return result }
 
         await onStatus?("AI не увидел уже переданный фрагмент — сохраняем расшифровку без нового платного запроса.")
-        return part.text
+        return Self.safeTranscriptFallback(from: part.text)
+    }
+
+    private static func isGrounded(_ note: String, in transcript: String) -> Bool {
+        let sourceWords = Set(contentWords(transcript))
+        let noteWords = Set(contentWords(note))
+        guard noteWords.count >= 12 else { return true }
+        let overlap = noteWords.intersection(sourceWords).count
+        let required = min(12, max(5, noteWords.count / 20))
+        return overlap >= required
+    }
+
+    private static func contentWords(_ text: String) -> [String] {
+        text.lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { $0.count >= 5 }
+    }
+
+    private static func safeTranscriptFallback(from transcript: String) -> String {
+        let meaningfulLines = transcript
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { line in
+                let content = line.replacingOccurrences(
+                    of: #"^\[[^\]]+\]\s*[^:]+:\s*"#,
+                    with: "",
+                    options: .regularExpression
+                )
+                return content.count >= 35
+            }
+        guard meaningfulLines.count >= 3 else { return transcript }
+        return "## Расшифровка фрагмента\n\n" + meaningfulLines.joined(separator: "\n\n")
     }
 
     private func consolidateNotes(
