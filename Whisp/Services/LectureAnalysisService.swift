@@ -4,15 +4,18 @@ actor LectureAnalysisService {
     private let client: GeminiAPIClient
     private let model: String
     private let fallbackModels: [String]
+    private let transport: ProviderTransport
 
     init(
         client: GeminiAPIClient,
         model: String,
         fallbackModel: String? = nil,
-        fallbackModels: [String] = []
+        fallbackModels: [String] = [],
+        transport: ProviderTransport = .gemini
     ) {
         self.client = client
         self.model = model
+        self.transport = transport
         var candidates = fallbackModel.map { [$0] } ?? []
         candidates.append(contentsOf: fallbackModels)
         var seen = Set<String>()
@@ -123,7 +126,9 @@ actor LectureAnalysisService {
         // A single part is already a complete note. Sending it through a
         // second prompt only adds latency and can make context-compressing
         // OpenAI-compatible gateways replace the text with a retrieval hash.
-        let canConsolidate = generatedParts.count > 1 && combinedPartNotes.count <= 30_000
+        let canConsolidate = transport == .gemini
+            && generatedParts.count > 1
+            && combinedPartNotes.count <= 30_000
         if !canConsolidate {
             if generatedParts.count > 1 {
                 await onStatus?("Части длинные — сохраняем готовый конспект без повторной отправки текста…")
@@ -168,7 +173,10 @@ actor LectureAnalysisService {
             || normalized.contains("retrieve hash=")
             || normalized.contains("не отобразились части конспекта")
             || normalized.contains("пришлите текст частей")
+            || normalized.contains("пришлите части конспекта")
             || normalized.contains("не вижу текста частей")
+            || normalized.contains("их текст не отображается")
+            || normalized.contains("текст не отображается")
             || normalized.contains("пришлите, пожалуйста, полный текст")
             || normalized.contains("самого текста лекции нет")
             || normalized.contains("текста фрагмента лекции")
@@ -294,6 +302,10 @@ actor LectureAnalysisService {
         do {
             text = try await generateText(prompt: prompt, responseSchema: schema, onStatus: onStatus)
         } catch let structuredError {
+            if transport != .gemini {
+                await onStatus?("Кастомный провайдер не вернул JSON — не повторяем платный запрос, продолжаем без метаданных.")
+                return Self.neutralMetadata(subjects: subjects)
+            }
             await onStatus?("Структурированный ответ не получен — запрашиваем обычный текст, чтобы продолжить…")
             let fallbackPrompt = """
             Ты оформляешь краткий конспект русской лекции для базы знаний Obsidian.
@@ -446,20 +458,8 @@ actor LectureAnalysisService {
         let result = try await generateText(prompt: prompt, responseSchema: nil, onStatus: onStatus)
         guard Self.isRetrievalPlaceholder(result) else { return result }
 
-        await onStatus?("AI вернул просьбу прислать уже переданный фрагмент — повторяем его в коротком формате…")
-        let retryPrompt = """
-        Текст лекции уже полностью передан ниже. Не проси прислать его повторно и не пиши, что он отсутствует.
-        Верни только краткий конспект по фактам из текста: определения, тезисы, формулы и примеры. Без вступления и комментариев.
-
-        ТЕКСТ:
-        \(part.text)
-        """
-        let retry = try await generateText(prompt: retryPrompt, responseSchema: nil, onStatus: onStatus)
-        guard !Self.isRetrievalPlaceholder(retry) else {
-            await onStatus?("AI не смог прочитать этот фрагмент — сохраняем его расшифровку без искажений.")
-            return part.text
-        }
-        return retry
+        await onStatus?("AI не увидел уже переданный фрагмент — сохраняем расшифровку без нового платного запроса.")
+        return part.text
     }
 
     private func consolidateNotes(

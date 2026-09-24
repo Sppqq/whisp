@@ -320,7 +320,8 @@ actor GeminiAPIClient {
         allowKeyRotation: Bool = true,
         onStatus: (@Sendable (String) async -> Void)?
     ) async throws -> String {
-        let maxAttempts = max(1, maxAttemptsOverride ?? max(5, apiKeys.count * 3))
+        let defaultAttempts = transport == .gemini ? max(5, apiKeys.count * 3) : 1
+        let maxAttempts = max(1, maxAttemptsOverride ?? defaultAttempts)
         var lastError: Error?
 
         for attempt in 1...maxAttempts {
