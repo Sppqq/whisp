@@ -169,6 +169,12 @@ actor LectureAnalysisService {
             || normalized.contains("не отобразились части конспекта")
             || normalized.contains("пришлите текст частей")
             || normalized.contains("не вижу текста частей")
+            || normalized.contains("пришлите, пожалуйста, полный текст")
+            || normalized.contains("самого текста лекции нет")
+            || normalized.contains("текста фрагмента лекции")
+            || normalized.contains("запрос обрывается")
+            || normalized.contains("отметка о скрытом содержимом")
+            || normalized.contains("составить конспект по содержанию не получится")
     }
 
     private func partitionSegments(_ segments: [TranscriptSegment]) -> [LecturePart] {
@@ -306,6 +312,10 @@ actor LectureAnalysisService {
                 )
                 let cleanedSummary = fallbackSummary.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !cleanedSummary.isEmpty else { throw structuredError }
+                if Self.isRetrievalPlaceholder(cleanedSummary) {
+                    await onStatus?("AI вернул служебную просьбу вместо метаданных — продолжаем с нейтральными данными.")
+                    return Self.neutralMetadata(subjects: subjects)
+                }
                 return MetadataEnvelope(
                     title: "Лекция",
                     subject: "Не определено",
@@ -321,8 +331,14 @@ actor LectureAnalysisService {
             }
         }
 
+        if Self.isRetrievalPlaceholder(text) {
+            await onStatus?("AI вернул служебный ответ вместо метаданных — продолжаем с нейтральными данными.")
+            return Self.neutralMetadata(subjects: subjects)
+        }
+
         do {
-            return try JSONDecoder().decode(MetadataEnvelope.self, from: Data(text.utf8))
+            let cleanedJSON = Self.extractJSONObject(from: text) ?? text
+            return try JSONDecoder().decode(MetadataEnvelope.self, from: Data(cleanedJSON.utf8))
         } catch {
             let plainSummary = text.trimmingCharacters(in: .whitespacesAndNewlines)
             return MetadataEnvelope(
@@ -336,6 +352,47 @@ actor LectureAnalysisService {
                 summary: plainSummary.isEmpty ? "Конспект лекции." : plainSummary
             )
         }
+    }
+
+    private static func neutralMetadata(subjects: [String]) -> MetadataEnvelope {
+        MetadataEnvelope(
+            title: "Лекция",
+            subject: "Не определено",
+            confidence: 0,
+            alternatives: Array(subjects.prefix(3)),
+            tags: ["лекция"],
+            keyConcepts: [],
+            reminders: [],
+            summary: "Конспект составлен по расшифровке лекции."
+        )
+    }
+
+    /// Custom OpenAI-compatible models often wrap valid JSON in a Markdown
+    /// fence or add one short sentence before it. Keep that useful response
+    /// instead of demoting it to a plain-text summary.
+    private static func extractJSONObject(from text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("{") && trimmed.hasSuffix("}") { return trimmed }
+        guard let start = trimmed.firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for index in trimmed[start...].indices {
+            let character = trimmed[index]
+            if inString {
+                if escaped { escaped = false }
+                else if character == "\\" { escaped = true }
+                else if character == "\"" { inString = false }
+                continue
+            }
+            if character == "\"" { inString = true }
+            else if character == "{" { depth += 1 }
+            else if character == "}" {
+                depth -= 1
+                if depth == 0 { return String(trimmed[start...index]) }
+            }
+        }
+        return nil
     }
 
     private func generatePartNotes(
@@ -386,7 +443,23 @@ actor LectureAnalysisService {
         \(part.text)
         """
 
-        return try await generateText(prompt: prompt, responseSchema: nil, onStatus: onStatus)
+        let result = try await generateText(prompt: prompt, responseSchema: nil, onStatus: onStatus)
+        guard Self.isRetrievalPlaceholder(result) else { return result }
+
+        await onStatus?("AI вернул просьбу прислать уже переданный фрагмент — повторяем его в коротком формате…")
+        let retryPrompt = """
+        Текст лекции уже полностью передан ниже. Не проси прислать его повторно и не пиши, что он отсутствует.
+        Верни только краткий конспект по фактам из текста: определения, тезисы, формулы и примеры. Без вступления и комментариев.
+
+        ТЕКСТ:
+        \(part.text)
+        """
+        let retry = try await generateText(prompt: retryPrompt, responseSchema: nil, onStatus: onStatus)
+        guard !Self.isRetrievalPlaceholder(retry) else {
+            await onStatus?("AI не смог прочитать этот фрагмент — сохраняем его расшифровку без искажений.")
+            return part.text
+        }
+        return retry
     }
 
     private func consolidateNotes(
