@@ -4,15 +4,24 @@ actor LectureAnalysisService {
     private let client: GeminiAPIClient
     private let model: String
     private let fallbackModels: [String]
+    private let transport: ProviderTransport
+    private let jevClient: JevAPIClient?
+    private let jevConfiguration: JevConfiguration?
 
     init(
         client: GeminiAPIClient,
         model: String,
         fallbackModel: String? = nil,
-        fallbackModels: [String] = []
+        fallbackModels: [String] = [],
+        transport: ProviderTransport = .gemini,
+        jevClient: JevAPIClient? = nil,
+        jevConfiguration: JevConfiguration? = nil
     ) {
         self.client = client
         self.model = model
+        self.transport = transport
+        self.jevClient = jevClient
+        self.jevConfiguration = jevConfiguration
         var candidates = fallbackModel.map { [$0] } ?? []
         candidates.append(contentsOf: fallbackModels)
         var seen = Set<String>()
@@ -72,9 +81,23 @@ actor LectureAnalysisService {
             "[\(WhispFormatting.timestamp($0.start))] \($0.speaker.map { "\($0): " } ?? "")\($0.text)"
         }.joined(separator: "\n")
 
+        await onStatus?(
+            "Передаём в AI расшифровку: \(sortedSegments.count) фрагментов, \(fullTranscript.count) символов…"
+        )
+
         // 1. Быстрый этап метаданных (название, предмет, теги, краткая суть)
         await onStatus?("Определяем тему и предмет через \(model)...")
-        let metadata = try await extractMetadata(transcript: fullTranscript, subjects: subjects, onStatus: onStatus)
+        var metadata = try await extractMetadata(transcript: fullTranscript, subjects: subjects, onStatus: onStatus)
+        if let jevClient, let jevConfiguration {
+            metadata = await applyJevClassification(
+                metadata,
+                transcript: fullTranscript,
+                subjects: subjects,
+                configuration: jevConfiguration,
+                client: jevClient,
+                onStatus: onStatus
+            )
+        }
         let reminders = (metadata.reminders ?? []).filter { !$0.isInClassAssessmentInstruction }
 
         var partialResult = AnalysisResult(
@@ -115,23 +138,41 @@ actor LectureAnalysisService {
         }
 
         let combinedPartNotes = generatedParts.joined(separator: "\n\n")
-        await onStatus?("Собираем части в единый конспект через \(model)...")
-
         let consolidatedNotes: String
-        do {
-            consolidatedNotes = try await consolidateNotes(
-                title: metadata.title,
-                subject: metadata.subject,
-                summary: metadata.summary,
-                parts: generatedParts,
-                onStatus: onStatus
-            )
-        } catch {
-            // The progressive parts are already useful. If the editorial pass
-            // fails, keep them instead of turning a successful analysis into an
-            // empty note.
-            await onStatus?("Финальная сборка не удалась — сохраняем готовые части конспекта.")
+        // A single part is already a complete note. Sending it through a
+        // second prompt only adds latency and can make context-compressing
+        // OpenAI-compatible gateways replace the text with a retrieval hash.
+        let canConsolidate = transport == .gemini
+            && generatedParts.count > 1
+            && combinedPartNotes.count <= 30_000
+        if !canConsolidate {
+            if generatedParts.count > 1 {
+                await onStatus?("Части длинные — сохраняем готовый конспект без повторной отправки текста…")
+            }
             consolidatedNotes = combinedPartNotes
+        } else {
+            await onStatus?("Собираем части в единый конспект через \(model)...")
+            do {
+                let candidate = try await consolidateNotes(
+                    title: metadata.title,
+                    subject: metadata.subject,
+                    summary: metadata.summary,
+                    parts: generatedParts,
+                    onStatus: onStatus
+                )
+                if Self.isRetrievalPlaceholder(candidate) {
+                    await onStatus?("AI вернул ссылку на скрытый контекст — сохраняем исходные части конспекта.")
+                    consolidatedNotes = combinedPartNotes
+                } else {
+                    consolidatedNotes = candidate
+                }
+            } catch {
+                // The progressive parts are already useful. If the editorial
+                // pass fails, keep them instead of turning a successful
+                // analysis into an empty note.
+                await onStatus?("Финальная сборка не удалась — сохраняем готовые части конспекта.")
+                consolidatedNotes = combinedPartNotes
+            }
         }
 
         let formattedNotes = WhispFormatting.formatMarkdownNotes(consolidatedNotes)
@@ -140,6 +181,75 @@ actor LectureAnalysisService {
 
         await onStatus?("Конспект готов")
         return partialResult
+    }
+
+    private func applyJevClassification(
+        _ metadata: MetadataEnvelope,
+        transcript: String,
+        subjects: [String],
+        configuration: JevConfiguration,
+        client: JevAPIClient,
+        onStatus: (@Sendable (String) async -> Void)?
+    ) async -> MetadataEnvelope {
+        guard configuration.isEnabled,
+              configuration.classifySubject || configuration.checkEducationalContent else { return metadata }
+        await onStatus?("Проверяем предмет и учебность через Jev…")
+        do {
+            let result = try await client.classify(
+                transcript: transcript,
+                subjects: subjects,
+                checkEducationalContent: configuration.checkEducationalContent
+            )
+            var updated = metadata
+            let threshold = configuration.confidenceThreshold
+            if configuration.classifySubject,
+               let subject = result.subject,
+               result.subjectConfidence >= threshold {
+                updated.subject = subject
+                updated.confidence = result.subjectConfidence
+                updated.alternatives = Array(
+                    ([metadata.subject] + (metadata.alternatives ?? []))
+                        .filter { $0 != subject }
+                        .prefix(3)
+                )
+            }
+            if configuration.checkEducationalContent,
+               let educationalProbability = result.educationalProbability,
+               educationalProbability < 0.35 {
+                updated.subject = "Не определено"
+                updated.confidence = min(updated.confidence, 0.35)
+                await onStatus?("Jev не нашёл устойчивого учебного содержания — предмет оставлен неопределённым.")
+            }
+            return updated
+        } catch {
+            await onStatus?("Jev-классификация недоступна — продолжаем с основной моделью.")
+            return metadata
+        }
+    }
+
+    private static func isRetrievalPlaceholder(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+        return normalized.contains("ccr retrieve")
+            || normalized.contains("retrieve hash=")
+            || normalized.contains("не отобразились части конспекта")
+            || normalized.contains("пришлите текст частей")
+            || normalized.contains("пришлите части конспекта")
+            || normalized.contains("не вижу текста частей")
+            || normalized.contains("их текст не отображается")
+            || normalized.contains("текст не отображается")
+            || normalized.contains("пришлите, пожалуйста, полный текст")
+            || normalized.contains("самого текста лекции нет")
+            || normalized.contains("текста фрагмента лекции")
+            || normalized.contains("запрос обрывается")
+            || normalized.contains("отметка о скрытом содержимом")
+            || normalized.contains("составить конспект по содержанию не получится")
+            || normalized.contains("текст фрагмента лекции не предоставлен")
+            || normalized.contains("текст лекции не предоставлен")
+            || normalized.contains("материал фрагмента лекции не предоставлен")
+            || normalized.contains("за указанный интервал не предоставлен")
+            || normalized.contains("конспект составить нельзя")
+            || normalized.contains("без выдуманных сведений нельзя")
+            || normalized.contains("данные для обработки отсутствуют")
     }
 
     private func partitionSegments(_ segments: [TranscriptSegment]) -> [LecturePart] {
@@ -218,23 +328,38 @@ actor LectureAnalysisService {
             sampleTranscript = transcript
         }
 
-        let prompt = """
-        Ты анализируешь расшифровку русской лекции для базы знаний Obsidian.
-        Выбери наиболее подходящий предмет из списка: \(subjects.joined(separator: ", ")).
+        let prompt: String
+        if transport == .gemini {
+            prompt = """
+            Ты анализируешь расшифровку русской лекции для базы знаний Obsidian.
+            Выбери наиболее подходящий предмет из списка: \(subjects.joined(separator: ", ")).
 
-        Верни строго JSON со следующими ключами:
-        - title: точное, ёмкое и понятное название темы лекции (без кавычек и дат)
-        - subject: предмет из предложенного списка (или самый точный школьный/университетский предмет)
-        - confidence: число от 0.0 до 1.0 (степень уверенности в определении предмета)
-        - alternatives: массив до 3 альтернативных предметов
-        - tags: массив из 3-6 тегов для Obsidian (например: ["лекция", "математика", "интегралы"])
-        - keyConcepts: массив из 3-7 ключевых понятий и терминов для графа связей Obsidian (например: ["Определенный интеграл", "Формула Ньютона-Лейбница"])
-        - reminders: массив до 5 конкретных поручений, которые студент должен выполнить ДО будущего урока. Только то, что реально сказано в расшифровке: сделать дома, выучить, прочитать, принести, подготовить или отдельно напомнить преподавателю. Не добавляй общие советы и не выдумывай задания. НЕ добавляй действия, которые выполняются прямо во время проверочной, контрольной, самостоятельной, теста, зачёта или экзамена (например, «решить минимум 4 задания на проверочной»), а также описание формата такой работы. Если сомневаешься, лучше не создавай напоминание. У каждого элемента короткий title (до 60 символов), подробные notes без воды и dueHint — дословная формулировка срока из лекции (например, «в следующую среду», «на следующей неделе», «через 1 урок»); если срока нет, пустая строка
-        - summary: краткая суть лекции (1-2 ёмких абзаца без воды)
+            Верни строго JSON со следующими ключами:
+            - title: точное, ёмкое и понятное название темы лекции (без кавычек и дат)
+            - subject: предмет из предложенного списка (или самый точный школьный/университетский предмет)
+            - confidence: число от 0.0 до 1.0
+            - alternatives: массив до 3 альтернативных предметов
+            - tags: массив из 3-6 тегов для Obsidian
+            - keyConcepts: массив из 3-7 ключевых понятий
+            - reminders: только реальные задания из лекции, до 5 элементов; если их нет, пустой массив
+            - summary: краткая суть лекции (1-2 ёмких абзаца без воды)
 
-        РАСШИФРОВКА:
-        \(sampleTranscript)
-        """
+            НАЧАЛО ИСХОДНОГО ТЕКСТА
+            \(sampleTranscript)
+            КОНЕЦ ИСХОДНОГО ТЕКСТА
+            """
+        } else {
+            prompt = """
+            НАЧАЛО ИСХОДНОГО ТЕКСТА
+            \(sampleTranscript)
+            КОНЕЦ ИСХОДНОГО ТЕКСТА
+
+            ЗАДАНИЕ: верни только один JSON-объект без Markdown и пояснений.
+            Поля: title, subject, confidence, alternatives, tags, keyConcepts, reminders, summary.
+            Предмет выбери из списка: \(subjects.joined(separator: ", ")).
+            Текст уже предоставлен. Не проси прислать его снова.
+            """
+        }
 
         let schema: [String: Any] = [
             "type": "OBJECT",
@@ -255,10 +380,70 @@ actor LectureAnalysisService {
             "required": ["title", "subject", "confidence", "alternatives", "tags", "keyConcepts", "reminders", "summary"]
         ]
 
-        let text = try await generateText(prompt: prompt, responseSchema: schema, onStatus: onStatus)
+        let text: String
         do {
-            return try JSONDecoder().decode(MetadataEnvelope.self, from: Data(text.utf8))
+            text = try await generateText(prompt: prompt, responseSchema: schema, onStatus: onStatus)
+        } catch let structuredError {
+            if transport != .gemini {
+                await onStatus?("Кастомный провайдер не вернул JSON — не повторяем платный запрос, продолжаем без метаданных.")
+                return Self.neutralMetadata(subjects: subjects)
+            }
+            await onStatus?("Структурированный ответ не получен — запрашиваем обычный текст, чтобы продолжить…")
+            let fallbackPrompt = """
+            Ты оформляешь краткий конспект русской лекции для базы знаний Obsidian.
+            Сохрани только факты из расшифровки: тему, определения, правила, важные примеры и выводы.
+            Верни связный Markdown без JSON, вступления и комментариев о своей работе.
+
+            РАСШИФРОВКА:
+            \(sampleTranscript)
+            """
+
+            do {
+                let fallbackSummary = try await generateText(
+                    prompt: fallbackPrompt,
+                    responseSchema: nil,
+                    onStatus: onStatus
+                )
+                let cleanedSummary = fallbackSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !cleanedSummary.isEmpty else { throw structuredError }
+                if Self.isRetrievalPlaceholder(cleanedSummary) {
+                    await onStatus?("AI вернул служебную просьбу вместо метаданных — продолжаем с нейтральными данными.")
+                    return Self.neutralMetadata(subjects: subjects)
+                }
+                return MetadataEnvelope(
+                    title: "Лекция",
+                    subject: "Не определено",
+                    confidence: 0,
+                    alternatives: [],
+                    tags: ["лекция"],
+                    keyConcepts: [],
+                    reminders: [],
+                    summary: cleanedSummary
+                )
+            } catch {
+                throw structuredError
+            }
+        }
+
+        if Self.isRetrievalPlaceholder(text) {
+            await onStatus?("AI вернул служебный ответ вместо метаданных — продолжаем с нейтральными данными.")
+            return Self.neutralMetadata(subjects: subjects)
+        }
+
+        do {
+            let cleanedJSON = Self.extractJSONObject(from: text) ?? text
+            let metadata = try JSONDecoder().decode(MetadataEnvelope.self, from: Data(cleanedJSON.utf8))
+            if Self.isRetrievalPlaceholder(metadata.title) || Self.isRetrievalPlaceholder(metadata.summary) {
+                await onStatus?("AI вернул метаданные об отсутствии текста — сохраняем нейтральные метаданные.")
+                return Self.neutralMetadata(subjects: subjects)
+            }
+            return metadata
         } catch {
+            if transport != .gemini {
+                await onStatus?("Кастомный провайдер вернул не JSON, а обычный текст — не сохраняем его как метаданные.")
+                return Self.neutralMetadata(subjects: subjects)
+            }
+            let plainSummary = text.trimmingCharacters(in: .whitespacesAndNewlines)
             return MetadataEnvelope(
                 title: "Лекция (\(subjects.first ?? "Новая"))",
                 subject: subjects.first ?? "Не определено",
@@ -267,9 +452,50 @@ actor LectureAnalysisService {
                 tags: ["лекция"],
                 keyConcepts: [],
                 reminders: [],
-                summary: "Конспект лекции."
+                summary: plainSummary.isEmpty ? "Конспект лекции." : plainSummary
             )
         }
+    }
+
+    private static func neutralMetadata(subjects: [String]) -> MetadataEnvelope {
+        MetadataEnvelope(
+            title: "Лекция",
+            subject: "Не определено",
+            confidence: 0,
+            alternatives: Array(subjects.prefix(3)),
+            tags: ["лекция"],
+            keyConcepts: [],
+            reminders: [],
+            summary: "Конспект составлен по расшифровке лекции."
+        )
+    }
+
+    /// Custom OpenAI-compatible models often wrap valid JSON in a Markdown
+    /// fence or add one short sentence before it. Keep that useful response
+    /// instead of demoting it to a plain-text summary.
+    private static func extractJSONObject(from text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("{") && trimmed.hasSuffix("}") { return trimmed }
+        guard let start = trimmed.firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for index in trimmed[start...].indices {
+            let character = trimmed[index]
+            if inString {
+                if escaped { escaped = false }
+                else if character == "\\" { escaped = true }
+                else if character == "\"" { inString = false }
+                continue
+            }
+            if character == "\"" { inString = true }
+            else if character == "{" { depth += 1 }
+            else if character == "}" {
+                depth -= 1
+                if depth == 0 { return String(trimmed[start...index]) }
+            }
+        }
+        return nil
     }
 
     private func generatePartNotes(
@@ -282,45 +508,86 @@ actor LectureAnalysisService {
             ? "часть \(part.index) из \(part.total) (интервал: \(part.timeRange))"
             : "вся лекция"
 
-        let prompt = """
-        Ты оформляешь конспект русской лекции для базы знаний Obsidian.
-        Тема всей лекции: «\(title)». Предмет: \(subject).
-        Текущий фрагмент: \(partInfo).
+        let prompt: String
+        if transport == .gemini {
+            prompt = """
+            Ты оформляешь конспект русской лекции для базы знаний Obsidian.
+            Тема всей лекции: «\(title)». Предмет: \(subject).
+            Текущий фрагмент: \(partInfo).
+            Синтезируй конспект, а не расшифровку.
+            Не переписывай строки исходника, таймкоды, номера спикеров и диалоги дословно.
+            Объедини близкие мысли в 3–8 смысловых пунктов, убери приветствия, бытовой шум, повторы и обрывки.
+            Сохрани только определения, правила, задания, формулы, примеры и выводы.
+            Если во фрагменте нет учебного содержания, напиши одну строку: «Содержательного материала нет».
+            Верни только Markdown-конспект без вступления и мета-комментариев. Формулы оформляй в LaTeX.
+            НАЧАЛО ИСХОДНОГО ТЕКСТА
+            \(part.text)
+            КОНЕЦ ИСХОДНОГО ТЕКСТА
+            """
+        } else {
+            prompt = """
+            НАЧАЛО ИСХОДНОГО ТЕКСТА
+            \(part.text)
+            КОНЕЦ ИСХОДНОГО ТЕКСТА
 
-        Сгенерируй полноценный конспект для СТУДЕНЧЕСКОЙ ТЕТРАДИ («ПОД ЗАПИСЬ»).
-        Представь, что ты внимательный студент-отличник, который пишет конспект в тетрадь ручкой прямо на паре.
+            ЗАДАНИЕ: составь короткий аккуратный конспект русской лекции для студента.
+            Тема: «\(title)». Предмет: \(subject). Фрагмент: \(partInfo).
+            Синтезируй содержание, не переписывай исходник. Не включай таймкоды, номера спикеров и реплики дословно.
+            Удали бытовой шум, повторы и обрывки; оставь 3–8 смысловых пунктов, определения, задания, формулы, примеры и выводы.
+            Если учебного содержания нет, напиши одну строку: «Содержательного материала нет».
+            Верни только Markdown: заголовки, определения, тезисы, списки, формулы и примеры.
+            Текст уже предоставлен. Не проси прислать его снова и не пиши, что он отсутствует.
+            """
+        }
 
-        КРИТИЧЕСКИЕ ТРЕБОВАНИЯ ДЛЯ ТЕТРАДИ:
-        - АБСОЛЮТНО НИКАКОЙ ВОДЫ И МЕТА-ТЕКСТА: категорически запрещено писать «Лектор объяснил», «Преподаватель поприветствовал», «Студенты спросили», «В ходе пары обсуждалось», «В этой части рассматривается».
-        - Пиши строго то, что диктуется или пишется на доске:
-          * Заголовок темы или раздела (## ...)
-          * **Определения и правила** (чёткие формулировки под диктовку)
-          * **Классификации и алгоритмы** (аккуратными списками)
-          * **Формулы и дроби** (строго в красивом LaTeX формате, см. правила ниже)
-          * **Примеры решений с пошаговыми выкладками**
-          * **NB! / Важно к экзамену**
-        - Ключевые термины оборачивай в вики-ссылки Obsidian: [[Термин]] или [[Термин|склонение]].
+        let result = try await generateText(prompt: prompt, responseSchema: nil, onStatus: onStatus)
+        let normalizedResult = result.lowercased()
+        let isBadResult = Self.isRetrievalPlaceholder(result)
+            || normalizedResult.contains("я не могу")
+            || normalizedResult.contains("не могу составить")
+            || normalizedResult.contains("как языковая модель")
+        if !isBadResult,
+           transport != .gemini,
+           !Self.isGrounded(result, in: part.text) {
+            await onStatus?("Ответ кастомной модели не совпал с расшифровкой — сохраняем проверенный текст фрагмента.")
+            return Self.safeTranscriptFallback(from: part.text)
+        }
+        guard isBadResult else { return result }
 
-        КРИТИЧЕСКИЕ ПРАВИЛА ОФОРМЛЕНИЯ МАТЕМАТИКИ И ФОРМУЛ (LATEX ДЛЯ OBSIDIAN):
-        - Obsidian идеально поддерживает LaTeX! Все математические формулы, дроби, уравнения, системы и матрицы оформляй СТРОГО в LaTeX:
-          * ДРОБИ: пиши ТОЛЬКО через `\\frac{числитель}{знаменатель}`. Категорически запрещено писать дроби косой чертой типа `5/2`!
-          * ОПРЕДЕЛИТЕЛИ И МАТРИЦЫ: пиши через `\\begin{vmatrix} ... \\end{vmatrix}` или `\\begin{pmatrix} ... \\end{pmatrix}`.
-          * СИСТЕМЫ УРАВНЕНИЙ: пиши через `\\begin{cases} ... \\end{cases}`.
-          * ЗНАКИ: используй `\\cdot` для умножения (не пиши `*`), `\\pm`, `\\ne`, `\\Delta`, `\\sqrt{...}`, `\\in`.
-          * Крупные формулы выноси в отдельные блоки `$$ ... $$` с пустой строкой до и после. Короткие формулы в тексте оборачивай в одинарные доллары `$ ... $`.
+        await onStatus?("AI не увидел уже переданный фрагмент — сохраняем расшифровку без нового платного запроса.")
+        return Self.safeTranscriptFallback(from: part.text)
+    }
 
-        КРИТИЧЕСКИЕ ПРАВИЛА ВЁРСТКИ (MARKDOWN):
-        - Каждый пункт списка (начинающийся с *, - или 1., 2.) ОБЯЗАТЕЛЬНО должен начинаться с НОВОЙ СТРОКИ.
-        - Перед каждым заголовком (## или ###) делай пустую строку.
-        - Разделяй смысловые блоки пустой строкой (\\n\\n).
+    private static func isGrounded(_ note: String, in transcript: String) -> Bool {
+        let sourceWords = Set(contentWords(transcript))
+        let noteWords = Set(contentWords(note))
+        guard noteWords.count >= 12 else { return true }
+        let overlap = noteWords.intersection(sourceWords).count
+        let required = min(12, max(5, noteWords.count / 20))
+        return overlap >= required
+    }
 
-        Верни только готовый текст Markdown без вступительных и заключительных комментариев от себя.
+    private static func contentWords(_ text: String) -> [String] {
+        text.lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { $0.count >= 5 }
+    }
 
-        РАСШИФРОВКА ЭТОГО ФРАГМЕНТА:
-        \(part.text)
-        """
-
-        return try await generateText(prompt: prompt, responseSchema: nil, onStatus: onStatus)
+    private static func safeTranscriptFallback(from transcript: String) -> String {
+        let meaningfulLines = transcript
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { line in
+                let content = line.replacingOccurrences(
+                    of: #"^\[[^\]]+\]\s*[^:]+:\s*"#,
+                    with: "",
+                    options: .regularExpression
+                )
+                return content.count >= 35
+            }
+        guard meaningfulLines.count >= 3 else { return transcript }
+        return "## Расшифровка фрагмента\n\n" + meaningfulLines.joined(separator: "\n\n")
     }
 
     private func consolidateNotes(
@@ -345,6 +612,8 @@ actor LectureAnalysisService {
         Правила финальной сборки:
         - Не добавляй факты, которых нет в исходных частях.
         - Удали повторы, дублирующиеся заголовки и обрывки фраз на границах частей.
+        - Синтезируй содержание; не переписывай исходные строки, таймкоды, номера спикеров и диалоги дословно.
+        - Удали бытовой шум и оставь только учебные темы, задания, определения, формулы, примеры и выводы.
         - Сохрани все важные определения, формулы, шаги решений, классификации и примеры.
         - Сохрани полезные LaTeX-формулы и wiki-ссылки Obsidian.
         - Выстрой материал в логичном порядке, чтобы текст читался как единый конспект, а не как склейка фрагментов.

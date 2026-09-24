@@ -69,6 +69,7 @@ targets:
       - path: Whisp/Models
       - path: Whisp/Utilities/Formatting.swift
       - path: Whisp/Services/GeminiAPIClient.swift
+      - path: Whisp/Services/JevAPIClient.swift
       - path: Whisp/Services/GeminiTranscriptionPayload.swift
       - path: Whisp/Services/KeychainStore.swift
       - path: Whisp/Services/LectureAnalysisService.swift

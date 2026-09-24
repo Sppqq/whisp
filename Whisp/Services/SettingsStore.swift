@@ -15,6 +15,7 @@ final class SettingsStore {
     private let decoder = JSONDecoder()
     private var cachedGeminiAPIKey = ""
     private var cachedGeminiAPIKeys: [String] = []
+    private var cachedJevAPIKey = ""
     private var cachedCustomProviderAPIKeys: [String: String] = [:]
     private(set) var secretStorageMode: SecretStorageMode
     var keyStatuses: [String: GeminiKeyStatus] = [:]
@@ -80,6 +81,8 @@ final class SettingsStore {
         cachedGeminiAPIKeys = cleaned
         cachedGeminiAPIKey = cachedGeminiAPIKeys.first ?? ""
 
+        cachedJevAPIKey = (try? keychain.get(.jevAPIKey, mode: loadedStorageMode)) ?? ""
+
         if let stored = try? keychain.get(.customProviderAPIKeys, mode: loadedStorageMode),
            let data = stored.data(using: .utf8),
            let decoded = try? decoder.decode([String: String].self, from: data) {
@@ -119,7 +122,123 @@ final class SettingsStore {
         }
     }
 
+    var jevAPIKey: String {
+        get { cachedJevAPIKey }
+        set {
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            cachedJevAPIKey = trimmed
+            try? keychain.set(trimmed, for: .jevAPIKey, mode: secretStorageMode)
+        }
+    }
+
+    var isJevClassificationConfigured: Bool {
+        settings.jev.isEnabled && !jevAPIKey.isEmpty
+    }
+
     var usesGemini: Bool { settings.activeProviderID == "gemini" }
+
+    var transcriptionProviderID: String {
+        get { settings.transcriptionProviderID }
+        set {
+            guard settings.transcriptionProviderID != newValue else { return }
+            var updated = settings
+            updated.transcriptionProviderID = newValue
+            settings = updated
+        }
+    }
+
+    var analysisProviderID: String {
+        get { settings.analysisProviderID }
+        set {
+            guard settings.analysisProviderID != newValue else { return }
+            var updated = settings
+            updated.analysisProviderID = newValue
+            updated.activeProviderID = newValue
+            settings = updated
+        }
+    }
+
+    var transcriptionUsesLocalWhisper: Bool {
+        transcriptionProviderID == ProviderSelection.localWhisperID
+    }
+
+    var transcriptionProviderPreset: ProviderPreset? {
+        ProviderPreset(rawValue: transcriptionProviderID)
+    }
+
+    var analysisProviderPreset: ProviderPreset? {
+        ProviderPreset(rawValue: analysisProviderID)
+    }
+
+    func providerName(for providerID: String) -> String {
+        if providerID == ProviderSelection.localWhisperID { return "Локальный Whisper" }
+        if let preset = ProviderPreset(rawValue: providerID) { return preset.title }
+        return customProviders.first { $0.id.uuidString == providerID }?.name.nonEmpty ?? "Свой провайдер"
+    }
+
+    func providerConfiguration(for providerID: String) -> ProviderConfiguration? {
+        guard let preset = ProviderPreset(rawValue: providerID), preset != .gemini else { return nil }
+        return configuration(for: preset)
+    }
+
+    func providerEndpoint(for providerID: String) -> URL? {
+        if providerID == ProviderSelection.localWhisperID { return nil }
+        if let preset = ProviderPreset(rawValue: providerID) {
+            if preset == .gemini { return GeminiAPIClient.defaultBaseURL }
+            let value = configuration(for: preset).baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: value),
+                  let scheme = url.scheme?.lowercased(), ["https", "http"].contains(scheme),
+                  url.host != nil else { return nil }
+            return url
+        }
+        return customProviders.first { $0.id.uuidString == providerID }?.endpoint
+    }
+
+    func providerTransport(for providerID: String) -> ProviderTransport {
+        ProviderPreset(rawValue: providerID)?.transport ?? .gemini
+    }
+
+    func providerRequiresAPIKey(for providerID: String) -> Bool {
+        ProviderPreset(rawValue: providerID)?.requiresAPIKey
+            ?? customProviders.contains { $0.id.uuidString == providerID }
+    }
+
+    func providerAPIKeys(for providerID: String) -> [String] {
+        if providerID == "gemini" { return geminiAPIKeys }
+        let key = providerAPIKey(for: providerID)
+        return key.isEmpty ? [] : [key]
+    }
+
+    func providerModel(for role: ProviderRole) -> String {
+        let providerID = role == .transcription ? transcriptionProviderID : analysisProviderID
+        if providerID == ProviderSelection.localWhisperID { return "whisper.cpp" }
+        if let preset = ProviderPreset(rawValue: providerID) {
+            if preset == .gemini {
+                return role == .transcription ? settings.geminiModel : settings.analysisModel
+            }
+            let config = configuration(for: preset)
+            let selected = role == .transcription ? config.transcriptionModel : config.analysisModel
+            return selected.nonEmpty ?? (role == .transcription ? preset.defaultConfiguration.transcriptionModel : preset.defaultConfiguration.analysisModel)
+        }
+        if let provider = customProviders.first(where: { $0.id.uuidString == providerID }) {
+            let selected = role == .transcription ? provider.transcriptionModel : provider.analysisModel
+            return selected.nonEmpty ?? (role == .transcription ? settings.geminiModel : settings.analysisModel)
+        }
+        return role == .transcription ? settings.geminiModel : settings.analysisModel
+    }
+
+    func isProviderConfigured(_ providerID: String) -> Bool {
+        if providerID == ProviderSelection.localWhisperID { return true }
+        guard providerEndpoint(for: providerID) != nil else { return false }
+        return !providerRequiresAPIKey(for: providerID) || !providerAPIKeys(for: providerID).isEmpty
+    }
+
+    var transcriptionProviderName: String { providerName(for: transcriptionProviderID) }
+    var analysisProviderName: String { providerName(for: analysisProviderID) }
+    var transcriptionProviderModel: String { providerModel(for: .transcription) }
+    var analysisProviderModel: String { providerModel(for: .analysis) }
+    var isTranscriptionProviderConfigured: Bool { isProviderConfigured(transcriptionProviderID) }
+    var isAnalysisProviderConfigured: Bool { isProviderConfigured(analysisProviderID) }
 
     var activeProviderPreset: ProviderPreset? {
         ProviderPreset(rawValue: settings.activeProviderID)
@@ -130,8 +249,7 @@ final class SettingsStore {
     }
 
     var activeProviderName: String {
-        if let preset = activeProviderPreset { return preset.title }
-        return activeProvider.flatMap { $0.name.nonEmpty } ?? "Свой провайдер"
+        providerName(for: settings.activeProviderID)
     }
 
     var activeProviderAPIKeys: [String] {
@@ -146,32 +264,68 @@ final class SettingsStore {
     }
 
     var activeTranscriptionModel: String {
-        if let preset = activeProviderPreset {
-            if preset == .gemini { return settings.geminiModel }
-            return configuration(for: preset).transcriptionModel.nonEmpty ?? preset.defaultConfiguration.transcriptionModel
-        }
-        return activeProvider?.transcriptionModel.nonEmpty ?? settings.geminiModel
+        transcriptionProviderModel
     }
 
     var activeAnalysisModel: String {
-        if let preset = activeProviderPreset {
-            if preset == .gemini { return settings.analysisModel }
-            return configuration(for: preset).analysisModel.nonEmpty ?? preset.defaultConfiguration.analysisModel
-        }
-        return activeProvider?.analysisModel.nonEmpty ?? settings.analysisModel
+        analysisProviderModel
     }
 
     /// The default Gemini analysis chain steps down only after the current
     /// model exhausts its three-attempt failure budget.
     var activeAnalysisFallbackModels: [String] {
-        guard activeProviderTransport == .gemini,
-              activeAnalysisModel == GeminiAPIClient.defaultAnalysisModel else { return [] }
-        return GeminiAPIClient.defaultAnalysisFallbackModels
+        guard analysisProviderID == ProviderPreset.gemini.rawValue else { return [] }
+        let primary = activeAnalysisModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !primary.isEmpty else { return [] }
+        return settings.geminiAnalysisModels
+            .filter { $0.isEnabled }
+            .map { $0.model.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0 != primary }
     }
 
     /// Compatibility accessor for callers that still need the first fallback.
     var activeAnalysisFallbackModel: String? {
         activeAnalysisFallbackModels.first
+    }
+
+    func selectGeminiAnalysisModel(_ model: String) {
+        let cleaned = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        var updated = settings
+        if let index = updated.geminiAnalysisModels.firstIndex(where: { $0.model == cleaned }) {
+            var selected = updated.geminiAnalysisModels.remove(at: index)
+            selected.isEnabled = true
+            updated.geminiAnalysisModels.insert(selected, at: 0)
+        } else {
+            updated.geminiAnalysisModels.insert(GeminiAnalysisModelOption(model: cleaned), at: 0)
+        }
+        updated.analysisModel = cleaned
+        settings = updated
+        GeminiAPIClient.clearAnalysisModelPinForSettingsChange()
+    }
+
+    func setGeminiAnalysisModelEnabled(_ model: String, enabled: Bool) {
+        guard let index = settings.geminiAnalysisModels.firstIndex(where: { $0.model == model }) else { return }
+        var updated = settings
+        if !enabled && updated.analysisModel == model {
+            guard updated.geminiAnalysisModels.contains(where: { $0.model != model && $0.isEnabled }) else { return }
+            if let replacement = updated.geminiAnalysisModels.first(where: { $0.model != model && $0.isEnabled }) {
+                updated.analysisModel = replacement.model
+            }
+        }
+        updated.geminiAnalysisModels[index].isEnabled = enabled
+        settings = updated
+        GeminiAPIClient.clearAnalysisModelPinForSettingsChange()
+    }
+
+    func moveGeminiAnalysisModel(_ model: String, offset: Int) {
+        guard let index = settings.geminiAnalysisModels.firstIndex(where: { $0.model == model }) else { return }
+        let destination = index + offset
+        guard settings.geminiAnalysisModels.indices.contains(destination) else { return }
+        var updated = settings
+        updated.geminiAnalysisModels.swapAt(index, destination)
+        settings = updated
+        GeminiAPIClient.clearAnalysisModelPinForSettingsChange()
     }
 
     var activeProviderEndpoint: URL? {
@@ -195,7 +349,7 @@ final class SettingsStore {
         if let preset = activeProviderPreset {
             return preset.requiresAPIKey
         }
-        return false
+        return activeProvider != nil
     }
 
     var isActiveProviderConfigured: Bool {
@@ -282,6 +436,12 @@ final class SettingsStore {
         persist()
     }
 
+    func saveJevAPIKey(_ key: String) throws {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        try keychain.set(trimmed, for: .jevAPIKey, mode: secretStorageMode)
+        cachedJevAPIKey = trimmed
+    }
+
     func setSecretStorageMode(_ newMode: SecretStorageMode) throws {
         let previousMode = secretStorageMode
         guard newMode != previousMode else { return }
@@ -293,6 +453,7 @@ final class SettingsStore {
             .geminiAPIKeys: String(data: keysJSON, encoding: .utf8) ?? "[]",
             .geminiAPIKey: cachedGeminiAPIKey,
             .customProviderAPIKeys: String(data: customKeysJSON, encoding: .utf8) ?? "{}",
+            .jevAPIKey: cachedJevAPIKey,
             .proxyPassword: proxy.password,
             .proxyConfiguration: String(data: proxyJSON, encoding: .utf8) ?? "{}",
             .webDAVPassword: webDAV.password

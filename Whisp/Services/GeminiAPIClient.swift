@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 actor GeminiAPIClient {
     struct UploadedFile: Decodable, Sendable {
@@ -13,6 +14,17 @@ actor GeminiAPIClient {
     private var currentKeyIndex: Int = 0
     private let session: URLSession
     private let proxyDelegate: ProxyAuthenticationDelegate?
+    private static let analysisModelPinKey = "gemini.analysisModelPin.model"
+    private static let analysisModelPinExpiryKey = "gemini.analysisModelPin.expiry"
+    private static let analysisModelPinKeyFingerprintKey = "gemini.analysisModelPin.keyFingerprint"
+    private static let analysisModelPinDuration: TimeInterval = 60 * 60
+
+    private struct AnalysisModelPin: Sendable {
+        let model: String
+        let expiresAt: Date
+        let keyFingerprint: String?
+    }
+
     static let defaultBaseURL = URL(string: "https://generativelanguage.googleapis.com")!
     static let defaultAnalysisModel = "gemini-3.8-flash"
     static let defaultAnalysisFallbackModels = [
@@ -31,8 +43,17 @@ actor GeminiAPIClient {
         transport: ProviderTransport = .gemini
     ) {
         let cleaned = apiKeys.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let preferredKeyIndex: Int
+        if transport == .gemini,
+           let pin = Self.activeAnalysisModelPin(apiKeys: cleaned),
+           let fingerprint = pin.keyFingerprint,
+           let index = cleaned.firstIndex(where: { Self.keyFingerprint($0) == fingerprint }) {
+            preferredKeyIndex = index
+        } else {
+            preferredKeyIndex = 0
+        }
         self.apiKeys = cleaned.isEmpty ? [""] : cleaned
-        self.currentKeyIndex = 0
+        self.currentKeyIndex = preferredKeyIndex
         self.baseURL = baseURL
         self.transport = transport
         let proxyDelegate = ProxyTransport.authenticationDelegate(proxy: proxy)
@@ -208,15 +229,28 @@ actor GeminiAPIClient {
         responseSchema: [String: Any]? = nil,
         onStatus: (@Sendable (String) async -> Void)? = nil
     ) async throws -> String {
+        let canUseAnalysisModelPin = transport == .gemini && Self.supportsAnalysisModelPin(model)
+        let activePin = canUseAnalysisModelPin ? Self.activeAnalysisModelPin(apiKeys: apiKeys) : nil
+        let requestedModel = activePin?.model ?? model
+
+        if let activePin {
+            let minutesLeft = max(1, Int(ceil(activePin.expiresAt.timeIntervalSinceNow / 60)))
+            await onStatus?(
+                "Закреплена модель \(activePin.model) и рабочий ключ · ещё \(minutesLeft) мин."
+            )
+        }
+
         var requestedFallbackModels = fallbackModel.map { [$0] } ?? []
         requestedFallbackModels.append(contentsOf: fallbackModels)
 
-        var candidateModels = [model]
-        var seenModels = Set([model])
-        for candidate in requestedFallbackModels {
-            let cleaned = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleaned.isEmpty, seenModels.insert(cleaned).inserted else { continue }
-            candidateModels.append(cleaned)
+        var candidateModels = [requestedModel]
+        if activePin == nil {
+            var seenModels = Set([requestedModel])
+            for candidate in requestedFallbackModels {
+                let cleaned = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !cleaned.isEmpty, seenModels.insert(cleaned).inserted else { continue }
+                candidateModels.append(cleaned)
+            }
         }
 
         // A fallback chain deliberately gets a small, fixed failure budget per
@@ -228,13 +262,28 @@ actor GeminiAPIClient {
 
         for (index, candidateModel) in candidateModels.enumerated() {
             do {
-                return try await generateTextWithRetries(
+                let text = try await generateTextWithRetries(
                     prompt: prompt,
                     model: candidateModel,
                     responseSchema: responseSchema,
                     maxAttemptsOverride: maxAttemptsPerModel,
+                    // A pinned key is a preference, not a reason to keep
+                    // sending requests to a key that just failed. The retry
+                    // loop drops the pin on the first key failure and rotates
+                    // immediately when another key is available.
+                    allowKeyRotation: true,
+                    clearPinnedKeyOnFailure: activePin != nil,
                     onStatus: onStatus
                 )
+                if activePin == nil,
+                   canUseAnalysisModelPin,
+                   candidateModel != model {
+                    Self.pinAnalysisModel(candidateModel, key: currentAPIKey())
+                    await onStatus?(
+                        "Модель \(candidateModel) сработала. Закрепляем её и рабочий ключ на 1 час."
+                    )
+                }
+                return text
             } catch let error as GeminiAPIError {
                 lastError = error
                 let nextModel = candidateModels.indices.contains(index + 1)
@@ -273,10 +322,14 @@ actor GeminiAPIClient {
         model: String,
         responseSchema: [String: Any]?,
         maxAttemptsOverride: Int? = nil,
+        allowKeyRotation: Bool = true,
+        clearPinnedKeyOnFailure: Bool = false,
         onStatus: (@Sendable (String) async -> Void)?
     ) async throws -> String {
-        let maxAttempts = max(1, maxAttemptsOverride ?? max(5, apiKeys.count * 3))
+        let defaultAttempts = transport == .gemini ? max(5, apiKeys.count * 3) : 1
+        let maxAttempts = max(1, maxAttemptsOverride ?? defaultAttempts)
         var lastError: Error?
+        var shouldClearPinnedKey = clearPinnedKeyOnFailure
 
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
@@ -305,8 +358,15 @@ actor GeminiAPIClient {
                 case .openAICompatible:
                     var body: [String: Any] = [
                         "model": model,
-                        "messages": [["role": "user", "content": prompt]],
-                        "temperature": 0.2
+                        "messages": [
+                            [
+                                "role": "system",
+                                "content": "Ты редактор конспектов. В сообщении пользователя всегда есть исходный текст лекции. Используй его полностью. Никогда не утверждай, что текст не предоставлен, не проси прислать его снова и не описывай процесс работы. Не выдумывай факты."
+                            ],
+                            ["role": "user", "content": prompt]
+                        ],
+                        "temperature": 0.2,
+                        "stream": false
                     ]
                     if responseSchema != nil {
                         body["response_format"] = ["type": "json_object"]
@@ -322,17 +382,44 @@ actor GeminiAPIClient {
                     data = try await sendProviderJSON(body, path: "v1/messages", apiKeyOverride: key)
                 }
                 return try extractText(data, transport: transport)
-            } catch let error as GeminiAPIError where error.isRateLimitOrQuota {
+            } catch let error as GeminiAPIError where error.isRateLimitOrQuota ||
+                (shouldClearPinnedKey && (error.code == 401 || error.code == 403)) {
                 lastError = error
+                let pinnedKeyFailed = shouldClearPinnedKey
+                if pinnedKeyFailed {
+                    shouldClearPinnedKey = false
+                    Self.clearAnalysisModelPin()
+                    if error.code == 401 || error.code == 403 {
+                        await onStatus?(
+                            "Закреплённый ключ недействителен. Снимаем закрепление и переключаемся на следующий..."
+                        )
+                    } else {
+                        await onStatus?(
+                            "Закреплённый ключ ограничен. Снимаем закрепление и переключаемся на следующий..."
+                        )
+                    }
+                }
                 if attempt == maxAttempts { throw error }
 
-                if let rotation = rotateToNextKey() {
-                    await onStatus?("Лимит квоты на ключе #\(rotation.previousIndex). Переключаемся на ключ #\(rotation.index) из \(rotation.total)...")
+                if allowKeyRotation, let rotation = rotateToNextKey() {
+                    if error.code == 401 || error.code == 403 {
+                        await onStatus?("Переключаемся с ключа #\(rotation.previousIndex) на ключ #\(rotation.index) из \(rotation.total)...")
+                    } else {
+                        await onStatus?("Лимит квоты на ключе #\(rotation.previousIndex). Переключаемся на ключ #\(rotation.index) из \(rotation.total)...")
+                    }
                     try? await Task.sleep(for: .milliseconds(400))
                 } else {
                     let delay = max(3.0, (error.retryAfter ?? 10.0) + 1.0)
                     let delayFormatted = String(format: "%.1f", delay)
-                    await onStatus?("Превышен лимит запросов Google API. Ожидание \(delayFormatted) сек перед повтором...")
+                    if allowKeyRotation {
+                        if pinnedKeyFailed {
+                            await onStatus?("Закрепление снято, но другого ключа нет. Повторяем через \(delayFormatted) сек...")
+                        } else {
+                            await onStatus?("Превышен лимит запросов Google API. Ожидание \(delayFormatted) сек перед повтором...")
+                        }
+                    } else {
+                        await onStatus?("Закреплённый ключ временно ограничен. Повторяем на нём через \(delayFormatted) сек...")
+                    }
                     try await Task.sleep(for: .seconds(delay))
                 }
             }
@@ -361,6 +448,56 @@ actor GeminiAPIClient {
             message.contains("does not exist") ||
             message.contains("invalid")
         )
+    }
+
+    private static func supportsAnalysisModelPin(_ model: String) -> Bool {
+        let normalized = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.hasPrefix("gemini-")
+    }
+
+    private static func activeAnalysisModelPin(
+        apiKeys: [String],
+        now: Date = Date()
+    ) -> AnalysisModelPin? {
+        let defaults = UserDefaults.standard
+        guard let model = defaults.string(forKey: analysisModelPinKey),
+              !model.isEmpty,
+              let expiresAt = defaults.object(forKey: analysisModelPinExpiryKey) as? Date,
+              expiresAt > now else {
+            clearAnalysisModelPin()
+            return nil
+        }
+
+        let keyFingerprint = defaults.string(forKey: analysisModelPinKeyFingerprintKey)
+        if let keyFingerprint,
+           !apiKeys.contains(where: { Self.keyFingerprint($0) == keyFingerprint }) {
+            clearAnalysisModelPin()
+            return nil
+        }
+
+        return AnalysisModelPin(model: model, expiresAt: expiresAt, keyFingerprint: keyFingerprint)
+    }
+
+    private static func pinAnalysisModel(_ model: String, key: String, now: Date = Date()) {
+        let defaults = UserDefaults.standard
+        defaults.set(model, forKey: analysisModelPinKey)
+        defaults.set(now.addingTimeInterval(analysisModelPinDuration), forKey: analysisModelPinExpiryKey)
+        defaults.set(keyFingerprint(key), forKey: analysisModelPinKeyFingerprintKey)
+    }
+
+    private static func clearAnalysisModelPin() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: analysisModelPinKey)
+        defaults.removeObject(forKey: analysisModelPinExpiryKey)
+        defaults.removeObject(forKey: analysisModelPinKeyFingerprintKey)
+    }
+
+    static func clearAnalysisModelPinForSettingsChange() {
+        clearAnalysisModelPin()
+    }
+
+    private static func keyFingerprint(_ key: String) -> String {
+        SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     func transcribe(
@@ -622,6 +759,14 @@ actor GeminiAPIClient {
     }
 
     private func extractText(_ data: Data, transport: ProviderTransport) throws -> String {
+        if transport == .openAICompatible,
+           let streamText = String(data: data, encoding: .utf8),
+           streamText.contains("data:") {
+            if let text = Self.extractServerSentEventText(from: streamText) {
+                return text
+            }
+        }
+
         let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
         if transport == .gemini {
@@ -669,6 +814,34 @@ actor GeminiAPIClient {
         }
         let message = transport == .gemini ? "Gemini вернул пустой ответ" : "Провайдер вернул пустой ответ"
         throw GeminiAPIError(code: -1, status: "EMPTY", message: message, retryAfter: nil)
+    }
+
+    private static func extractServerSentEventText(from stream: String) -> String? {
+        var output = ""
+
+        for line in stream.split(whereSeparator: \.isNewline) {
+            let rawLine = String(line)
+            guard rawLine.hasPrefix("data:") else { continue }
+            let payload = rawLine.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard payload != "[DONE]",
+                  let data = payload.data(using: .utf8),
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = root["choices"] as? [[String: Any]],
+                  let choice = choices.first else { continue }
+
+            if let delta = choice["delta"] as? [String: Any],
+               let content = delta["content"] as? String {
+                output += content
+            } else if let message = choice["message"] as? [String: Any],
+                      let content = message["content"] as? String {
+                output += content
+            } else if let content = choice["text"] as? String {
+                output += content
+            }
+        }
+
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : output
     }
 
     private func parseRetryDelay(_ message: String) -> TimeInterval? {

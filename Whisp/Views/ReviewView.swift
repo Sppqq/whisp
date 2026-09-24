@@ -265,10 +265,10 @@ struct ReviewView: View {
                             HStack {
                                 Image(systemName: "sparkles")
                                     .foregroundStyle(WhispPalette.accent)
-                                Text(model.currentSession?.analysis == nil ? "Конспект ещё не создан или возникла ошибка." : "Можно перегенерировать конспект через новую модель.")
+                                Text(model.currentSession?.analysis == nil ? "Расшифровка сохранена. Можно создать только конспект." : "Можно перегенерировать конспект через новую модель.")
                                     .font(.caption)
                                 Spacer()
-                                Button("Сгенерировать конспекты") {
+                                Button("Создать только конспект") {
                                     Task { await model.regenerateAnalysis(forceOverwriteNotes: true) }
                                 }
                                 .buttonStyle(.glassProminent)
@@ -292,10 +292,10 @@ struct ReviewView: View {
                             HStack {
                                 Image(systemName: "sparkles")
                                     .foregroundStyle(WhispPalette.accent)
-                                Text(model.currentSession?.analysis == nil ? "Конспект ещё не создан или возникла ошибка." : "Можно перегенерировать конспект через новую модель.")
+                                Text(model.currentSession?.analysis == nil ? "Расшифровка сохранена. Можно создать только конспект." : "Можно перегенерировать конспект через новую модель.")
                                     .font(.caption)
                                 Spacer()
-                                Button("Сгенерировать конспекты") {
+                                Button("Создать только конспект") {
                                     Task { await model.regenerateAnalysis(forceOverwriteNotes: true) }
                                 }
                                 .buttonStyle(.glassProminent)

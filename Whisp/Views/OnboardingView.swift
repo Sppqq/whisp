@@ -149,7 +149,7 @@ struct OnboardingView: View {
                     }
                 }
             } else {
-                Label("Активный провайдер: \(model.settingsStore.activeProviderName)", systemImage: "point.3.connected.trianglepath.dotted")
+                            Label("Расшифровка: \(model.settingsStore.transcriptionProviderName) · конспект: \(model.settingsStore.analysisProviderName)", systemImage: "point.3.connected.trianglepath.dotted")
                     .font(.callout)
                 Text("Для настройки этого провайдера откройте полные настройки после завершения онбординга.")
                     .font(.caption)

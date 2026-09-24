@@ -80,7 +80,7 @@ struct MainView: View {
         } message: {
             Text("В папке WebDAV «\(model.syncConflictPath)» появились изменения после последней синхронизации. Проверьте удалённую заметку перед перезаписью.")
         }
-        .alert("\(model.settingsStore.activeProviderName) снова доступен", isPresented: $model.showBackfillPrompt) {
+        .alert("\(model.settingsStore.transcriptionProviderName) снова доступен", isPresented: $model.showBackfillPrompt) {
             Button("Дорасшифровать сейчас") { Task { await model.backfillNow() } }
             Button("Напомнить позже") { model.deferBackfill() }
             Button("Оставить локальную версию", role: .destructive) { model.declineBackfill() }
@@ -787,7 +787,7 @@ struct BatchRegenerateSheet: View {
                 model.startBatchRegeneration(forceOverwrite: model.batchForceOverwrite)
             }
         } message: {
-            Text("Старые конспекты будут полностью заменены новыми текстами от \(model.settingsStore.activeProviderName), модель \(model.settingsStore.activeAnalysisModel).\n\nВы сможете остановить процесс в любой момент.")
+            Text("Старые конспекты будут полностью заменены новыми текстами от \(model.settingsStore.analysisProviderName), модель \(model.settingsStore.analysisProviderModel).\n\nВы сможете остановить процесс в любой момент.")
         }
     }
 
@@ -800,7 +800,7 @@ struct BatchRegenerateSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Внимание: перезапись конспектов")
                         .font(.subheadline.bold())
-                    Text("Конспекты (тетрадь и подробный разбор) для всех лекций будут заново созданы через \(model.settingsStore.activeProviderName) API. Аудиозаписи и расшифровки не пострадают.")
+                    Text("Конспекты (тетрадь и подробный разбор) для всех лекций будут заново созданы через \(model.settingsStore.analysisProviderName) API. Аудиозаписи и расшифровки не пострадают.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -811,7 +811,7 @@ struct BatchRegenerateSheet: View {
 
             HStack(spacing: 12) {
                 metricCard(title: "Найдено лекций", value: "\(eligibleSessions.count)", icon: "books.vertical")
-                metricCard(title: "Модель AI", value: model.settingsStore.activeAnalysisModel, icon: "cpu")
+                metricCard(title: "Модель AI", value: model.settingsStore.analysisProviderModel, icon: "cpu")
                 metricCard(title: "Оценка времени", value: "~ \(eligibleSessions.count * 6) сек", icon: "clock")
             }
 

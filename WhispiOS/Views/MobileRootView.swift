@@ -334,13 +334,13 @@ private struct MobileLectureActionBar: View {
         HStack(spacing: 0) {
             iconButton("arrow.triangle.2.circlepath", accessibilityLabel: "Синхронизировать с WebDAV") {
                 Task { await model.sync(session) }
-            }
+            } isDisabled: { model.isSyncingWebDAV || model.isProcessing || model.isImporting }
             Divider()
                 .frame(height: 24)
                 .opacity(0.45)
             iconButton("checklist", accessibilityLabel: "Добавить задания в Reminders") {
                 Task { await model.createReminders(for: session) }
-            }
+            } isDisabled: { model.isCreatingReminders || !session.createdReminderIDs.isEmpty || model.isProcessing || model.isImporting }
         }
         .padding(6)
         .background(.black.opacity(0.58), in: .capsule)
@@ -350,7 +350,12 @@ private struct MobileLectureActionBar: View {
         .animation(.snappy(duration: 0.25), value: session.id)
     }
 
-    private func iconButton(_ icon: String, accessibilityLabel: String, action: @escaping () -> Void) -> some View {
+    private func iconButton(
+        _ icon: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void,
+        isDisabled: @escaping () -> Bool = { false }
+    ) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.body.weight(.semibold))
@@ -359,6 +364,7 @@ private struct MobileLectureActionBar: View {
         .buttonStyle(.plain)
         .contentShape(.circle)
         .accessibilityLabel(accessibilityLabel)
+        .disabled(isDisabled())
         .contentTransition(.symbolEffect(.replace))
     }
 }

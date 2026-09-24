@@ -26,6 +26,8 @@ final class MobileAppModel {
     var isRecording = false
     var isProcessing = false
     var isImporting = false
+    var isSyncingWebDAV = false
+    var isCreatingReminders = false
     var processingProgress = ""
     var errorMessage: String?
     var searchQuery = ""
@@ -101,6 +103,7 @@ final class MobileAppModel {
             try await recorder.start(at: audioURL)
             try await store.save(session)
             sessions.insert(session, at: 0)
+            searchIndex.rebuild(sessions: sessions)
             selectedSessionID = session.id
             activeSessionID = session.id
             isRecording = true
@@ -155,6 +158,7 @@ final class MobileAppModel {
             session.importedAudioPath = destination.lastPathComponent
             try await store.save(session)
             sessions.insert(session, at: 0)
+            searchIndex.rebuild(sessions: sessions)
             selectedSessionID = session.id
             await process(sessionID: session.id, audioURL: destination)
         } catch {
@@ -289,18 +293,28 @@ final class MobileAppModel {
     }
 
     func sync(_ session: LectureSession) async {
+        guard !isSyncingWebDAV, !isRecording, !isProcessing, !isImporting else { return }
         guard !settingsStore.webDAV.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             errorMessage = "Настройте WebDAV в параметрах."
             return
         }
+        isSyncingWebDAV = true
+        defer { isSyncingWebDAV = false }
         do {
             processingProgress = "Синхронизация с WebDAV…"
             let directory = try await store.directory(for: session.id)
-            let path = try await WebDAVClient(configuration: settingsStore.webDAV).upload(session: session, localDirectory: directory)
+            let client = WebDAVClient(configuration: settingsStore.webDAV)
+            if try await client.hasRemoteConflict(for: session) {
+                errorMessage = "На WebDAV уже есть изменения. Сначала синхронизируйте их на Mac или выберите актуальную версию."
+                return
+            }
+            let path = try await client.upload(session: session, localDirectory: directory)
             var updated = session
             updated.remotePath = path
+            updated.remoteETag = try? await client.remoteETag(path: path)
             updated.syncedAt = Date()
             updated.status = .synced
+            updated.lastError = nil
             await update(updated)
             processingProgress = "Синхронизировано"
         } catch { errorMessage = error.localizedDescription }
@@ -377,10 +391,21 @@ final class MobileAppModel {
     }
 
     func createReminders(for session: LectureSession) async {
+        guard !isCreatingReminders else { return }
         guard settingsStore.settings.remindersEnabled, let drafts = session.analysis?.reminders, !drafts.isEmpty else {
             errorMessage = "Для этой лекции нет заданий для напоминаний."
             return
         }
+        guard session.createdReminderIDs.isEmpty else {
+            processingProgress = "Напоминания для этой лекции уже добавлены"
+            return
+        }
+        guard !settingsStore.settings.lessonSchedule.isEmpty else {
+            errorMessage = "Сначала добавьте расписание уроков в настройках."
+            return
+        }
+        isCreatingReminders = true
+        defer { isCreatingReminders = false }
         do {
             let ids = try await ReminderService().createReminders(
                 drafts: drafts,
@@ -389,13 +414,16 @@ final class MobileAppModel {
                 listIdentifier: settingsStore.settings.reminderListIdentifier
             )
             var updated = session
-            updated.createdReminderIDs.append(contentsOf: ids)
+            updated.createdReminderIDs = ids
             await update(updated)
             processingProgress = ids.isEmpty ? "Нет будущих сроков" : "Создано напоминаний: \(ids.count)"
         } catch { errorMessage = error.localizedDescription }
     }
 
     private func process(sessionID: UUID, audioURL: URL) async {
+        isProcessing = true
+        defer { isProcessing = false }
+
         if transcriptionMode == .local {
             await processLocally(sessionID: sessionID, audioURL: audioURL, originalError: MobileError.localMode)
             return
@@ -406,9 +434,7 @@ final class MobileAppModel {
             } else { fail(sessionID: sessionID, error: MobileError.missingAPIKey) }
             return
         }
-        isProcessing = true
         processingProgress = "Подготовка аудио…"
-        defer { isProcessing = false }
 
         do {
             let client = makeClient()
@@ -470,7 +496,25 @@ final class MobileAppModel {
             session.rawTranscript = segments
             session.finalTranscript = segments
             session.fallbackIntervals = []
-            session.lastError = "Обработано локальным Whisper после ошибки сети: \(originalError.localizedDescription)"
+            session.lastError = transcriptionMode == .automatic
+                ? "Обработано локальным Whisper после ошибки сети: \(originalError.localizedDescription)"
+                : nil
+
+            if transcriptionMode == .local {
+                // The local-only mode must not call the cloud analysis service.
+                // Keep the transcript usable immediately and leave the optional
+                // AI-generated notebook empty until the user chooses a cloud mode.
+                session.status = .review
+                let rendered = MarkdownExporter.render(session: session)
+                session.studentNotesMarkdown = rendered.studentNotebook
+                session.notesMarkdown = rendered.notes
+                session.finalMarkdown = rendered.final
+                session.rawMarkdown = rendered.raw
+                await update(session)
+                processingProgress = "Готово (локальный Whisper)"
+                return
+            }
+
             let client = makeClient()
             let service = LectureAnalysisService(client: client, model: settingsStore.activeAnalysisModel, fallbackModels: settingsStore.activeAnalysisFallbackModels)
             let analysis = try await service.analyze(segments: segments, subjects: settingsStore.settings.subjects.filter(\.isEnabled).map(\.name))
