@@ -72,6 +72,10 @@ actor LectureAnalysisService {
             "[\(WhispFormatting.timestamp($0.start))] \($0.speaker.map { "\($0): " } ?? "")\($0.text)"
         }.joined(separator: "\n")
 
+        await onStatus?(
+            "Передаём в AI расшифровку: \(sortedSegments.count) фрагментов, \(fullTranscript.count) символов…"
+        )
+
         // 1. Быстрый этап метаданных (название, предмет, теги, краткая суть)
         await onStatus?("Определяем тему и предмет через \(model)...")
         let metadata = try await extractMetadata(transcript: fullTranscript, subjects: subjects, onStatus: onStatus)
@@ -115,23 +119,39 @@ actor LectureAnalysisService {
         }
 
         let combinedPartNotes = generatedParts.joined(separator: "\n\n")
-        await onStatus?("Собираем части в единый конспект через \(model)...")
-
         let consolidatedNotes: String
-        do {
-            consolidatedNotes = try await consolidateNotes(
-                title: metadata.title,
-                subject: metadata.subject,
-                summary: metadata.summary,
-                parts: generatedParts,
-                onStatus: onStatus
-            )
-        } catch {
-            // The progressive parts are already useful. If the editorial pass
-            // fails, keep them instead of turning a successful analysis into an
-            // empty note.
-            await onStatus?("Финальная сборка не удалась — сохраняем готовые части конспекта.")
+        // A single part is already a complete note. Sending it through a
+        // second prompt only adds latency and can make context-compressing
+        // OpenAI-compatible gateways replace the text with a retrieval hash.
+        let canConsolidate = generatedParts.count > 1 && combinedPartNotes.count <= 30_000
+        if !canConsolidate {
+            if generatedParts.count > 1 {
+                await onStatus?("Части длинные — сохраняем готовый конспект без повторной отправки текста…")
+            }
             consolidatedNotes = combinedPartNotes
+        } else {
+            await onStatus?("Собираем части в единый конспект через \(model)...")
+            do {
+                let candidate = try await consolidateNotes(
+                    title: metadata.title,
+                    subject: metadata.subject,
+                    summary: metadata.summary,
+                    parts: generatedParts,
+                    onStatus: onStatus
+                )
+                if Self.isRetrievalPlaceholder(candidate) {
+                    await onStatus?("AI вернул ссылку на скрытый контекст — сохраняем исходные части конспекта.")
+                    consolidatedNotes = combinedPartNotes
+                } else {
+                    consolidatedNotes = candidate
+                }
+            } catch {
+                // The progressive parts are already useful. If the editorial
+                // pass fails, keep them instead of turning a successful
+                // analysis into an empty note.
+                await onStatus?("Финальная сборка не удалась — сохраняем готовые части конспекта.")
+                consolidatedNotes = combinedPartNotes
+            }
         }
 
         let formattedNotes = WhispFormatting.formatMarkdownNotes(consolidatedNotes)
@@ -140,6 +160,15 @@ actor LectureAnalysisService {
 
         await onStatus?("Конспект готов")
         return partialResult
+    }
+
+    private static func isRetrievalPlaceholder(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+        return normalized.contains("ccr retrieve")
+            || normalized.contains("retrieve hash=")
+            || normalized.contains("не отобразились части конспекта")
+            || normalized.contains("пришлите текст частей")
+            || normalized.contains("не вижу текста частей")
     }
 
     private func partitionSegments(_ segments: [TranscriptSegment]) -> [LecturePart] {
