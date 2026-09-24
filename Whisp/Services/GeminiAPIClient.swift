@@ -351,7 +351,13 @@ actor GeminiAPIClient {
                 case .openAICompatible:
                     var body: [String: Any] = [
                         "model": model,
-                        "messages": [["role": "user", "content": prompt]],
+                        "messages": [
+                            [
+                                "role": "system",
+                                "content": "Ты выполняешь задачу приложения. Используй только данные между тегами <transcript> и </transcript>. Не проси повторно уже переданный текст, не описывай процесс работы и не выдумывай отсутствующие факты."
+                            ],
+                            ["role": "user", "content": prompt]
+                        ],
                         "temperature": 0.2,
                         "stream": false
                     ]
