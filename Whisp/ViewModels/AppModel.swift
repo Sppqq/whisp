@@ -1135,6 +1135,27 @@ final class AppModel {
         }
     }
 
+    func testJevClassification() async -> String {
+        guard !settingsStore.jevAPIKey.isEmpty else { return "Добавьте ключ OpenRouter для Jev" }
+        do {
+            let client = JevAPIClient(
+                apiKey: settingsStore.jevAPIKey,
+                configuration: settingsStore.settings.jev,
+                proxy: settingsStore.proxy
+            )
+            let result = try await client.classify(
+                transcript: "Фрагмент урока: решаем квадратное уравнение и находим дискриминант.",
+                subjects: activeSubjects,
+                checkEducationalContent: true
+            )
+            let subject = result.subject ?? "Не определено"
+            let confidence = Int((result.subjectConfidence * 100).rounded())
+            return "Jev доступен · (subject), (confidence)%"
+        } catch {
+            return "Jev: (error.localizedDescription)"
+        }
+    }
+
     func testSingleGeminiKey(_ key: String) async -> GeminiKeyStatus {
         settingsStore.setKeyStatus(.checking, for: key)
         let client = geminiClient()
@@ -1357,11 +1378,20 @@ final class AppModel {
                     session.notesMarkdown = ""
                 }
 
+                let jevClient: JevAPIClient? = settingsStore.isJevClassificationConfigured
+                    ? JevAPIClient(
+                        apiKey: settingsStore.jevAPIKey,
+                        configuration: settingsStore.settings.jev,
+                        proxy: settingsStore.proxy
+                    )
+                    : nil
                 let analysis = try await LectureAnalysisService(
                     client: try providerClient(for: .analysis),
                     model: settingsStore.analysisProviderModel,
                     fallbackModels: settingsStore.activeAnalysisFallbackModels,
-                    transport: settingsStore.providerTransport(for: settingsStore.analysisProviderID)
+                    transport: settingsStore.providerTransport(for: settingsStore.analysisProviderID),
+                    jevClient: jevClient,
+                    jevConfiguration: settingsStore.isJevClassificationConfigured ? settingsStore.settings.jev : nil
                 )
                     .analyze(
                         segments: session.finalTranscript,

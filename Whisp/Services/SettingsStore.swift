@@ -15,6 +15,7 @@ final class SettingsStore {
     private let decoder = JSONDecoder()
     private var cachedGeminiAPIKey = ""
     private var cachedGeminiAPIKeys: [String] = []
+    private var cachedJevAPIKey = ""
     private var cachedCustomProviderAPIKeys: [String: String] = [:]
     private(set) var secretStorageMode: SecretStorageMode
     var keyStatuses: [String: GeminiKeyStatus] = [:]
@@ -80,6 +81,8 @@ final class SettingsStore {
         cachedGeminiAPIKeys = cleaned
         cachedGeminiAPIKey = cachedGeminiAPIKeys.first ?? ""
 
+        cachedJevAPIKey = (try? keychain.get(.jevAPIKey, mode: loadedStorageMode)) ?? ""
+
         if let stored = try? keychain.get(.customProviderAPIKeys, mode: loadedStorageMode),
            let data = stored.data(using: .utf8),
            let decoded = try? decoder.decode([String: String].self, from: data) {
@@ -117,6 +120,19 @@ final class SettingsStore {
             }
             geminiAPIKeys = updated
         }
+    }
+
+    var jevAPIKey: String {
+        get { cachedJevAPIKey }
+        set {
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            cachedJevAPIKey = trimmed
+            try? keychain.set(trimmed, for: .jevAPIKey, mode: secretStorageMode)
+        }
+    }
+
+    var isJevClassificationConfigured: Bool {
+        settings.jev.isEnabled && !jevAPIKey.isEmpty
     }
 
     var usesGemini: Bool { settings.activeProviderID == "gemini" }
@@ -420,6 +436,12 @@ final class SettingsStore {
         persist()
     }
 
+    func saveJevAPIKey(_ key: String) throws {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        try keychain.set(trimmed, for: .jevAPIKey, mode: secretStorageMode)
+        cachedJevAPIKey = trimmed
+    }
+
     func setSecretStorageMode(_ newMode: SecretStorageMode) throws {
         let previousMode = secretStorageMode
         guard newMode != previousMode else { return }
@@ -431,6 +453,7 @@ final class SettingsStore {
             .geminiAPIKeys: String(data: keysJSON, encoding: .utf8) ?? "[]",
             .geminiAPIKey: cachedGeminiAPIKey,
             .customProviderAPIKeys: String(data: customKeysJSON, encoding: .utf8) ?? "{}",
+            .jevAPIKey: cachedJevAPIKey,
             .proxyPassword: proxy.password,
             .proxyConfiguration: String(data: proxyJSON, encoding: .utf8) ?? "{}",
             .webDAVPassword: webDAV.password

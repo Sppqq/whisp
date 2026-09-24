@@ -65,6 +65,7 @@ struct SettingsView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var geminiKey = ""
     @State private var geminiKeys: [String] = []
+    @State private var jevAPIKey = ""
     @State private var newKey = ""
     @State private var showBatchPaste = false
     @State private var batchKeysText = ""
@@ -78,6 +79,7 @@ struct SettingsView: View {
     @State private var isTestingAll = false
     @State private var showProviderDetails = false
     @State private var showGeminiDetails = false
+    @State private var showJevDetails = false
     @State private var showCustomProviderDetails = false
     @State private var remindersAccessStatus = ""
     @State private var reminderLists: [ReminderService.ReminderListOption] = []
@@ -154,6 +156,7 @@ struct SettingsView: View {
             columnVisibility = .all
             geminiKeys = store.geminiAPIKeys
             geminiKey = store.geminiAPIKey
+            jevAPIKey = store.jevAPIKey
             customProviders = store.customProviders
             customProviderKeys = Dictionary(uniqueKeysWithValues: store.customProviders.map { ($0.id.uuidString, store.customProviderAPIKey(for: $0)) })
             providerConfigurations = Dictionary(uniqueKeysWithValues: ProviderPreset.allCases
@@ -334,6 +337,18 @@ struct SettingsView: View {
             .padding(19)
             .whispGlassPanel(cornerRadius: WhispMetrics.surfaceCornerRadius)
 
+            DisclosureGroup(isExpanded: $showJevDetails) {
+                jevSettingsContent
+            } label: {
+                Label("Jev-классификация", systemImage: "checklist")
+                    .font(.headline)
+                Text(store.isJevClassificationConfigured ? "Включена · отдельный ключ OpenRouter" : "Не настроена")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(19)
+            .whispGlassPanel(cornerRadius: WhispMetrics.surfaceCornerRadius)
+
             DisclosureGroup(isExpanded: $showCustomProviderDetails) {
                 customProvidersContent
             } label: {
@@ -348,6 +363,60 @@ struct SettingsView: View {
 
             SettingsCard(title: "Прокси", caption: "Используется для удалённых провайдеров. WebDAV идёт напрямую.", icon: "network") {
                 proxySettingsContent
+            }
+        }
+    }
+
+    @ViewBuilder private var jevSettingsContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Jev работает отдельно от модели конспекта: она делает быстрые структурированные решения, а текст и конспект по-прежнему создаёт выбранная базовая модель.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            SecureField("Отдельный OpenRouter API key для Jev", text: $jevAPIKey)
+                .whispGlassField()
+
+            Toggle("Использовать Jev для определения предмета", isOn: $store.settings.jev.classifySubject)
+            Toggle("Проверять, есть ли учебное содержание", isOn: $store.settings.jev.checkEducationalContent)
+            Toggle("Включить Jev", isOn: $store.settings.jev.isEnabled)
+
+            HStack {
+                Text("Уверенность для замены предмета")
+                    .font(.caption)
+                Slider(value: $store.settings.jev.confidenceThreshold, in: 0.5...0.95, step: 0.05)
+                Text("\(Int((store.settings.jev.confidenceThreshold * 100).rounded()))%")
+                    .font(.caption.monospacedDigit())
+                    .frame(width: 38, alignment: .trailing)
+            }
+
+            HStack(spacing: 10) {
+                TextField("Модель Jev", text: $store.settings.jev.model)
+                    .whispGlassField()
+                Text("~typesafe/jev-latest")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("Запросы идут через OpenRouter Decisions API. Ключ хранится отдельно от ключей Gemini и других провайдеров.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Button("Сохранить ключ Jev") { saveJevAPIKey() }
+                    .buttonStyle(.glassProminent)
+                Button {
+                    saveJevAPIKey()
+                    Task {
+                        isTestingAll = true
+                        testResult = await model.testJevClassification()
+                        isTestingAll = false
+                    }
+                } label: {
+                    Label(isTestingAll ? "Проверяем…" : "Проверить Jev", systemImage: "checkmark.shield")
+                }
+                .buttonStyle(.glass)
+                .disabled(isTestingAll || jevAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
     }
@@ -1361,6 +1430,17 @@ struct SettingsView: View {
             testResult = count > 1 ? "Сохранено (\(count) ключей)" : "Сохранено в Keychain"
             invalidateGeminiStatus()
         } catch { testResult = error.localizedDescription }
+    }
+
+    private func saveJevAPIKey() {
+        do {
+            try store.saveJevAPIKey(jevAPIKey)
+            testResult = jevAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Ключ Jev удалён"
+                : "Ключ Jev сохранён отдельно"
+        } catch {
+            testResult = error.localizedDescription
+        }
     }
 
     private func saveCustomProviders() {

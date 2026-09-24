@@ -5,17 +5,23 @@ actor LectureAnalysisService {
     private let model: String
     private let fallbackModels: [String]
     private let transport: ProviderTransport
+    private let jevClient: JevAPIClient?
+    private let jevConfiguration: JevConfiguration?
 
     init(
         client: GeminiAPIClient,
         model: String,
         fallbackModel: String? = nil,
         fallbackModels: [String] = [],
-        transport: ProviderTransport = .gemini
+        transport: ProviderTransport = .gemini,
+        jevClient: JevAPIClient? = nil,
+        jevConfiguration: JevConfiguration? = nil
     ) {
         self.client = client
         self.model = model
         self.transport = transport
+        self.jevClient = jevClient
+        self.jevConfiguration = jevConfiguration
         var candidates = fallbackModel.map { [$0] } ?? []
         candidates.append(contentsOf: fallbackModels)
         var seen = Set<String>()
@@ -81,7 +87,17 @@ actor LectureAnalysisService {
 
         // 1. Быстрый этап метаданных (название, предмет, теги, краткая суть)
         await onStatus?("Определяем тему и предмет через \(model)...")
-        let metadata = try await extractMetadata(transcript: fullTranscript, subjects: subjects, onStatus: onStatus)
+        var metadata = try await extractMetadata(transcript: fullTranscript, subjects: subjects, onStatus: onStatus)
+        if let jevClient, let jevConfiguration {
+            metadata = await applyJevClassification(
+                metadata,
+                transcript: fullTranscript,
+                subjects: subjects,
+                configuration: jevConfiguration,
+                client: jevClient,
+                onStatus: onStatus
+            )
+        }
         let reminders = (metadata.reminders ?? []).filter { !$0.isInClassAssessmentInstruction }
 
         var partialResult = AnalysisResult(
@@ -165,6 +181,50 @@ actor LectureAnalysisService {
 
         await onStatus?("Конспект готов")
         return partialResult
+    }
+
+    private func applyJevClassification(
+        _ metadata: MetadataEnvelope,
+        transcript: String,
+        subjects: [String],
+        configuration: JevConfiguration,
+        client: JevAPIClient,
+        onStatus: (@Sendable (String) async -> Void)?
+    ) async -> MetadataEnvelope {
+        guard configuration.isEnabled,
+              configuration.classifySubject || configuration.checkEducationalContent else { return metadata }
+        await onStatus?("Проверяем предмет и учебность через Jev…")
+        do {
+            let result = try await client.classify(
+                transcript: transcript,
+                subjects: subjects,
+                checkEducationalContent: configuration.checkEducationalContent
+            )
+            var updated = metadata
+            let threshold = configuration.confidenceThreshold
+            if configuration.classifySubject,
+               let subject = result.subject,
+               result.subjectConfidence >= threshold {
+                updated.subject = subject
+                updated.confidence = result.subjectConfidence
+                updated.alternatives = Array(
+                    ([metadata.subject] + (metadata.alternatives ?? []))
+                        .filter { $0 != subject }
+                        .prefix(3)
+                )
+            }
+            if configuration.checkEducationalContent,
+               let educationalProbability = result.educationalProbability,
+               educationalProbability < 0.35 {
+                updated.subject = "Не определено"
+                updated.confidence = min(updated.confidence, 0.35)
+                await onStatus?("Jev не нашёл устойчивого учебного содержания — предмет оставлен неопределённым.")
+            }
+            return updated
+        } catch {
+            await onStatus?("Jev-классификация недоступна — продолжаем с основной моделью.")
+            return metadata
+        }
     }
 
     private static func isRetrievalPlaceholder(_ text: String) -> Bool {

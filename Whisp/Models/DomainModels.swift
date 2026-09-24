@@ -555,6 +555,15 @@ struct GeminiAnalysisModelOption: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+struct JevConfiguration: Codable, Hashable, Sendable {
+    var isEnabled = true
+    var classifySubject = true
+    var checkEducationalContent = true
+    var model = "~typesafe/jev-latest"
+    var endpoint = "https://openrouter.ai/api/alpha/decisions"
+    var confidenceThreshold = 0.65
+}
+
 enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     case gemini
     case openAI = "openai"
@@ -688,6 +697,7 @@ struct WhispSettings: Codable, Sendable {
     var geminiLiveModel = "gemini-3.5-transcribe-live"
     var analysisModel = "gemini-3.8-flash"
     var geminiAnalysisModels = Self.defaultGeminiAnalysisModels
+    var jev = JevConfiguration()
     /// `gemini` remains the default provider for new installations.
     var activeProviderID = "gemini"
     /// Provider used to turn recorded audio into timestamped text. Older
@@ -705,7 +715,7 @@ struct WhispSettings: Codable, Sendable {
     var reminderListIdentifier: String?
 
     private enum CodingKeys: String, CodingKey {
-        case subjects, customVocabulary, localRetentionDays, geminiModel, geminiLiveModel, analysisModel, geminiAnalysisModels
+        case subjects, customVocabulary, localRetentionDays, geminiModel, geminiLiveModel, analysisModel, geminiAnalysisModels, jev
         case activeProviderID, transcriptionProviderID, analysisProviderID, providerConfigurations, hotkeyRecord, hotkeyFinish, preferredMicrophoneID, appearance, lessonSchedule, remindersEnabled, reminderListIdentifier
     }
 
@@ -726,6 +736,7 @@ struct WhispSettings: Codable, Sendable {
         if !geminiAnalysisModels.contains(where: { $0.model == analysisModel }) {
             geminiAnalysisModels.insert(GeminiAnalysisModelOption(model: analysisModel), at: 0)
         }
+        jev = try values.decodeIfPresent(JevConfiguration.self, forKey: .jev) ?? JevConfiguration()
         activeProviderID = try values.decodeIfPresent(String.self, forKey: .activeProviderID) ?? "gemini"
         transcriptionProviderID = try values.decodeIfPresent(String.self, forKey: .transcriptionProviderID) ?? activeProviderID
         analysisProviderID = try values.decodeIfPresent(String.self, forKey: .analysisProviderID) ?? activeProviderID
