@@ -183,6 +183,13 @@ actor LectureAnalysisService {
             || normalized.contains("запрос обрывается")
             || normalized.contains("отметка о скрытом содержимом")
             || normalized.contains("составить конспект по содержанию не получится")
+            || normalized.contains("текст фрагмента лекции не предоставлен")
+            || normalized.contains("текст лекции не предоставлен")
+            || normalized.contains("материал фрагмента лекции не предоставлен")
+            || normalized.contains("за указанный интервал не предоставлен")
+            || normalized.contains("конспект составить нельзя")
+            || normalized.contains("без выдуманных сведений нельзя")
+            || normalized.contains("данные для обработки отсутствуют")
     }
 
     private func partitionSegments(_ segments: [TranscriptSegment]) -> [LecturePart] {
@@ -277,20 +284,20 @@ actor LectureAnalysisService {
             - reminders: только реальные задания из лекции, до 5 элементов; если их нет, пустой массив
             - summary: краткая суть лекции (1-2 ёмких абзаца без воды)
 
-            <transcript>
+            НАЧАЛО ИСХОДНОГО ТЕКСТА
             \(sampleTranscript)
-            </transcript>
+            КОНЕЦ ИСХОДНОГО ТЕКСТА
             """
         } else {
             prompt = """
-            Верни только один JSON-объект без Markdown и пояснений.
+            НАЧАЛО ИСХОДНОГО ТЕКСТА
+            \(sampleTranscript)
+            КОНЕЦ ИСХОДНОГО ТЕКСТА
+
+            ЗАДАНИЕ: верни только один JSON-объект без Markdown и пояснений.
             Поля: title, subject, confidence, alternatives, tags, keyConcepts, reminders, summary.
             Предмет выбери из списка: \(subjects.joined(separator: ", ")).
-            Не пиши просьбы прислать текст: текст уже находится ниже.
-
-            <transcript>
-            \(sampleTranscript)
-            </transcript>
+            Текст уже предоставлен. Не проси прислать его снова.
             """
         }
 
@@ -365,7 +372,12 @@ actor LectureAnalysisService {
 
         do {
             let cleanedJSON = Self.extractJSONObject(from: text) ?? text
-            return try JSONDecoder().decode(MetadataEnvelope.self, from: Data(cleanedJSON.utf8))
+            let metadata = try JSONDecoder().decode(MetadataEnvelope.self, from: Data(cleanedJSON.utf8))
+            if Self.isRetrievalPlaceholder(metadata.title) || Self.isRetrievalPlaceholder(metadata.summary) {
+                await onStatus?("AI вернул метаданные об отсутствии текста — сохраняем нейтральные метаданные.")
+                return Self.neutralMetadata(subjects: subjects)
+            }
+            return metadata
         } catch {
             if transport != .gemini {
                 await onStatus?("Кастомный провайдер вернул не JSON, а обычный текст — не сохраняем его как метаданные.")
@@ -445,20 +457,20 @@ actor LectureAnalysisService {
             Верни только Markdown-конспект без вступления и мета-комментариев.
             Сохрани определения, тезисы, списки, формулы и примеры. Формулы оформляй в LaTeX.
             Не пиши «пришлите текст», «текст отсутствует» или «модель не видит текст».
-            <transcript>
+            НАЧАЛО ИСХОДНОГО ТЕКСТА
             \(part.text)
-            </transcript>
+            КОНЕЦ ИСХОДНОГО ТЕКСТА
             """
         } else {
             prompt = """
-            Составь короткий аккуратный конспект русской лекции для студента.
-            Тема: «\(title)». Предмет: \(subject). Фрагмент: \(partInfo).
-            Используй только факты из текста. Не пиши «пришлите текст», «текст отсутствует», «модель не видит текст» и не описывай свою работу.
-            Верни только Markdown: заголовки, определения, тезисы, списки, формулы и примеры.
-
-            <transcript>
+            НАЧАЛО ИСХОДНОГО ТЕКСТА
             \(part.text)
-            </transcript>
+            КОНЕЦ ИСХОДНОГО ТЕКСТА
+
+            ЗАДАНИЕ: составь короткий аккуратный конспект русской лекции для студента.
+            Тема: «\(title)». Предмет: \(subject). Фрагмент: \(partInfo).
+            Используй только факты из текста. Верни только Markdown: заголовки, определения, тезисы, списки, формулы и примеры.
+            Текст уже предоставлен. Не проси прислать его снова и не пиши, что он отсутствует.
             """
         }
 
