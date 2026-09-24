@@ -267,7 +267,12 @@ actor GeminiAPIClient {
                     model: candidateModel,
                     responseSchema: responseSchema,
                     maxAttemptsOverride: maxAttemptsPerModel,
-                    allowKeyRotation: activePin == nil,
+                    // A pinned key is a preference, not a reason to keep
+                    // sending requests to a key that just failed. The retry
+                    // loop drops the pin on the first key failure and rotates
+                    // immediately when another key is available.
+                    allowKeyRotation: true,
+                    clearPinnedKeyOnFailure: activePin != nil,
                     onStatus: onStatus
                 )
                 if activePin == nil,
@@ -318,11 +323,13 @@ actor GeminiAPIClient {
         responseSchema: [String: Any]?,
         maxAttemptsOverride: Int? = nil,
         allowKeyRotation: Bool = true,
+        clearPinnedKeyOnFailure: Bool = false,
         onStatus: (@Sendable (String) async -> Void)?
     ) async throws -> String {
         let defaultAttempts = transport == .gemini ? max(5, apiKeys.count * 3) : 1
         let maxAttempts = max(1, maxAttemptsOverride ?? defaultAttempts)
         var lastError: Error?
+        var shouldClearPinnedKey = clearPinnedKeyOnFailure
 
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
@@ -375,18 +382,41 @@ actor GeminiAPIClient {
                     data = try await sendProviderJSON(body, path: "v1/messages", apiKeyOverride: key)
                 }
                 return try extractText(data, transport: transport)
-            } catch let error as GeminiAPIError where error.isRateLimitOrQuota {
+            } catch let error as GeminiAPIError where error.isRateLimitOrQuota ||
+                (shouldClearPinnedKey && (error.code == 401 || error.code == 403)) {
                 lastError = error
+                let pinnedKeyFailed = shouldClearPinnedKey
+                if pinnedKeyFailed {
+                    shouldClearPinnedKey = false
+                    Self.clearAnalysisModelPin()
+                    if error.code == 401 || error.code == 403 {
+                        await onStatus?(
+                            "Закреплённый ключ недействителен. Снимаем закрепление и переключаемся на следующий..."
+                        )
+                    } else {
+                        await onStatus?(
+                            "Закреплённый ключ ограничен. Снимаем закрепление и переключаемся на следующий..."
+                        )
+                    }
+                }
                 if attempt == maxAttempts { throw error }
 
                 if allowKeyRotation, let rotation = rotateToNextKey() {
-                    await onStatus?("Лимит квоты на ключе #\(rotation.previousIndex). Переключаемся на ключ #\(rotation.index) из \(rotation.total)...")
+                    if error.code == 401 || error.code == 403 {
+                        await onStatus?("Переключаемся с ключа #\(rotation.previousIndex) на ключ #\(rotation.index) из \(rotation.total)...")
+                    } else {
+                        await onStatus?("Лимит квоты на ключе #\(rotation.previousIndex). Переключаемся на ключ #\(rotation.index) из \(rotation.total)...")
+                    }
                     try? await Task.sleep(for: .milliseconds(400))
                 } else {
                     let delay = max(3.0, (error.retryAfter ?? 10.0) + 1.0)
                     let delayFormatted = String(format: "%.1f", delay)
                     if allowKeyRotation {
-                        await onStatus?("Превышен лимит запросов Google API. Ожидание \(delayFormatted) сек перед повтором...")
+                        if pinnedKeyFailed {
+                            await onStatus?("Закрепление снято, но другого ключа нет. Повторяем через \(delayFormatted) сек...")
+                        } else {
+                            await onStatus?("Превышен лимит запросов Google API. Ожидание \(delayFormatted) сек перед повтором...")
+                        }
                     } else {
                         await onStatus?("Закреплённый ключ временно ограничен. Повторяем на нём через \(delayFormatted) сек...")
                     }
