@@ -422,7 +422,7 @@ actor GeminiAPIClient {
 
     private static func supportsAnalysisModelPin(_ model: String) -> Bool {
         let normalized = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        return normalized == defaultAnalysisModel || defaultAnalysisFallbackModels.contains(normalized)
+        return normalized.hasPrefix("gemini-")
     }
 
     private static func activeAnalysisModelPin(
@@ -460,6 +460,10 @@ actor GeminiAPIClient {
         defaults.removeObject(forKey: analysisModelPinKey)
         defaults.removeObject(forKey: analysisModelPinExpiryKey)
         defaults.removeObject(forKey: analysisModelPinKeyFingerprintKey)
+    }
+
+    static func clearAnalysisModelPinForSettingsChange() {
+        clearAnalysisModelPin()
     }
 
     private static func keyFingerprint(_ key: String) -> String {

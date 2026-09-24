@@ -357,6 +357,10 @@ struct SettingsView: View {
             Text("Ключи хранятся локально. При исчерпании квоты Whisp переключится на следующий ключ.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            geminiModelSettingsContent
+
+            Divider()
             ForEach(Array(geminiKeys.enumerated()), id: \.offset) { index, key in
                 let status = store.status(for: key)
                 HStack(spacing: 8) {
@@ -480,6 +484,108 @@ struct SettingsView: View {
                 ConnectionMark(state: model.geminiState)
             }
         }
+    }
+
+    @ViewBuilder private var geminiModelSettingsContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Модели официального Gemini")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Выберите основную модель. После трёх неудачных попыток Whisp перейдёт к включённой модели ниже.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("Сохраняется сразу")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(Array(store.settings.geminiAnalysisModels.enumerated()), id: \.element.id) { index, option in
+                let isPrimary = store.settings.analysisModel == option.model
+                HStack(spacing: 8) {
+                    Button {
+                        store.selectGeminiAnalysisModel(option.model)
+                        testResult = "Основная модель: (option.model)"
+                    } label: {
+                        Image(systemName: isPrimary ? "largecircle.fill.circle" : "circle")
+                            .foregroundStyle(isPrimary ? Color.accentColor : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(isPrimary ? "Основная модель" : "Выбрать основной моделью")
+
+                    Toggle("", isOn: Binding(
+                        get: {
+                            store.settings.geminiAnalysisModels.first(where: { $0.model == option.model })?.isEnabled ?? false
+                        },
+                        set: { enabled in
+                            store.setGeminiAnalysisModelEnabled(option.model, enabled: enabled)
+                        }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .help("Использовать модель в цепочке")
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(option.model)
+                            .font(.system(.body, design: .monospaced))
+                        Text(isPrimary ? "Основная" : (option.isEnabled ? "Резервная модель" : "Выключена"))
+                            .font(.caption2)
+                            .foregroundStyle(isPrimary ? Color.accentColor : .secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Button {
+                        store.moveGeminiAnalysisModel(option.model, offset: -1)
+                    } label: {
+                        Image(systemName: "chevron.up")
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(index == 0)
+                    .help("Поднять приоритет")
+
+                    Button {
+                        store.moveGeminiAnalysisModel(option.model, offset: 1)
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(index == store.settings.geminiAnalysisModels.count - 1)
+                    .help("Опустить приоритет")
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background {
+                    if isPrimary {
+                        Color.accentColor.opacity(0.10)
+                    } else {
+                        Color.clear
+                    }
+                }
+                .clipShape(.rect(cornerRadius: WhispMetrics.compactCornerRadius))
+            }
+
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "info.circle")
+                Text("Основная модель запускается первой. Если она успешно ответила, остальные модели не вызываются и платные запросы не расходуются.")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Модель расшифровки")
+                    .font(.caption.weight(.semibold))
+                TextField("Например, gemini-3.5-transcribe", text: $store.settings.geminiModel)
+                    .whispGlassField()
+                Text("Эта модель используется для финальной расшифровки. Live-модель настраивается отдельно внутри приложения.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
     }
 
     @ViewBuilder private var customProvidersContent: some View {

@@ -543,6 +543,18 @@ struct ProviderConfiguration: Codable, Hashable, Sendable {
     }
 }
 
+struct GeminiAnalysisModelOption: Codable, Hashable, Identifiable, Sendable {
+    var model: String
+    var isEnabled: Bool
+
+    var id: String { model }
+
+    init(model: String, isEnabled: Bool = true) {
+        self.model = model
+        self.isEnabled = isEnabled
+    }
+}
+
 enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     case gemini
     case openAI = "openai"
@@ -675,6 +687,7 @@ struct WhispSettings: Codable, Sendable {
     var geminiModel = "gemini-3.5-transcribe"
     var geminiLiveModel = "gemini-3.5-transcribe-live"
     var analysisModel = "gemini-3.8-flash"
+    var geminiAnalysisModels = Self.defaultGeminiAnalysisModels
     /// `gemini` remains the default provider for new installations.
     var activeProviderID = "gemini"
     /// Provider used to turn recorded audio into timestamped text. Older
@@ -692,7 +705,7 @@ struct WhispSettings: Codable, Sendable {
     var reminderListIdentifier: String?
 
     private enum CodingKeys: String, CodingKey {
-        case subjects, customVocabulary, localRetentionDays, geminiModel, geminiLiveModel, analysisModel
+        case subjects, customVocabulary, localRetentionDays, geminiModel, geminiLiveModel, analysisModel, geminiAnalysisModels
         case activeProviderID, transcriptionProviderID, analysisProviderID, providerConfigurations, hotkeyRecord, hotkeyFinish, preferredMicrophoneID, appearance, lessonSchedule, remindersEnabled, reminderListIdentifier
     }
 
@@ -708,6 +721,11 @@ struct WhispSettings: Codable, Sendable {
         geminiModel = try values.decodeIfPresent(String.self, forKey: .geminiModel) ?? "gemini-3.5-transcribe"
         geminiLiveModel = try values.decodeIfPresent(String.self, forKey: .geminiLiveModel) ?? "gemini-3.5-transcribe-live"
         analysisModel = try values.decodeIfPresent(String.self, forKey: .analysisModel) ?? "gemini-3.8-flash"
+        geminiAnalysisModels = try values.decodeIfPresent([GeminiAnalysisModelOption].self, forKey: .geminiAnalysisModels)
+            ?? Self.defaultGeminiAnalysisModels
+        if !geminiAnalysisModels.contains(where: { $0.model == analysisModel }) {
+            geminiAnalysisModels.insert(GeminiAnalysisModelOption(model: analysisModel), at: 0)
+        }
         activeProviderID = try values.decodeIfPresent(String.self, forKey: .activeProviderID) ?? "gemini"
         transcriptionProviderID = try values.decodeIfPresent(String.self, forKey: .transcriptionProviderID) ?? activeProviderID
         analysisProviderID = try values.decodeIfPresent(String.self, forKey: .analysisProviderID) ?? activeProviderID
@@ -726,4 +744,11 @@ struct WhispSettings: Codable, Sendable {
         "Математика", "Обществознание", "Основы безопасности и защиты Родины",
         "Русский язык", "Физика", "Физическая культура", "Химия"
     ].enumerated().map { SubjectItem(name: $0.element, order: $0.offset) }
+
+    static let defaultGeminiAnalysisModels = [
+        GeminiAnalysisModelOption(model: "gemini-3.8-flash"),
+        GeminiAnalysisModelOption(model: "gemini-3.7-flash"),
+        GeminiAnalysisModelOption(model: "gemini-3.6-flash"),
+        GeminiAnalysisModelOption(model: "gemini-3.5-flash-lite")
+    ]
 }

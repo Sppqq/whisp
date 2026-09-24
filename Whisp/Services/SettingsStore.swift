@@ -258,14 +258,58 @@ final class SettingsStore {
     /// The default Gemini analysis chain steps down only after the current
     /// model exhausts its three-attempt failure budget.
     var activeAnalysisFallbackModels: [String] {
-        guard activeProviderTransport == .gemini,
-              activeAnalysisModel == GeminiAPIClient.defaultAnalysisModel else { return [] }
-        return GeminiAPIClient.defaultAnalysisFallbackModels
+        guard analysisProviderID == ProviderPreset.gemini.rawValue else { return [] }
+        let primary = activeAnalysisModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !primary.isEmpty else { return [] }
+        return settings.geminiAnalysisModels
+            .filter { $0.isEnabled }
+            .map { $0.model.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0 != primary }
     }
 
     /// Compatibility accessor for callers that still need the first fallback.
     var activeAnalysisFallbackModel: String? {
         activeAnalysisFallbackModels.first
+    }
+
+    func selectGeminiAnalysisModel(_ model: String) {
+        let cleaned = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        var updated = settings
+        if let index = updated.geminiAnalysisModels.firstIndex(where: { $0.model == cleaned }) {
+            var selected = updated.geminiAnalysisModels.remove(at: index)
+            selected.isEnabled = true
+            updated.geminiAnalysisModels.insert(selected, at: 0)
+        } else {
+            updated.geminiAnalysisModels.insert(GeminiAnalysisModelOption(model: cleaned), at: 0)
+        }
+        updated.analysisModel = cleaned
+        settings = updated
+        GeminiAPIClient.clearAnalysisModelPinForSettingsChange()
+    }
+
+    func setGeminiAnalysisModelEnabled(_ model: String, enabled: Bool) {
+        guard let index = settings.geminiAnalysisModels.firstIndex(where: { $0.model == model }) else { return }
+        var updated = settings
+        if !enabled && updated.analysisModel == model {
+            guard updated.geminiAnalysisModels.contains(where: { $0.model != model && $0.isEnabled }) else { return }
+            if let replacement = updated.geminiAnalysisModels.first(where: { $0.model != model && $0.isEnabled }) {
+                updated.analysisModel = replacement.model
+            }
+        }
+        updated.geminiAnalysisModels[index].isEnabled = enabled
+        settings = updated
+        GeminiAPIClient.clearAnalysisModelPinForSettingsChange()
+    }
+
+    func moveGeminiAnalysisModel(_ model: String, offset: Int) {
+        guard let index = settings.geminiAnalysisModels.firstIndex(where: { $0.model == model }) else { return }
+        let destination = index + offset
+        guard settings.geminiAnalysisModels.indices.contains(destination) else { return }
+        var updated = settings
+        updated.geminiAnalysisModels.swapAt(index, destination)
+        settings = updated
+        GeminiAPIClient.clearAnalysisModelPinForSettingsChange()
     }
 
     var activeProviderEndpoint: URL? {
