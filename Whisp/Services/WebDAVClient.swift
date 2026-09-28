@@ -95,6 +95,12 @@ actor WebDAVClient {
                 try await atomicUpload(fileURL: url, remotePath: remotePath + "/" + name)
             }
         }
+        for name in lecture.attachedImagePaths where URL(fileURLWithPath: name).lastPathComponent == name {
+            let url = localDirectory.appending(path: name)
+            if FileManager.default.fileExists(atPath: url.path) {
+                try await atomicUpload(fileURL: url, remotePath: remotePath + "/" + name)
+            }
+        }
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -282,6 +288,15 @@ actor WebDAVClient {
                                     try? audioData.write(to: targetAudio, options: .atomic)
                                 }
                             }
+                        }
+                    }
+                    for imageName in session.attachedImagePaths where
+                        URL(fileURLWithPath: imageName).lastPathComponent == imageName &&
+                        files.contains(imageName) {
+                        let targetImage = dir.appending(path: imageName)
+                        if !FileManager.default.fileExists(atPath: targetImage.path),
+                           let imageData = try? await downloadData(remotePath: folder + "/" + imageName) {
+                            try? imageData.write(to: targetImage, options: .atomic)
                         }
                     }
 

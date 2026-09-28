@@ -58,6 +58,8 @@ actor LectureAnalysisService {
     func analyze(
         segments: [TranscriptSegment],
         subjects: [String],
+        images: [GeminiAPIClient.InputImage] = [],
+        imageNames: [String] = [],
         onStatus: (@Sendable (String) async -> Void)? = nil,
         onMetadata: (@Sendable (AnalysisResult) async -> Void)? = nil,
         onPartCompleted: (@Sendable (_ currentPart: Int, _ totalParts: Int, _ partText: String) async -> Void)? = nil
@@ -81,13 +83,41 @@ actor LectureAnalysisService {
             "[\(WhispFormatting.timestamp($0.start))] \($0.speaker.map { "\($0): " } ?? "")\($0.text)"
         }.joined(separator: "\n")
 
+        var visualContext = ""
+        if !images.isEmpty {
+            await onStatus?("Анализируем фото доски и слайдов через \(model)…")
+            let imageLabels = images.indices.map { index in
+                "IMAGE_\(index + 1): \(imageNames.indices.contains(index) ? imageNames[index] : "фото \(index + 1)")"
+            }.joined(separator: "\n")
+            do {
+                visualContext = try await generateText(
+                    prompt: """
+                    Проанализируй приложенные фотографии лекции. Сопоставляй изображения строго по порядку с метками:
+                    \(imageLabels)
+
+                    Для каждой фотографии кратко извлеки только видимое и учебно важное: текст с доски или слайда, формулы, схемы, подписи и примеры. Если надпись нельзя уверенно прочесть, так и укажи. Не додумывай содержание. Верни результат отдельным блоком для каждой метки.
+                    """,
+                    responseSchema: nil,
+                    images: images,
+                    onStatus: onStatus
+                )
+            } catch {
+                await onStatus?("Провайдер не обработал фото — продолжаем составлять конспект по аудио.")
+            }
+        }
+
         await onStatus?(
             "Передаём в AI расшифровку: \(sortedSegments.count) фрагментов, \(fullTranscript.count) символов…"
         )
 
         // 1. Быстрый этап метаданных (название, предмет, теги, краткая суть)
         await onStatus?("Определяем тему и предмет через \(model)...")
-        var metadata = try await extractMetadata(transcript: fullTranscript, subjects: subjects, onStatus: onStatus)
+        var metadata = try await extractMetadata(
+            transcript: fullTranscript,
+            subjects: subjects,
+            visualContext: visualContext,
+            onStatus: onStatus
+        )
         if let jevClient, let jevConfiguration {
             metadata = await applyJevClassification(
                 metadata,
@@ -130,6 +160,7 @@ actor LectureAnalysisService {
                 part: part,
                 title: metadata.title,
                 subject: metadata.subject,
+                visualContext: visualContext,
                 onStatus: onStatus
             )
             let formattedPart = WhispFormatting.formatMarkdownNotes(partNotes)
@@ -175,7 +206,11 @@ actor LectureAnalysisService {
             }
         }
 
-        let formattedNotes = WhispFormatting.formatMarkdownNotes(consolidatedNotes)
+        let notesWithImages = Self.insertingImageEmbeds(
+            into: consolidatedNotes,
+            imageNames: imageNames
+        )
+        let formattedNotes = WhispFormatting.formatMarkdownNotes(notesWithImages)
         partialResult.studentNotebook = formattedNotes
         partialResult.detailedNotes = formattedNotes
 
@@ -317,6 +352,7 @@ actor LectureAnalysisService {
     private func extractMetadata(
         transcript: String,
         subjects: [String],
+        visualContext: String,
         onStatus: (@Sendable (String) async -> Void)?
     ) async throws -> MetadataEnvelope {
         let sampleTranscript: String
@@ -347,12 +383,16 @@ actor LectureAnalysisService {
             НАЧАЛО ИСХОДНОГО ТЕКСТА
             \(sampleTranscript)
             КОНЕЦ ИСХОДНОГО ТЕКСТА
+
+            \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
             """
         } else {
             prompt = """
             НАЧАЛО ИСХОДНОГО ТЕКСТА
             \(sampleTranscript)
             КОНЕЦ ИСХОДНОГО ТЕКСТА
+
+            \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
 
             ЗАДАНИЕ: верни только один JSON-объект без Markdown и пояснений.
             Поля: title, subject, confidence, alternatives, tags, keyConcepts, reminders, summary.
@@ -396,6 +436,8 @@ actor LectureAnalysisService {
 
             РАСШИФРОВКА:
             \(sampleTranscript)
+
+            \(visualContext.isEmpty ? "" : "КОНТЕКСТ ФОТО:\n\(visualContext)")
             """
 
             do {
@@ -502,6 +544,7 @@ actor LectureAnalysisService {
         part: LecturePart,
         title: String,
         subject: String,
+        visualContext: String,
         onStatus: (@Sendable (String) async -> Void)?
     ) async throws -> String {
         let partInfo = part.total > 1
@@ -518,6 +561,8 @@ actor LectureAnalysisService {
             Не переписывай строки исходника, таймкоды, номера спикеров и диалоги дословно.
             Объедини близкие мысли в 3–8 смысловых пунктов, убери приветствия, бытовой шум, повторы и обрывки.
             Сохрани только определения, правила, задания, формулы, примеры и выводы.
+            Используй визуальный контекст фото, если он дополняет фрагмент. Вставляй метку [[IMAGE_1]] (и далее по номеру) в уместном месте конспекта только когда фото действительно иллюстрирует этот материал; не добавляй фото ради формальности. Не изменяй метки.
+            \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
             Если во фрагменте нет учебного содержания, напиши одну строку: «Содержательного материала нет».
             Верни только Markdown-конспект без вступления и мета-комментариев. Формулы оформляй в LaTeX.
             НАЧАЛО ИСХОДНОГО ТЕКСТА
@@ -534,6 +579,8 @@ actor LectureAnalysisService {
             Тема: «\(title)». Предмет: \(subject). Фрагмент: \(partInfo).
             Синтезируй содержание, не переписывай исходник. Не включай таймкоды, номера спикеров и реплики дословно.
             Удали бытовой шум, повторы и обрывки; оставь 3–8 смысловых пунктов, определения, задания, формулы, примеры и выводы.
+            Используй визуальный контекст фото, если он дополняет фрагмент. Вставляй метку [[IMAGE_1]] (и далее по номеру) в уместном месте конспекта только когда фото действительно иллюстрирует этот материал; не добавляй фото ради формальности. Не изменяй метки.
+            \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
             Если учебного содержания нет, напиши одну строку: «Содержательного материала нет».
             Верни только Markdown: заголовки, определения, тезисы, списки, формулы и примеры.
             Текст уже предоставлен. Не проси прислать его снова и не пиши, что он отсутствует.
@@ -548,7 +595,7 @@ actor LectureAnalysisService {
             || normalizedResult.contains("как языковая модель")
         if !isBadResult,
            transport != .gemini,
-           !Self.isGrounded(result, in: part.text) {
+           !Self.isGrounded(result, in: part.text + "\n" + visualContext) {
             await onStatus?("Ответ кастомной модели не совпал с расшифровкой — сохраняем проверенный текст фрагмента.")
             return Self.safeTranscriptFallback(from: part.text)
         }
@@ -630,6 +677,7 @@ actor LectureAnalysisService {
     private func generateText(
         prompt: String,
         responseSchema: [String: Any]?,
+        images: [GeminiAPIClient.InputImage] = [],
         onStatus: (@Sendable (String) async -> Void)?
     ) async throws -> String {
         try await client.generateText(
@@ -637,7 +685,14 @@ actor LectureAnalysisService {
             model: model,
             fallbackModels: fallbackModels,
             responseSchema: responseSchema,
+            images: images,
             onStatus: onStatus
         )
+    }
+
+    private static func insertingImageEmbeds(into markdown: String, imageNames: [String]) -> String {
+        imageNames.enumerated().reduce(markdown) { result, item in
+            result.replacingOccurrences(of: "[[IMAGE_\(item.offset + 1)]]", with: "![[\(item.element)]]")
+        }
     }
 }

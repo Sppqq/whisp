@@ -2,7 +2,14 @@ import AppKit
 import AVFoundation
 import CFNetwork
 import Foundation
+import ImageIO
 import Observation
+import UniformTypeIdentifiers
+
+private struct LectureImportJob {
+    let audioURL: URL
+    let imageURLs: [URL]
+}
 
 struct ProcessingLogEntry: Identifiable, Sendable {
     let id = UUID()
@@ -65,9 +72,9 @@ final class AppModel {
     var webDAVState: ServiceConnectionState = .unchecked
     var inputDevices: [AudioInputDevice] = []
     var importedFileName: String?
-    var pendingImportURLs: [URL] = []
+    private var pendingImportJobs: [LectureImportJob] = []
     private(set) var isImportQueueActive = false
-    var pendingImportFileNames: [String] { pendingImportURLs.map(\.lastPathComponent) }
+    var pendingImportFileNames: [String] { pendingImportJobs.map { $0.audioURL.lastPathComponent } }
     var needsScreenCapturePermission = false
     var needsMicrophonePermission = false
     private(set) var isWorking = false
@@ -356,7 +363,7 @@ final class AppModel {
     }
 
     func cancelProcessing() async {
-        pendingImportURLs.removeAll()
+        pendingImportJobs.removeAll()
         addProcessingLog("Запрос на отмену обработки...")
         statusMessage = "Отменяем обработку..."
         processingTask?.cancel()
@@ -381,30 +388,40 @@ final class AppModel {
             return
         }
 
-        let existingPaths = Set(pendingImportURLs.map(\.standardizedFileURL.path))
+        let existingPaths = Set(pendingImportJobs.map { $0.audioURL.standardizedFileURL.path })
         let unique = sourceURLs.filter { url in
             url.isFileURL && !existingPaths.contains(url.standardizedFileURL.path)
         }
         guard !unique.isEmpty else { return }
-        pendingImportURLs.append(contentsOf: unique)
-        statusMessage = unique.count == 1
-            ? "Файл добавлен в очередь"
-            : "В очередь добавлено " + String(unique.count) + " файлов"
+        let audioURLs = unique.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) == true }
+        let imageURLs = unique.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true }
+        guard imageURLs.count <= 10 else {
+            lastError = "К одной лекции можно добавить не более 10 фото."
+            return
+        }
+        guard !audioURLs.isEmpty else {
+            lastError = "Выберите хотя бы один аудиофайл. Фото можно добавить к аудио в том же окне."
+            return
+        }
+        pendingImportJobs.append(contentsOf: audioURLs.map { LectureImportJob(audioURL: $0, imageURLs: imageURLs) })
+        statusMessage = audioURLs.count == 1
+            ? "Аудио добавлено в очередь" + (imageURLs.isEmpty ? "" : " вместе с \(imageURLs.count) фото")
+            : "В очередь добавлено " + String(audioURLs.count) + " аудиофайлов"
 
         guard !isImportQueueActive else { return }
         isImportQueueActive = true
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.isImportQueueActive = false }
-            while !self.pendingImportURLs.isEmpty, !Task.isCancelled {
-                let next = self.pendingImportURLs.removeFirst()
-                await self.importAudio(from: next)
+            while !self.pendingImportJobs.isEmpty, !Task.isCancelled {
+                let next = self.pendingImportJobs.removeFirst()
+                await self.importAudio(from: next.audioURL, images: next.imageURLs)
             }
         }
     }
 
     func cancelImportQueue() {
-        pendingImportURLs.removeAll()
+        pendingImportJobs.removeAll()
         Task { await cancelProcessing() }
     }
 
@@ -436,7 +453,7 @@ final class AppModel {
             await retryProcessing()
         }
     }
-    func importAudio(from sourceURL: URL) async {
+    func importAudio(from sourceURL: URL, images: [URL] = []) async {
         guard !isBusy else { return }
         isWorking = true
         defer { isWorking = false }
@@ -444,16 +461,17 @@ final class AppModel {
 
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.executeImportAudio(from: sourceURL)
+            await self.executeImportAudio(from: sourceURL, images: images)
         }
         processingTask = task
         await task.value
     }
 
-    private func executeImportAudio(from sourceURL: URL) async {
+    private func executeImportAudio(from sourceURL: URL, images: [URL]) async {
         resetSessionTasks()
         lastError = nil
         let accessed = sourceURL.startAccessingSecurityScopedResource()
+        let accessedImages = images.map { ($0, $0.startAccessingSecurityScopedResource()) }
 
         var session = LectureSession()
         session.startedAt = Date()
@@ -472,6 +490,7 @@ final class AppModel {
         defer {
             activeProcessingSessionID = nil
             if accessed { sourceURL.stopAccessingSecurityScopedResource() }
+            accessedImages.forEach { url, didAccess in if didAccess { url.stopAccessingSecurityScopedResource() } }
         }
 
         do {
@@ -487,6 +506,17 @@ final class AppModel {
             }.value
 
             session.importedAudioPath = preservedName
+            if !images.isEmpty {
+                addProcessingLog("Сохраняем фото лекции рядом с аудио…")
+                for (index, imageURL) in images.enumerated() {
+                    let extensionName = imageURL.pathExtension.isEmpty ? "jpg" : imageURL.pathExtension.lowercased()
+                    let baseName = WhispFormatting.safePathComponent(imageURL.deletingPathExtension().lastPathComponent)
+                    let imageName = "Фото-\(String(format: "%02d", index + 1))-\(baseName).\(extensionName)"
+                    let destination = directory.appending(path: imageName)
+                    try FileManager.default.copyItem(at: imageURL, to: destination)
+                    session.attachedImagePaths.append(imageName)
+                }
+            }
             if let index = sessions.firstIndex(where: { $0.id == session.id }) { sessions[index] = session }
             else { sessions.insert(session, at: 0) }
             if currentSession?.id == session.id { currentSession = session }
@@ -1385,6 +1415,12 @@ final class AppModel {
                         proxy: settingsStore.proxy
                     )
                     : nil
+                let sessionDirectory = try await store.directory(for: session.id)
+                let imageNames = Array(session.attachedImagePaths.prefix(10))
+                let imageAttachments = try Self.loadAnalysisImages(
+                    names: imageNames,
+                    directory: sessionDirectory
+                )
                 let analysis = try await LectureAnalysisService(
                     client: try providerClient(for: .analysis),
                     model: settingsStore.analysisProviderModel,
@@ -1396,6 +1432,8 @@ final class AppModel {
                     .analyze(
                         segments: session.finalTranscript,
                         subjects: activeSubjects,
+                        images: imageAttachments,
+                        imageNames: imageNames,
                         onStatus: { [weak self] status in
                             await MainActor.run {
                                 self?.statusMessage = status
@@ -1954,6 +1992,62 @@ final class AppModel {
 
     private func geminiClient() -> GeminiAPIClient {
         GeminiAPIClient(apiKeys: settingsStore.geminiAPIKeys, proxy: settingsStore.proxy)
+    }
+
+    private static func loadAnalysisImages(
+        names: [String],
+        directory: URL
+    ) throws -> [GeminiAPIClient.InputImage] {
+        try names.map { name in
+            guard URL(fileURLWithPath: name).lastPathComponent == name else {
+                throw GeminiAPIError(
+                    code: -1,
+                    status: "IMAGE_PATH",
+                    message: "Некорректный путь к фото лекции",
+                    retryAfter: nil
+                )
+            }
+            let url = directory.appending(path: name)
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 1_800
+                  ] as CFDictionary) else {
+                throw GeminiAPIError(
+                    code: -1,
+                    status: "IMAGE_READ",
+                    message: "Не удалось открыть фото «\(name)»",
+                    retryAfter: nil
+                )
+            }
+            let output = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(
+                output,
+                UTType.jpeg.identifier as CFString,
+                1,
+                nil
+            ) else {
+                throw GeminiAPIError(
+                    code: -1,
+                    status: "IMAGE_ENCODE",
+                    message: "Не удалось подготовить фото «\(name)» для модели",
+                    retryAfter: nil
+                )
+            }
+            CGImageDestinationAddImage(destination, image, [
+                kCGImageDestinationLossyCompressionQuality: 0.82
+            ] as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else {
+                throw GeminiAPIError(
+                    code: -1,
+                    status: "IMAGE_ENCODE",
+                    message: "Не удалось сжать фото «\(name)» для передачи модели",
+                    retryAfter: nil
+                )
+            }
+            return GeminiAPIClient.InputImage(mimeType: "image/jpeg", data: output as Data)
+        }
     }
 
     private func providerClient(for role: ProviderRole) throws -> GeminiAPIClient {

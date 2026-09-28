@@ -551,7 +551,7 @@ private struct StartView: View {
                         .foregroundStyle(WhispPalette.accent)
                     Text("Новая лекция")
                         .font(.largeTitle.weight(.semibold))
-                    Text("Запишите лекцию или импортируйте аудиофайл. Результат можно проверить, отредактировать и сохранить в Obsidian.")
+                    Text("Запишите лекцию или импортируйте аудио вместе с фото доски и слайдов (до 10 снимков). Результат можно проверить, отредактировать и сохранить в Obsidian.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -627,14 +627,14 @@ private struct StartView: View {
                             Button {
                                 showAudioImporter = true
                             } label: {
-                                Label("Импортировать аудиофайл", systemImage: "waveform.badge.plus")
+                                Label("Импортировать аудио и фото", systemImage: "waveform.badge.plus")
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.glass)
                             .controlSize(.large)
                         }
 
-                        Text("Можно также перетащить аудиофайлы прямо сюда")
+                        Text("Выберите аудио и фотографии в одном окне или перетащите их сюда")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -657,7 +657,7 @@ private struct StartView: View {
         }
         .fileImporter(
             isPresented: $showAudioImporter,
-            allowedContentTypes: [.audio],
+            allowedContentTypes: [.audio, .image],
             allowsMultipleSelection: true
         ) { result in
             switch result {

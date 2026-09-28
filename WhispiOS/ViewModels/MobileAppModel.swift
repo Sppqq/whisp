@@ -1,7 +1,9 @@
 import AVFoundation
 import Foundation
+import ImageIO
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum MobileTranscriptionMode: String, CaseIterable, Identifiable {
     case cloud = "cloud"
@@ -130,13 +132,15 @@ final class MobileAppModel {
         }
     }
 
-    func importAudio(_ source: URL) async {
+    func importAudio(_ source: URL, images: [URL] = []) async {
         guard !isRecording, !isProcessing else { return }
         isImporting = true
         processingProgress = "Сжимаем аудио…"
         let scoped = source.startAccessingSecurityScopedResource()
+        let scopedImages = images.map { ($0, $0.startAccessingSecurityScopedResource()) }
         defer {
             if scoped { source.stopAccessingSecurityScopedResource() }
+            scopedImages.forEach { url, didAccess in if didAccess { url.stopAccessingSecurityScopedResource() } }
             isImporting = false
         }
 
@@ -145,6 +149,13 @@ final class MobileAppModel {
         session.endedAt = Date()
         do {
             let directory = try await store.directory(for: session.id)
+            for (index, imageURL) in images.enumerated() {
+                let extensionName = imageURL.pathExtension.isEmpty ? "jpg" : imageURL.pathExtension.lowercased()
+                let baseName = WhispFormatting.safePathComponent(imageURL.deletingPathExtension().lastPathComponent)
+                let imageName = "Фото-\(String(format: "%02d", index + 1))-\(baseName).\(extensionName)"
+                try FileManager.default.copyItem(at: imageURL, to: directory.appending(path: imageName))
+                session.attachedImagePaths.append(imageName)
+            }
             // Store the normalized import under the same canonical name as a
             // microphone recording so Markdown export and WebDAV sync include it.
             let destination = directory.appending(path: "Микрофон.m4a")
@@ -460,9 +471,13 @@ final class MobileAppModel {
                 model: settingsStore.activeAnalysisModel,
                 fallbackModels: settingsStore.activeAnalysisFallbackModels
             )
+            let directory = try await store.directory(for: session.id)
+            let imageNames = Array(session.attachedImagePaths.prefix(10))
             let analysis = try await analysisService.analyze(
                 segments: segments,
                 subjects: settingsStore.settings.subjects.filter(\.isEnabled).sorted { $0.order < $1.order }.map(\.name),
+                images: try Self.loadAnalysisImages(names: imageNames, directory: directory),
+                imageNames: imageNames,
                 onStatus: { status in
                     await progress.report(status)
                 }
@@ -517,7 +532,14 @@ final class MobileAppModel {
 
             let client = makeClient()
             let service = LectureAnalysisService(client: client, model: settingsStore.activeAnalysisModel, fallbackModels: settingsStore.activeAnalysisFallbackModels)
-            let analysis = try await service.analyze(segments: segments, subjects: settingsStore.settings.subjects.filter(\.isEnabled).map(\.name))
+            let directory = try await store.directory(for: session.id)
+            let imageNames = Array(session.attachedImagePaths.prefix(10))
+            let analysis = try await service.analyze(
+                segments: segments,
+                subjects: settingsStore.settings.subjects.filter(\.isEnabled).map(\.name),
+                images: try Self.loadAnalysisImages(names: imageNames, directory: directory),
+                imageNames: imageNames
+            )
             session.analysis = analysis
             session.title = analysis.title
             session.subject = analysis.subject
@@ -530,6 +552,42 @@ final class MobileAppModel {
             await update(session)
             processingProgress = "Готово (локальный Whisper)"
         } catch { fail(sessionID: sessionID, error: error) }
+    }
+
+    private static func loadAnalysisImages(
+        names: [String],
+        directory: URL
+    ) throws -> [GeminiAPIClient.InputImage] {
+        try names.map { name in
+            guard URL(fileURLWithPath: name).lastPathComponent == name else {
+                throw MobileError.imageCouldNotBeRead(name)
+            }
+            let url = directory.appending(path: name)
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 1_800
+                  ] as CFDictionary) else {
+                throw MobileError.imageCouldNotBeRead(name)
+            }
+            let output = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(
+                output,
+                UTType.jpeg.identifier as CFString,
+                1,
+                nil
+            ) else {
+                throw MobileError.imageCouldNotBePrepared(name)
+            }
+            CGImageDestinationAddImage(destination, image, [
+                kCGImageDestinationLossyCompressionQuality: 0.82
+            ] as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else {
+                throw MobileError.imageCouldNotBePrepared(name)
+            }
+            return GeminiAPIClient.InputImage(mimeType: "image/jpeg", data: output as Data)
+        }
     }
 
     private func makeClient() -> GeminiAPIClient {
@@ -571,12 +629,14 @@ private struct MobileProgressReporter: @unchecked Sendable {
 }
 
 private enum MobileError: LocalizedError {
-    case missingAPIKey, audioMissing, localMode
+    case missingAPIKey, audioMissing, localMode, imageCouldNotBeRead(String), imageCouldNotBePrepared(String)
     var errorDescription: String? {
         switch self {
         case .missingAPIKey: "Добавьте API key активного провайдера в настройках Whisp."
         case .audioMissing: "Исходный аудиофайл этой лекции не найден."
         case .localMode: "Локальная расшифровка WhisperKit."
+        case .imageCouldNotBeRead(let name): "Не удалось открыть фото «\(name)»."
+        case .imageCouldNotBePrepared(let name): "Не удалось подготовить фото «\(name)» для модели."
         }
     }
 }

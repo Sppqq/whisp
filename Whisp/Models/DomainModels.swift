@@ -267,6 +267,7 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
     var isPinned = false
     var captureSystemAudio = true
     var importedAudioPath: String?
+    var attachedImagePaths: [String] = []
     var rawTranscript: [TranscriptSegment] = []
     var finalTranscript: [TranscriptSegment] = []
     var fallbackIntervals: [FallbackInterval] = []
@@ -300,6 +301,7 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
         isPinned: Bool = false,
         captureSystemAudio: Bool = true,
         importedAudioPath: String? = nil,
+        attachedImagePaths: [String] = [],
         rawTranscript: [TranscriptSegment] = [],
         finalTranscript: [TranscriptSegment] = [],
         fallbackIntervals: [FallbackInterval] = [],
@@ -332,6 +334,7 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
         self.isPinned = isPinned
         self.captureSystemAudio = captureSystemAudio
         self.importedAudioPath = importedAudioPath
+        self.attachedImagePaths = attachedImagePaths
         self.rawTranscript = rawTranscript
         self.finalTranscript = finalTranscript
         self.fallbackIntervals = fallbackIntervals
@@ -367,6 +370,7 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         captureSystemAudio = try container.decodeIfPresent(Bool.self, forKey: .captureSystemAudio) ?? true
         importedAudioPath = try container.decodeIfPresent(String.self, forKey: .importedAudioPath)
+        attachedImagePaths = try container.decodeIfPresent([String].self, forKey: .attachedImagePaths) ?? []
         rawTranscript = try container.decodeIfPresent([TranscriptSegment].self, forKey: .rawTranscript) ?? []
         finalTranscript = try container.decodeIfPresent([TranscriptSegment].self, forKey: .finalTranscript) ?? []
         fallbackIntervals = try container.decodeIfPresent([FallbackInterval].self, forKey: .fallbackIntervals) ?? []

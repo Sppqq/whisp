@@ -15,7 +15,7 @@ struct MobileRootView: View {
                     ContentUnavailableView(
                         "Пока нет лекций",
                         systemImage: "waveform",
-                        description: Text("Запишите лекцию или импортируйте аудиофайл.")
+                        description: Text("Запишите лекцию или импортируйте аудио вместе с фото доски и слайдов.")
                     )
                     .listRowBackground(Color.clear)
                 } else {
@@ -61,12 +61,22 @@ struct MobileRootView: View {
         }
         .fileImporter(
             isPresented: $showImporter,
-            allowedContentTypes: [.audio, .mpeg4Audio, .mp3, .wav],
-            allowsMultipleSelection: false
+            allowedContentTypes: [.audio, .mpeg4Audio, .mp3, .wav, .image],
+            allowsMultipleSelection: true
         ) { result in
             switch result {
             case .success(let urls):
-                if let url = urls.first { Task { await model.importAudio(url) } }
+                let audioURLs = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) == true }
+                let images = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true }
+                if audioURLs.count > 1 {
+                    model.errorMessage = "За один раз выберите один аудиофайл и до 10 фотографий."
+                } else if images.count > 10 {
+                    model.errorMessage = "К одной лекции можно добавить не более 10 фото."
+                } else if let audio = audioURLs.first {
+                    Task { await model.importAudio(audio, images: images) }
+                } else {
+                    model.errorMessage = "Выберите аудиофайл; фотографии можно добавить к нему в том же окне."
+                }
             case .failure(let error):
                 model.errorMessage = error.localizedDescription
             }
