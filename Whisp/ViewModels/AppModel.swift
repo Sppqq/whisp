@@ -473,6 +473,61 @@ final class AppModel {
             await retryProcessing()
         }
     }
+    func attachPhotosToCurrentSession(_ sourceURLs: [URL]) async {
+        guard !isBusy, var session = currentSession else { return }
+        let imageURLs = sourceURLs.filter {
+            $0.isFileURL && UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
+        }
+        guard !imageURLs.isEmpty else {
+            lastError = "Выберите фото для этой лекции."
+            return
+        }
+        guard session.attachedImagePaths.count + imageURLs.count <= 10 else {
+            lastError = "К одной лекции можно добавить не более 10 фото."
+            return
+        }
+
+        isWorking = true
+        defer { isWorking = false }
+        let accessedURLs = imageURLs.map { ($0, $0.startAccessingSecurityScopedResource()) }
+        defer {
+            accessedURLs.forEach { url, didAccess in
+                if didAccess { url.stopAccessingSecurityScopedResource() }
+            }
+        }
+
+        do {
+            let directory = try await store.directory(for: session.id)
+            var usedNames = Set(session.attachedImagePaths)
+            var addedNames: [String] = []
+            for sourceURL in imageURLs {
+                let ext = sourceURL.pathExtension.isEmpty ? "jpg" : sourceURL.pathExtension.lowercased()
+                let base = WhispFormatting.safePathComponent(sourceURL.deletingPathExtension().lastPathComponent)
+                var suffix = session.attachedImagePaths.count + addedNames.count + 1
+                var name = "Фото-\(String(format: "%02d", suffix))-\(base).\(ext)"
+                while usedNames.contains(name) {
+                    suffix += 1
+                    name = "Фото-\(String(format: "%02d", suffix))-\(base).\(ext)"
+                }
+                try FileManager.default.copyItem(at: sourceURL, to: directory.appending(path: name))
+                usedNames.insert(name)
+                addedNames.append(name)
+            }
+            session.attachedImagePaths.append(contentsOf: addedNames)
+            currentSession = session
+            if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+                sessions[index] = session
+            } else {
+                sessions.insert(session, at: 0)
+            }
+            try await store.save(session)
+            statusMessage = "Добавлено фото: \(addedNames.count). Теперь нажмите «Перегенерировать»."
+            lastError = nil
+        } catch {
+            lastError = "Не удалось добавить фото: \(error.localizedDescription)"
+        }
+    }
+
     func importAudio(from sourceURLs: [URL], images: [URL] = []) async {
         guard (!sourceURLs.isEmpty || !images.isEmpty), !isBusy else { return }
         isWorking = true

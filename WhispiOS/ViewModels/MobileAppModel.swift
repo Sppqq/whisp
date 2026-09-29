@@ -251,6 +251,101 @@ final class MobileAppModel {
         }
     }
 
+    func attachPhotos(_ sources: [URL], to sessionID: UUID) async {
+        guard !isProcessing, !isImporting, var session = sessions.first(where: { $0.id == sessionID }) else { return }
+        let imageURLs = sources.filter {
+            $0.isFileURL && UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
+        }
+        guard !imageURLs.isEmpty else {
+            errorMessage = "Выберите фото для этой лекции."
+            return
+        }
+        guard session.attachedImagePaths.count + imageURLs.count <= 10 else {
+            errorMessage = "К одной лекции можно добавить не более 10 фото."
+            return
+        }
+
+        isImporting = true
+        processingProgress = "Сохраняем фото лекции…"
+        let accessedURLs = imageURLs.map { ($0, $0.startAccessingSecurityScopedResource()) }
+        defer {
+            accessedURLs.forEach { url, didAccess in
+                if didAccess { url.stopAccessingSecurityScopedResource() }
+            }
+            isImporting = false
+        }
+
+        do {
+            let directory = try await store.directory(for: sessionID)
+            var usedNames = Set(session.attachedImagePaths)
+            var addedNames: [String] = []
+            for sourceURL in imageURLs {
+                let ext = sourceURL.pathExtension.isEmpty ? "jpg" : sourceURL.pathExtension.lowercased()
+                let base = WhispFormatting.safePathComponent(sourceURL.deletingPathExtension().lastPathComponent)
+                var suffix = session.attachedImagePaths.count + addedNames.count + 1
+                var name = "Фото-\(String(format: "%02d", suffix))-\(base).\(ext)"
+                while usedNames.contains(name) {
+                    suffix += 1
+                    name = "Фото-\(String(format: "%02d", suffix))-\(base).\(ext)"
+                }
+                try FileManager.default.copyItem(at: sourceURL, to: directory.appending(path: name))
+                usedNames.insert(name)
+                addedNames.append(name)
+            }
+            session.attachedImagePaths.append(contentsOf: addedNames)
+            await update(session)
+            processingProgress = "Фото добавлены. Нажмите «Перегенерировать», чтобы учесть их в конспекте."
+        } catch {
+            errorMessage = "Не удалось добавить фото: \(error.localizedDescription)"
+        }
+    }
+
+    func regenerateAnalysis(for sessionID: UUID) async {
+        guard !isProcessing, !isImporting, var session = sessions.first(where: { $0.id == sessionID }) else { return }
+        guard !session.finalTranscript.isEmpty || !session.attachedImagePaths.isEmpty else {
+            errorMessage = "Для конспекта нужны расшифровка или фото."
+            return
+        }
+
+        isProcessing = true
+        processingProgress = "Создаём конспект по лекции и фото…"
+        defer { isProcessing = false }
+        do {
+            guard !settingsStore.activeProviderRequiresAPIKey || !settingsStore.activeProviderAPIKeys.isEmpty else {
+                throw MobileError.missingAPIKey
+            }
+            let progress = MobileProgressReporter(model: self)
+            let service = LectureAnalysisService(
+                client: makeClient(),
+                model: settingsStore.activeAnalysisModel,
+                fallbackModels: settingsStore.activeAnalysisFallbackModels
+            )
+            let directory = try await store.directory(for: sessionID)
+            let imageNames = Array(session.attachedImagePaths.prefix(10))
+            let analysis = try await service.analyze(
+                segments: session.finalTranscript,
+                subjects: settingsStore.settings.subjects.filter(\.isEnabled).sorted { $0.order < $1.order }.map(\.name),
+                images: try Self.loadAnalysisImages(names: imageNames, directory: directory),
+                imageNames: imageNames,
+                onStatus: { status in await progress.report(status) }
+            )
+            session.analysis = analysis
+            session.title = analysis.title
+            session.subject = analysis.subject
+            session.status = .review
+            session.lastError = nil
+            let rendered = MarkdownExporter.render(session: session)
+            session.studentNotesMarkdown = rendered.studentNotebook
+            session.notesMarkdown = rendered.notes
+            session.finalMarkdown = rendered.final
+            session.rawMarkdown = rendered.raw
+            await update(session)
+            processingProgress = "Конспект обновлён с учётом фото"
+        } catch {
+            fail(sessionID: sessionID, error: error)
+        }
+    }
+
     func delete(_ session: LectureSession) async {
         do {
             try await store.delete(session.id)

@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ReviewView: View {
     @Bindable var model: AppModel
@@ -12,6 +13,7 @@ struct ReviewView: View {
     @State private var editingSegment: TranscriptSegment?
     @State private var editingSegmentIsRaw = false
     @State private var isDatePickerPresented = false
+    @State private var showPhotoImporter = false
     @State private var isReadingChromeCollapsed = false
     @State private var lastReadingScrollOffset: CGFloat = 0
     @State private var readingScrollTravel: CGFloat = 0
@@ -196,8 +198,25 @@ struct ReviewView: View {
                     .buttonStyle(.plain)
                     .help("Скопировать Markdown в буфер обмена")
 
+                    if tab != "quiz", let session = model.currentSession {
+                        Button {
+                            showPhotoImporter = true
+                        } label: {
+                            Label("Фото \(session.attachedImagePaths.count)/10", systemImage: "photo.badge.plus")
+                                .font(.callout.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 32)
+                                .glassEffect(.regular.interactive(), in: .capsule)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(model.isBusy || session.attachedImagePaths.count >= 10)
+                        .help("Добавить фото к лекции для следующего анализа")
+                    }
+
                     if tab != "quiz",
-                       !(model.currentSession?.finalTranscript.isEmpty ?? true),
+                       (!(model.currentSession?.finalTranscript.isEmpty ?? true)
+                        || !(model.currentSession?.attachedImagePaths.isEmpty ?? true)),
                        model.currentSession?.status != .processing {
                         Button {
                             Task { await model.regenerateAnalysis(forceOverwriteNotes: true) }
@@ -222,6 +241,12 @@ struct ReviewView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
+                if let session = model.currentSession, !session.attachedImagePaths.isEmpty {
+                    Label("При перегенерации будут проанализированы все \(session.attachedImagePaths.count) фото лекции.", systemImage: "photo")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 8)
@@ -493,6 +518,19 @@ struct ReviewView: View {
             revealReadingChrome(resetOffset: true)
         }
         .background(WhispPalette.canvas)
+        .fileImporter(
+            isPresented: $showPhotoImporter,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard !urls.isEmpty else { return }
+                Task { await model.attachPhotosToCurrentSession(urls) }
+            case .failure(let error):
+                model.lastError = error.localizedDescription
+            }
+        }
         .overlay(alignment: .top) {
             if isReadingChromeCollapsed {
                 Button {
