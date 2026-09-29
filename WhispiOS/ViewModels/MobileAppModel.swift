@@ -132,14 +132,21 @@ final class MobileAppModel {
         }
     }
 
-    func importAudio(_ source: URL, images: [URL] = []) async {
+    func importAudio(_ sources: [URL], images: [URL] = []) async {
         guard !isRecording, !isProcessing else { return }
+        guard !sources.isEmpty || !images.isEmpty else { return }
+        guard images.count <= 10 else {
+            errorMessage = "К одной лекции можно добавить не более 10 фото."
+            return
+        }
         isImporting = true
-        processingProgress = "Сжимаем аудио…"
-        let scoped = source.startAccessingSecurityScopedResource()
+        processingProgress = sources.isEmpty
+            ? "Подготавливаем фото…"
+            : sources.count > 1 ? "Объединяем аудио…" : "Сжимаем аудио…"
+        let scopedSources = sources.map { ($0, $0.startAccessingSecurityScopedResource()) }
         let scopedImages = images.map { ($0, $0.startAccessingSecurityScopedResource()) }
         defer {
-            if scoped { source.stopAccessingSecurityScopedResource() }
+            scopedSources.forEach { url, didAccess in if didAccess { url.stopAccessingSecurityScopedResource() } }
             scopedImages.forEach { url, didAccess in if didAccess { url.stopAccessingSecurityScopedResource() } }
             isImporting = false
         }
@@ -156,16 +163,42 @@ final class MobileAppModel {
                 try FileManager.default.copyItem(at: imageURL, to: directory.appending(path: imageName))
                 session.attachedImagePaths.append(imageName)
             }
-            // Store the normalized import under the same canonical name as a
-            // microphone recording so Markdown export and WebDAV sync include it.
+            if sources.isEmpty {
+                session.title = "Конспект по фото"
+                session.startedAt = Date()
+                session.endedAt = session.startedAt
+                try await store.save(session)
+                sessions.insert(session, at: 0)
+                searchIndex.rebuild(sessions: sessions)
+                selectedSessionID = session.id
+                await processImagesOnly(sessionID: session.id)
+                return
+            }
             let destination = directory.appending(path: "Микрофон.m4a")
-            _ = try await MobileAudioCompressor().compress(
-                source: source,
-                destination: destination,
-                onProgress: { [weak self] progress in
-                    self?.processingProgress = "Сжимаем аудио… \(Int(progress * 100))%"
+            if sources.count == 1 {
+                _ = try await MobileAudioCompressor().compress(
+                    source: sources[0],
+                    destination: destination,
+                    onProgress: { [weak self] progress in
+                        self?.processingProgress = "Сжимаем аудио… \(Int(progress * 100))%"
+                    }
+                )
+            } else {
+                var preparedAudio: [URL] = []
+                for (index, source) in sources.enumerated() {
+                    let prepared = directory.appending(path: "Подготовка-аудио-\(index + 1).m4a")
+                    _ = try await MobileAudioCompressor().compress(
+                        source: source,
+                        destination: prepared,
+                        onProgress: { [weak self] progress in
+                            self?.processingProgress = "Подготавливаем запись \(index + 1) из \(sources.count)… \(Int(progress * 100))%"
+                        }
+                    )
+                    preparedAudio.append(prepared)
                 }
-            )
+                try await ImportedAudioComposer.concatenate(preparedAudio, destination: destination)
+                preparedAudio.forEach { try? FileManager.default.removeItem(at: $0) }
+            }
             session.importedAudioPath = destination.lastPathComponent
             try await store.save(session)
             sessions.insert(session, at: 0)
@@ -174,6 +207,47 @@ final class MobileAppModel {
             await process(sessionID: session.id, audioURL: destination)
         } catch {
             fail(sessionID: session.id, error: error)
+        }
+    }
+
+    private func processImagesOnly(sessionID: UUID) async {
+        guard var session = sessions.first(where: { $0.id == sessionID }) else { return }
+        isProcessing = true
+        defer { isProcessing = false }
+        processingProgress = "Создаём конспект по фото…"
+        do {
+            guard !settingsStore.activeProviderRequiresAPIKey || !settingsStore.activeProviderAPIKeys.isEmpty else {
+                throw MobileError.missingAPIKey
+            }
+            let progress = MobileProgressReporter(model: self)
+            let service = LectureAnalysisService(
+                client: makeClient(),
+                model: settingsStore.activeAnalysisModel,
+                fallbackModels: settingsStore.activeAnalysisFallbackModels
+            )
+            let directory = try await store.directory(for: sessionID)
+            let imageNames = Array(session.attachedImagePaths.prefix(10))
+            let analysis = try await service.analyze(
+                segments: [],
+                subjects: settingsStore.settings.subjects.filter(\.isEnabled).sorted { $0.order < $1.order }.map(\.name),
+                images: try Self.loadAnalysisImages(names: imageNames, directory: directory),
+                imageNames: imageNames,
+                onStatus: { status in await progress.report(status) }
+            )
+            session.analysis = analysis
+            session.title = analysis.title
+            session.subject = analysis.subject
+            session.status = .review
+            let rendered = MarkdownExporter.render(session: session)
+            session.studentNotesMarkdown = rendered.studentNotebook
+            session.notesMarkdown = rendered.notes
+            session.finalMarkdown = rendered.final
+            session.rawMarkdown = rendered.raw
+            try await store.save(session)
+            replace(session)
+            processingProgress = "Готово"
+        } catch {
+            fail(sessionID: sessionID, error: error)
         }
     }
 

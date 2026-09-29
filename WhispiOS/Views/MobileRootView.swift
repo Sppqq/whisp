@@ -4,6 +4,9 @@ import UniformTypeIdentifiers
 struct MobileRootView: View {
     @Environment(MobileAppModel.self) private var model
     @State private var showImporter = false
+    @State private var showImportSetup = false
+    @State private var importSetupAudioURLs: [URL] = []
+    @State private var importSetupImageURLs: [URL] = []
     @State private var showSettings = false
     @State private var showToday = false
 
@@ -15,7 +18,7 @@ struct MobileRootView: View {
                     ContentUnavailableView(
                         "Пока нет лекций",
                         systemImage: "waveform",
-                        description: Text("Запишите лекцию или импортируйте аудио вместе с фото доски и слайдов.")
+                        description: Text("Запишите лекцию или импортируйте аудио и фото — вместе или только фото.")
                     )
                     .listRowBackground(Color.clear)
                 } else {
@@ -61,24 +64,44 @@ struct MobileRootView: View {
         }
         .fileImporter(
             isPresented: $showImporter,
-            allowedContentTypes: [.audio, .mpeg4Audio, .mp3, .wav, .image],
+            allowedContentTypes: [.audio, .image],
             allowsMultipleSelection: true
         ) { result in
             switch result {
             case .success(let urls):
-                let audioURLs = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) == true }
-                let images = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true }
-                if audioURLs.count > 1 {
-                    model.errorMessage = "За один раз выберите один аудиофайл и до 10 фотографий."
-                } else if images.count > 10 {
-                    model.errorMessage = "К одной лекции можно добавить не более 10 фото."
-                } else if let audio = audioURLs.first {
-                    Task { await model.importAudio(audio, images: images) }
+                importSetupAudioURLs = urls.filter {
+                    UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) == true
+                }
+                importSetupImageURLs = urls.filter {
+                    UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
+                }
+                if importSetupAudioURLs.isEmpty && importSetupImageURLs.isEmpty {
+                    model.errorMessage = "Выберите хотя бы одно аудио или фото."
                 } else {
-                    model.errorMessage = "Выберите аудиофайл; фотографии можно добавить к нему в том же окне."
+                    showImportSetup = true
                 }
             case .failure(let error):
                 model.errorMessage = error.localizedDescription
+            }
+        }
+        .sheet(isPresented: $showImportSetup, onDismiss: {
+            importSetupAudioURLs = []
+            importSetupImageURLs = []
+        }) {
+            LectureImportSetupView(
+                initialAudioURLs: importSetupAudioURLs,
+                initialImageURLs: importSetupImageURLs
+            ) { audioURLs, images, combineAudio in
+                Task {
+                    if audioURLs.isEmpty || combineAudio {
+                        await model.importAudio(audioURLs, images: images)
+                    } else {
+                        for audioURL in audioURLs {
+                            await model.importAudio([audioURL], images: images)
+                        }
+                    }
+                    LectureImportStaging.cleanup(images)
+                }
             }
         }
         .sheet(isPresented: $showSettings) { MobileSettingsView() }

@@ -65,7 +65,7 @@ actor LectureAnalysisService {
         onPartCompleted: (@Sendable (_ currentPart: Int, _ totalParts: Int, _ partText: String) async -> Void)? = nil
     ) async throws -> AnalysisResult {
         let sortedSegments = segments.sorted { $0.start < $1.start }
-        guard !sortedSegments.isEmpty else {
+        guard !sortedSegments.isEmpty || !images.isEmpty else {
             return AnalysisResult(
                 title: "Новая лекция",
                 subject: "Не определено",
@@ -102,13 +102,14 @@ actor LectureAnalysisService {
                     onStatus: onStatus
                 )
             } catch {
+                if sortedSegments.isEmpty { throw error }
                 await onStatus?("Провайдер не обработал фото — продолжаем составлять конспект по аудио.")
             }
         }
 
-        await onStatus?(
-            "Передаём в AI расшифровку: \(sortedSegments.count) фрагментов, \(fullTranscript.count) символов…"
-        )
+        await onStatus?(sortedSegments.isEmpty
+            ? "Составляем конспект по \(images.count) фотографиям…"
+            : "Передаём в AI расшифровку: \(sortedSegments.count) фрагментов, \(fullTranscript.count) символов…")
 
         // 1. Быстрый этап метаданных (название, предмет, теги, краткая суть)
         await onStatus?("Определяем тему и предмет через \(model)...")
@@ -118,7 +119,7 @@ actor LectureAnalysisService {
             visualContext: visualContext,
             onStatus: onStatus
         )
-        if let jevClient, let jevConfiguration {
+        if !fullTranscript.isEmpty, let jevClient, let jevConfiguration {
             metadata = await applyJevClassification(
                 metadata,
                 transcript: fullTranscript,
@@ -145,7 +146,9 @@ actor LectureAnalysisService {
         await onMetadata?(partialResult)
 
         // 2. Разбиение на части для прогрессивной генерации
-        let parts = partitionSegments(sortedSegments)
+        let parts = sortedSegments.isEmpty
+            ? [LecturePart(index: 1, total: 1, start: 0, end: 0, text: "")]
+            : partitionSegments(sortedSegments)
         var generatedParts: [String] = []
 
         for part in parts {
@@ -367,7 +370,8 @@ actor LectureAnalysisService {
         let prompt: String
         if transport == .gemini {
             prompt = """
-            Ты анализируешь расшифровку русской лекции для базы знаний Obsidian.
+            Ты анализируешь материалы русской лекции для базы знаний Obsidian: расшифровку и/или фотографии.
+            Если расшифровки нет, опирайся только на видимый учебный материал фотографий и не придумывай сказанное преподавателем.
             Выбери наиболее подходящий предмет из списка: \(subjects.joined(separator: ", ")).
 
             Верни строго JSON со следующими ключами:
@@ -397,7 +401,7 @@ actor LectureAnalysisService {
             ЗАДАНИЕ: верни только один JSON-объект без Markdown и пояснений.
             Поля: title, subject, confidence, alternatives, tags, keyConcepts, reminders, summary.
             Предмет выбери из списка: \(subjects.joined(separator: ", ")).
-            Текст уже предоставлен. Не проси прислать его снова.
+            Используй расшифровку и/или контекст фотографий. Если расшифровки нет, делай выводы только по фотографиям и не выдумывай устную часть лекции.
             """
         }
 
@@ -431,11 +435,12 @@ actor LectureAnalysisService {
             await onStatus?("Структурированный ответ не получен — запрашиваем обычный текст, чтобы продолжить…")
             let fallbackPrompt = """
             Ты оформляешь краткий конспект русской лекции для базы знаний Obsidian.
-            Сохрани только факты из расшифровки: тему, определения, правила, важные примеры и выводы.
+            Сохрани только факты из расшифровки и/или фотографий: тему, определения, правила, важные примеры и выводы.
+            Если расшифровки нет, опирайся только на видимые сведения фотографий.
             Верни связный Markdown без JSON, вступления и комментариев о своей работе.
 
-            РАСШИФРОВКА:
-            \(sampleTranscript)
+            ИСХОДНЫЙ МАТЕРИАЛ:
+            \(sampleTranscript.isEmpty ? "Расшифровки нет." : sampleTranscript)
 
             \(visualContext.isEmpty ? "" : "КОНТЕКСТ ФОТО:\n\(visualContext)")
             """
@@ -565,15 +570,15 @@ actor LectureAnalysisService {
             \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
             Если во фрагменте нет учебного содержания, напиши одну строку: «Содержательного материала нет».
             Верни только Markdown-конспект без вступления и мета-комментариев. Формулы оформляй в LaTeX.
-            НАЧАЛО ИСХОДНОГО ТЕКСТА
-            \(part.text)
-            КОНЕЦ ИСХОДНОГО ТЕКСТА
+            \(part.text.isEmpty
+                ? "Расшифровка отсутствует. Составь конспект только по видимому учебному содержанию фотографий."
+                : "НАЧАЛО ИСХОДНОГО ТЕКСТА\n\(part.text)\nКОНЕЦ ИСХОДНОГО ТЕКСТА")
             """
         } else {
             prompt = """
-            НАЧАЛО ИСХОДНОГО ТЕКСТА
-            \(part.text)
-            КОНЕЦ ИСХОДНОГО ТЕКСТА
+            \(part.text.isEmpty
+                ? "Расшифровки нет. Составь конспект только по фотографиям и не добавляй сведения, которых на них не видно."
+                : "НАЧАЛО ИСХОДНОГО ТЕКСТА\n\(part.text)\nКОНЕЦ ИСХОДНОГО ТЕКСТА")
 
             ЗАДАНИЕ: составь короткий аккуратный конспект русской лекции для студента.
             Тема: «\(title)». Предмет: \(subject). Фрагмент: \(partInfo).
@@ -583,7 +588,7 @@ actor LectureAnalysisService {
             \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
             Если учебного содержания нет, напиши одну строку: «Содержательного материала нет».
             Верни только Markdown: заголовки, определения, тезисы, списки, формулы и примеры.
-            Текст уже предоставлен. Не проси прислать его снова и не пиши, что он отсутствует.
+            \(part.text.isEmpty ? "Расшифровки нет; не упоминай её отсутствие в конспекте." : "Текст уже предоставлен. Не проси прислать его снова и не пиши, что он отсутствует.")
             """
         }
 
@@ -597,12 +602,12 @@ actor LectureAnalysisService {
            transport != .gemini,
            !Self.isGrounded(result, in: part.text + "\n" + visualContext) {
             await onStatus?("Ответ кастомной модели не совпал с расшифровкой — сохраняем проверенный текст фрагмента.")
-            return Self.safeTranscriptFallback(from: part.text)
+            return Self.safeTranscriptFallback(from: part.text.isEmpty ? visualContext : part.text)
         }
         guard isBadResult else { return result }
 
         await onStatus?("AI не увидел уже переданный фрагмент — сохраняем расшифровку без нового платного запроса.")
-        return Self.safeTranscriptFallback(from: part.text)
+        return Self.safeTranscriptFallback(from: part.text.isEmpty ? visualContext : part.text)
     }
 
     private static func isGrounded(_ note: String, in transcript: String) -> Bool {

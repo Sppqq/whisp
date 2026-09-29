@@ -7,7 +7,7 @@ import Observation
 import UniformTypeIdentifiers
 
 private struct LectureImportJob {
-    let audioURL: URL
+    let audioURLs: [URL]
     let imageURLs: [URL]
 }
 
@@ -73,8 +73,9 @@ final class AppModel {
     var inputDevices: [AudioInputDevice] = []
     var importedFileName: String?
     private var pendingImportJobs: [LectureImportJob] = []
+    private var stagedImportURLs: [URL] = []
     private(set) var isImportQueueActive = false
-    var pendingImportFileNames: [String] { pendingImportJobs.map { $0.audioURL.lastPathComponent } }
+    var pendingImportFileNames: [String] { pendingImportJobs.flatMap { $0.audioURLs.map(\.lastPathComponent) } }
     var needsScreenCapturePermission = false
     var needsMicrophonePermission = false
     private(set) var isWorking = false
@@ -364,6 +365,8 @@ final class AppModel {
 
     func cancelProcessing() async {
         pendingImportJobs.removeAll()
+        LectureImportStaging.cleanup(stagedImportURLs)
+        stagedImportURLs.removeAll()
         addProcessingLog("Запрос на отмену обработки...")
         statusMessage = "Отменяем обработку..."
         processingTask?.cancel()
@@ -382,40 +385,57 @@ final class AppModel {
         }
     }
 
-    func enqueueAudioImports(_ sourceURLs: [URL]) {
+    func enqueueLectureImports(audioURLs sourceURLs: [URL], imageURLs: [URL], combineAudio: Bool) {
         guard !isRecording, !isBatchRegenerating, !isRestoringFromWebDAV else {
             lastError = "Завершите текущую задачу перед импортом файлов"
             return
         }
 
-        let existingPaths = Set(pendingImportJobs.map { $0.audioURL.standardizedFileURL.path })
-        let unique = sourceURLs.filter { url in
-            url.isFileURL && !existingPaths.contains(url.standardizedFileURL.path)
+        let existingPaths = Set(pendingImportJobs.flatMap(\.audioURLs).map { $0.standardizedFileURL.path })
+        let audioURLs = sourceURLs.filter { url in
+            url.isFileURL
+                && UTType(filenameExtension: url.pathExtension)?.conforms(to: .audio) == true
+                && !existingPaths.contains(url.standardizedFileURL.path)
         }
-        guard !unique.isEmpty else { return }
-        let audioURLs = unique.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) == true }
-        let imageURLs = unique.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true }
+        let imageURLs = imageURLs.filter {
+            $0.isFileURL && UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
+        }
+        guard !audioURLs.isEmpty || !imageURLs.isEmpty else {
+            lastError = "Добавьте хотя бы одно аудио или фото."
+            return
+        }
         guard imageURLs.count <= 10 else {
             lastError = "К одной лекции можно добавить не более 10 фото."
             return
         }
-        guard !audioURLs.isEmpty else {
-            lastError = "Выберите хотя бы один аудиофайл. Фото можно добавить к аудио в том же окне."
-            return
+        if audioURLs.isEmpty {
+            pendingImportJobs.append(LectureImportJob(audioURLs: [], imageURLs: imageURLs))
+        } else if combineAudio {
+            pendingImportJobs.append(LectureImportJob(audioURLs: audioURLs, imageURLs: imageURLs))
+        } else {
+            pendingImportJobs.append(contentsOf: audioURLs.map {
+                LectureImportJob(audioURLs: [$0], imageURLs: imageURLs)
+            })
         }
-        pendingImportJobs.append(contentsOf: audioURLs.map { LectureImportJob(audioURL: $0, imageURLs: imageURLs) })
-        statusMessage = audioURLs.count == 1
-            ? "Аудио добавлено в очередь" + (imageURLs.isEmpty ? "" : " вместе с \(imageURLs.count) фото")
-            : "В очередь добавлено " + String(audioURLs.count) + " аудиофайлов"
+        stagedImportURLs.append(contentsOf: imageURLs)
+        statusMessage = audioURLs.isEmpty
+            ? "Создаём конспект по \(imageURLs.count) фото"
+            : combineAudio
+            ? "Готовим один урок из \(audioURLs.count) аудиофайлов"
+            : "Создаём отдельные уроки: \(audioURLs.count)"
 
         guard !isImportQueueActive else { return }
         isImportQueueActive = true
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.isImportQueueActive = false }
+            defer {
+                LectureImportStaging.cleanup(self.stagedImportURLs)
+                self.stagedImportURLs.removeAll()
+                self.isImportQueueActive = false
+            }
             while !self.pendingImportJobs.isEmpty, !Task.isCancelled {
                 let next = self.pendingImportJobs.removeFirst()
-                await self.importAudio(from: next.audioURL, images: next.imageURLs)
+                await self.importAudio(from: next.audioURLs, images: next.imageURLs)
             }
         }
     }
@@ -453,67 +473,104 @@ final class AppModel {
             await retryProcessing()
         }
     }
-    func importAudio(from sourceURL: URL, images: [URL] = []) async {
-        guard !isBusy else { return }
+    func importAudio(from sourceURLs: [URL], images: [URL] = []) async {
+        guard (!sourceURLs.isEmpty || !images.isEmpty), !isBusy else { return }
         isWorking = true
         defer { isWorking = false }
         processingTask?.cancel()
 
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.executeImportAudio(from: sourceURL, images: images)
+            await self.executeImportAudio(from: sourceURLs, images: images)
         }
         processingTask = task
         await task.value
     }
 
-    private func executeImportAudio(from sourceURL: URL, images: [URL]) async {
+    private func executeImportAudio(from sourceURLs: [URL], images: [URL]) async {
         resetSessionTasks()
         lastError = nil
-        let accessed = sourceURL.startAccessingSecurityScopedResource()
+        let accessedSources = sourceURLs.map { ($0, $0.startAccessingSecurityScopedResource()) }
         let accessedImages = images.map { ($0, $0.startAccessingSecurityScopedResource()) }
+        let firstAudioURL = sourceURLs.first
 
         var session = LectureSession()
         session.startedAt = Date()
         session.status = .processing
         session.captureSystemAudio = false
-        session.title = WhispFormatting.datedTitle(title: sourceURL.deletingPathExtension().lastPathComponent, date: session.startedAt ?? Date())
+        session.title = WhispFormatting.datedTitle(
+            title: firstAudioURL?.deletingPathExtension().lastPathComponent ?? "Конспект по фото",
+            date: session.startedAt ?? Date()
+        )
         currentSession = session
         selectedSessionID = session.id
-        importedFileName = sourceURL.lastPathComponent
+        importedFileName = sourceURLs.isEmpty
+            ? "Фото: \(images.count)"
+            : sourceURLs.map(\.lastPathComponent).joined(separator: ", ")
         activeProcessingSessionID = session.id
         processingProgress = 0.02
-        statusMessage = "Импортируем \(sourceURL.lastPathComponent)"
+        statusMessage = sourceURLs.isEmpty
+            ? "Импортируем фото для конспекта"
+            : sourceURLs.count == 1
+                ? "Импортируем \(firstAudioURL?.lastPathComponent ?? "аудиофайл")"
+                : "Объединяем \(sourceURLs.count) аудиофайлов"
         clearProcessingLogs()
-        addProcessingLog("Импорт файла: \(sourceURL.lastPathComponent)")
+        addProcessingLog(sourceURLs.isEmpty
+            ? "Импорт фото: \(images.count)"
+            : "Импорт аудио: \(sourceURLs.map(\.lastPathComponent).joined(separator: ", "))")
 
         defer {
             activeProcessingSessionID = nil
-            if accessed { sourceURL.stopAccessingSecurityScopedResource() }
+            accessedSources.forEach { url, didAccess in if didAccess { url.stopAccessingSecurityScopedResource() } }
             accessedImages.forEach { url, didAccess in if didAccess { url.stopAccessingSecurityScopedResource() } }
         }
 
         do {
             let directory = try await store.directory(for: session.id)
-            let preservedName = "Исходник-\(WhispFormatting.safePathComponent(sourceURL.lastPathComponent))"
-            let preservedURL = directory.appending(path: preservedName)
-            addProcessingLog("Копирование исходного аудио в рабочую папку...")
-            try await Task.detached(priority: .userInitiated) {
-                if FileManager.default.fileExists(atPath: preservedURL.path) {
-                    try FileManager.default.removeItem(at: preservedURL)
+            var preservedAudioURLs: [URL] = []
+            for (index, sourceURL) in sourceURLs.enumerated() {
+                let prefix = sourceURLs.count > 1 ? "Исходник-\(String(format: "%02d", index + 1))-" : "Исходник-"
+                let preservedURL = directory.appending(
+                    path: prefix + WhispFormatting.safePathComponent(sourceURL.lastPathComponent)
+                )
+                try await Task.detached(priority: .userInitiated) {
+                    try FileManager.default.copyItem(at: sourceURL, to: preservedURL)
+                }.value
+                preservedAudioURLs.append(preservedURL)
+            }
+            if !preservedAudioURLs.isEmpty {
+                session.importedAudioPath = preservedAudioURLs[0].lastPathComponent
+                if sourceURLs.count == 1 {
+                    _ = try await processor.prepareImportedAudio(source: preservedAudioURLs[0], directory: directory)
+                } else {
+                    var preparedURLs: [URL] = []
+                    var temporaryDirectories: [URL] = []
+                    defer { temporaryDirectories.forEach { try? FileManager.default.removeItem(at: $0) } }
+                    for (index, preservedURL) in preservedAudioURLs.enumerated() {
+                        let temporaryDirectory = directory.appending(
+                            path: "Подготовка-аудио-\(index + 1)",
+                            directoryHint: .isDirectory
+                        )
+                        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+                        temporaryDirectories.append(temporaryDirectory)
+                        preparedURLs.append(
+                            try await processor.prepareImportedAudio(source: preservedURL, directory: temporaryDirectory)
+                        )
+                    }
+                    let combined = directory.appending(path: "Микрофон.m4a")
+                    try await ImportedAudioComposer.concatenate(preparedURLs, destination: combined)
                 }
-                try FileManager.default.copyItem(at: sourceURL, to: preservedURL)
-            }.value
-
-            session.importedAudioPath = preservedName
+            }
             if !images.isEmpty {
-                addProcessingLog("Сохраняем фото лекции рядом с аудио…")
+                addProcessingLog("Сохраняем фото лекции…")
                 for (index, imageURL) in images.enumerated() {
                     let extensionName = imageURL.pathExtension.isEmpty ? "jpg" : imageURL.pathExtension.lowercased()
                     let baseName = WhispFormatting.safePathComponent(imageURL.deletingPathExtension().lastPathComponent)
                     let imageName = "Фото-\(String(format: "%02d", index + 1))-\(baseName).\(extensionName)"
                     let destination = directory.appending(path: imageName)
-                    try FileManager.default.copyItem(at: imageURL, to: destination)
+                    try await Task.detached(priority: .userInitiated) {
+                        try FileManager.default.copyItem(at: imageURL, to: destination)
+                    }.value
                     session.attachedImagePaths.append(imageName)
                 }
             }
@@ -524,10 +581,29 @@ final class AppModel {
 
             try Task.checkCancellation()
 
+            if sourceURLs.isEmpty {
+                guard settingsStore.isAnalysisProviderConfigured else {
+                    throw GeminiAPIError(
+                        code: 401,
+                        status: "API_KEY",
+                        message: "Сначала настройте провайдер анализа в Настройках",
+                        retryAfter: nil
+                    )
+                }
+                statusMessage = "Создаём конспект по фото"
+                processingProgress = 0.15
+                addProcessingLog("Расшифровки нет — используем только выбранные фотографии.")
+                await regenerateAnalysis(for: session.id)
+                return
+            }
+
             statusMessage = "Подготавливаем аудиодорожку..."
             processingProgress = 0.05
             addProcessingLog("Подготовка аудиофайла...")
-            let microphone = try await processor.prepareImportedAudio(source: preservedURL, directory: directory)
+            let microphone = directory.appending(path: "Микрофон.m4a")
+            guard FileManager.default.fileExists(atPath: microphone.path) else {
+                throw AudioPostProcessor.ProcessingError.noAudio
+            }
             currentMixURL = microphone
             player.load(microphone)
             let asset = AVURLAsset(url: microphone)
@@ -1091,7 +1167,7 @@ final class AppModel {
         let eligible = sessions.filter {
             $0.analysis != nil
                 && $0.createdReminderIDs.isEmpty
-                && (!$0.finalTranscript.isEmpty || !$0.rawTranscript.isEmpty)
+                && (!$0.finalTranscript.isEmpty || !$0.rawTranscript.isEmpty || !$0.attachedImagePaths.isEmpty)
         }
         guard !eligible.isEmpty else {
             statusMessage = "Готовых разборов для повторной проверки не найдено"
@@ -1396,7 +1472,8 @@ final class AppModel {
         defer { isGeneratingNotes = false }
 
         var analysisError: String?
-        if settingsStore.isAnalysisProviderConfigured, !session.finalTranscript.isEmpty {
+        if settingsStore.isAnalysisProviderConfigured,
+           (!session.finalTranscript.isEmpty || !session.attachedImagePaths.isEmpty) {
             do {
                 statusMessage = "Создаём конспект через \(settingsStore.analysisProviderName)..."
                 addProcessingLog("Начало анализа и составления конспекта...")
@@ -1551,7 +1628,9 @@ final class AppModel {
         }
         processingProgress = 1
         if let analysisError {
-            statusMessage = "Расшифровка сохранена. Конспект можно создать отдельно: \(analysisError)"
+            statusMessage = session.finalTranscript.isEmpty
+                ? "Фото сохранены, но конспект не создан: \(analysisError)"
+                : "Расшифровка сохранена. Конспект можно создать отдельно: \(analysisError)"
         } else {
             statusMessage = "Конспект обновлён"
         }
@@ -1567,9 +1646,11 @@ final class AppModel {
 
     func startBatchRegeneration(forceOverwrite: Bool) {
         guard !isBusy else { return }
-        let eligible = sessions.filter { !$0.finalTranscript.isEmpty || !$0.rawTranscript.isEmpty }
+        let eligible = sessions.filter {
+            !$0.finalTranscript.isEmpty || !$0.rawTranscript.isEmpty || !$0.attachedImagePaths.isEmpty
+        }
         guard !eligible.isEmpty else {
-            statusMessage = "Нет доступных лекций с расшифровкой"
+            statusMessage = "Нет лекций с аудио или фото для анализа"
             return
         }
 

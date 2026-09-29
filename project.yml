@@ -69,6 +69,8 @@ targets:
       - path: Whisp/Models
       - path: Whisp/Utilities/Formatting.swift
       - path: Whisp/Services/GeminiAPIClient.swift
+      - path: Whisp/Services/ImportedAudioComposer.swift
+      - path: Whisp/Services/LectureImportStaging.swift
       - path: Whisp/Services/JevAPIClient.swift
       - path: Whisp/Services/GeminiTranscriptionPayload.swift
       - path: Whisp/Services/KeychainStore.swift
@@ -83,6 +85,7 @@ targets:
       - path: Whisp/Services/StudyDashboardPlanner.swift
       - path: Whisp/Services/LibrarySearchIndex.swift
       - path: Whisp/Resources/Assets.xcassets
+      - path: Whisp/Views/LectureImportSetupView.swift
       - path: CHANGELOG.md
     info:
       path: WhispiOS/Resources/Info.plist
