@@ -560,6 +560,26 @@ private struct StartView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                if model.isBusy {
+                    Label {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Действие выполняется")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Запись и импорт временно отключены. \(model.statusMessage)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } icon: {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                    .accessibilityElement(children: .combine)
+                }
+
                 WhispGlassSurface(tint: WhispPalette.accent) {
                     VStack(alignment: .leading, spacing: 22) {
                         HStack {
