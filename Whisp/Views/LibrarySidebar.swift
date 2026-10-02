@@ -8,6 +8,19 @@ struct LibrarySidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            Button { model.showStartScreen() } label: {
+                Label("Новая лекция", systemImage: "plus")
+                    .font(.callout.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(WhispActionStyle(prominent: true))
+            .controlSize(.large)
+            .disabled(model.isRecording)
+            .help("Новая запись или импорт · ⌘N")
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+
             Button { model.showTodayDashboard() } label: {
                 Label("Сегодня", systemImage: "calendar")
                     .font(.body.weight(.medium))
