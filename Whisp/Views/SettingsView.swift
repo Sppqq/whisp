@@ -543,6 +543,16 @@ struct SettingsView: View {
         }
     }
 
+    private var primaryGeminiModelSelection: Binding<String> {
+        Binding(
+            get: { store.settings.analysisModel },
+            set: { newModel in
+                store.selectGeminiAnalysisModel(newModel)
+                testResult = "Основная модель: \(newModel)"
+            }
+        )
+    }
+
     @ViewBuilder private var geminiModelSettingsContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
@@ -559,18 +569,30 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Основная модель").font(.caption.weight(.semibold))
+                if store.settings.geminiAnalysisModels.count <= 4,
+                   store.settings.geminiAnalysisModels.allSatisfy({ $0.model.replacingOccurrences(of: "gemini-", with: "").count <= 18 }) {
+                    WhispGlassSegment(selection: primaryGeminiModelSelection, options: store.settings.geminiAnalysisModels.map { option in
+                        (option.model, option.model.replacingOccurrences(of: "gemini-", with: "").replacingOccurrences(of: "-", with: " "), nil)
+                    })
+                    .accessibilityLabel("Основная модель Gemini")
+                } else {
+                    Picker("Основная модель Gemini", selection: primaryGeminiModelSelection) {
+                        ForEach(store.settings.geminiAnalysisModels) { option in
+                            Text(option.model).tag(option.model)
+                        }
+                    }
+                    .labelsHidden()
+                }
+            }
+
             ForEach(Array(store.settings.geminiAnalysisModels.enumerated()), id: \.element.id) { index, option in
                 let isPrimary = store.settings.analysisModel == option.model
                 HStack(spacing: 8) {
-                    Button {
-                        store.selectGeminiAnalysisModel(option.model)
-                        testResult = "Основная модель: (option.model)"
-                    } label: {
-                        Image(systemName: isPrimary ? "largecircle.fill.circle" : "circle")
-                            .foregroundStyle(isPrimary ? Color.accentColor : .secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help(isPrimary ? "Основная модель" : "Выбрать основной моделью")
+                    Image(systemName: isPrimary ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(isPrimary ? Color.accentColor : .secondary)
+                        .accessibilityHidden(true)
 
                     Toggle("", isOn: Binding(
                         get: {
@@ -694,12 +716,15 @@ struct SettingsView: View {
             .onChange(of: store.proxy.isEnabled) { _, _ in
                 UserDefaults.standard.set(true, forKey: "proxy_explicitly_configured")
             }
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Тип прокси").font(.caption.weight(.semibold))
+            WhispGlassSegment(selection: $store.proxy.kind, options: [
+                (ProxyConfiguration.Kind.socks5, "SOCKS5", nil),
+                (ProxyConfiguration.Kind.http, "HTTP", nil)
+            ])
+            .accessibilityLabel("Тип прокси")
+        }
         HStack {
-            Picker("Тип", selection: $store.proxy.kind) {
-                Text("SOCKS5").tag(ProxyConfiguration.Kind.socks5)
-                Text("HTTP").tag(ProxyConfiguration.Kind.http)
-            }
-            .frame(width: 150)
             TextField("Хост", text: $store.proxy.host).whispGlassField()
             TextField("Порт", value: $store.proxy.port, format: .number.grouping(.never))
                 .frame(width: 92)
