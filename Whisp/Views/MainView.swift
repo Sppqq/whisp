@@ -8,7 +8,7 @@ struct MainView: View {
     @State private var selectedSubject = "Все"
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
-    var body: some View {
+    private var navigationContent: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             LibrarySidebar(model: model, selectedSubject: $selectedSubject)
                 .navigationSplitViewColumnWidth(min: 280, ideal: 310, max: 360)
@@ -66,6 +66,10 @@ struct MainView: View {
                 model.showsLibrary = true
             }
         }
+    }
+
+    private var recordingAlerts: some View {
+        navigationContent
         .alert("Завершить лекцию?", isPresented: $model.showStopConfirmation) {
             Button("Отмена", role: .cancel) { model.discardStopRequest() }
             Button("Завершить", role: .destructive) { Task { await model.confirmStop() } }
@@ -95,6 +99,10 @@ struct MainView: View {
         )) {
             Button("Закрыть") { model.lastError = nil }
         } message: { Text(model.lastError ?? "") }
+    }
+
+    private var applicationAlerts: some View {
+        recordingAlerts
         .alert("Нужен доступ к системному звуку", isPresented: $model.needsScreenCapturePermission) {
             Button("Открыть настройки macOS") { model.openScreenCaptureSettings() }
             Button("Позже", role: .cancel) { }
@@ -126,6 +134,10 @@ struct MainView: View {
                      : "Доступна версия \(release.version). Whisp скачает обновление, заменит приложение в /Applications и перезапустится.")
             }
         }
+    }
+
+    var body: some View {
+        applicationAlerts
         .sheet(isPresented: $model.showPostUpdateScreen) {
             PostUpdateView(
                 version: model.updateService.currentVersion,
