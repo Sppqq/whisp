@@ -3,6 +3,16 @@ import XCTest
 
 final class SessionStoreTests: XCTestCase {
     @MainActor
+    func testSyncReportsBusyOperationInsteadOfSilentlyIgnoringClick() async {
+        let model = AppModel()
+        model.currentSession = LectureSession()
+        model.isRestoringFromWebDAV = true
+        await model.syncCurrent()
+        XCTAssertNotNil(model.lastError)
+        XCTAssertEqual(model.currentSession?.status, .draft)
+    }
+
+    @MainActor
     func testNewLectureDuringBackgroundNotesKeepsProgressAndAllowsRecording() {
         let model = AppModel()
         model.isGeneratingNotes = true

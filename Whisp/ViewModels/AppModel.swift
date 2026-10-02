@@ -973,7 +973,15 @@ final class AppModel {
     }
 
     func syncCurrent(forceOverwriteRemote: Bool = false) async {
-        guard !isBusy, var session = currentSession else { return }
+        guard var session = currentSession else {
+            lastError = "Выберите лекцию для синхронизации."
+            return
+        }
+        guard !isRecording, !isWorking, !isRestoringFromWebDAV, !isBatchRegenerating,
+              activeAnalysisSessionID != session.id, session.status != .processing else {
+            lastError = "Синхронизация пока недоступна: дождитесь завершения записи, обработки этой лекции или текущей операции."
+            return
+        }
         isWorking = true
         defer { isWorking = false }
         guard !settingsStore.webDAV.baseURL.isEmpty else { lastError = "Настройте WebDAV"; return }
@@ -990,11 +998,11 @@ final class AppModel {
                 syncConflictPath = session.remotePath ?? "удалённая папка лекции"
                 session.status = .review
                 session.lastError = "На WebDAV уже есть изменения после последней синхронизации."
-                currentSession = session
+                if currentSession?.id == session.id { currentSession = session }
                 statusMessage = "Нужна проверка WebDAV"
                 webDAVState = .unavailable("Удалённая версия новее локальной")
                 showSyncConflict = true
-                try? await persistCurrent()
+                try? await persistSessionSnapshot(session)
                 return
             }
 
@@ -1003,22 +1011,27 @@ final class AppModel {
             session.status = .synced
             session.syncedAt = Date()
             session.lastError = nil
-            currentSession = session
+            if currentSession?.id == session.id { currentSession = session }
             statusMessage = "Синхронизировано"
             webDAVState = .available
             syncRetryTask?.cancel()
             syncRetryTask = nil
-            try await persistCurrent()
+            try await persistSessionSnapshot(session)
         } catch {
             session.status = .uploading
             session.lastError = error.localizedDescription
-            currentSession = session
+            if currentSession?.id == session.id { currentSession = session }
             lastError = error.localizedDescription
             statusMessage = "Ошибка WebDAV"
             webDAVState = .unavailable(error.localizedDescription)
-            try? await persistCurrent()
+            try? await persistSessionSnapshot(session)
             scheduleSyncRetry()
         }
+    }
+
+    private func persistSessionSnapshot(_ session: LectureSession) async throws {
+        if let index = sessions.firstIndex(where: { $0.id == session.id }) { sessions[index] = session }
+        try await store.save(session)
     }
 
     func overwriteRemoteAfterConflict() async {

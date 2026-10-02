@@ -14,15 +14,11 @@ struct ReviewView: View {
     @State private var showPhotoImporter = false
     @State private var showLectureDetails = false
     @State private var showStudyDetails = false
-    @State private var isReadingChromeHidden = false
     var body: some View {
         VStack(spacing: 0) {
-            readingChrome
-                .frame(height: isReadingChromeHidden ? 0 : nil)
-                .opacity(isReadingChromeHidden ? 0 : 1)
-                .clipped()
-                .accessibilityHidden(isReadingChromeHidden)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isReadingChromeHidden)
+            if !isPreviewMode || !["student", "notes"].contains(tab) {
+                readingChrome
+            }
 
             Group {
                 switch tab {
@@ -48,7 +44,7 @@ struct ReviewView: View {
                             MarkdownPreview(
                                 markdown: currentContent,
                                 showsDocumentTitle: false,
-                                onScrollOffsetChange: updateReadingChromeVisibility
+                                header: AnyView(readingChrome)
                             )
                         } else {
                             editor(binding: Binding(get: { model.currentSession?.studentNotesMarkdown ?? "" }, set: { model.updateReview(studentNotes: $0) }))
@@ -76,7 +72,7 @@ struct ReviewView: View {
                             MarkdownPreview(
                                 markdown: currentContent,
                                 showsDocumentTitle: false,
-                                onScrollOffsetChange: updateReadingChromeVisibility
+                                header: AnyView(readingChrome)
                             )
                         } else {
                             editor(binding: Binding(get: { model.currentSession?.notesMarkdown ?? "" }, set: { model.updateReview(notes: $0) }))
@@ -185,7 +181,6 @@ struct ReviewView: View {
             reviewFooter
         }
         .task(id: model.currentSession?.id) { await model.loadPlayback(source: audioSource) }
-        .onChange(of: tab) { _, _ in isReadingChromeHidden = false }
         .onChange(of: audioSource) { Task { await model.loadPlayback(source: audioSource) } }
         .background(WhispPalette.canvas)
         .fileImporter(
@@ -281,7 +276,7 @@ struct ReviewView: View {
 
                         Button { Task { await model.syncCurrent() } } label: { WhispGlassActionLabel(title: "Синхронизировать", systemImage: "icloud.and.arrow.up") }
                             .buttonStyle(.plain)
-                            .disabled(model.currentSession?.status == .processing)
+
                     }
                 }
     }
@@ -454,11 +449,7 @@ struct ReviewView: View {
         return WhispFormatting.lectureDate(date)
     }
 
-    private func updateReadingChromeVisibility(_ offset: CGFloat) {
-        let shouldHide = offset > 56
-        guard shouldHide != isReadingChromeHidden else { return }
-        isReadingChromeHidden = shouldHide
-    }
+
 
     private var metadataStrip: some View {
         Group {

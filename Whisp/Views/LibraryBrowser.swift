@@ -53,7 +53,7 @@ struct LibraryBrowser: View {
                 ForEach(sessions) { session in
                     LectureRow(session: session, query: searchText, isSelected: model.showsLibrary && model.selectedSessionID == session.id)
                         .tag(session.id)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
+                        .listRowInsets(EdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10))
                         .contextMenu {
                             Button("Добавить конспект в очередь", systemImage: "sparkles") { model.enqueueAnalysis(for: session.id) }
                                 .disabled(model.isAnalysisQueued(for: session.id))
@@ -142,14 +142,17 @@ private struct LectureRow: View {
                         .help("Есть ручные правки")
                 }
                 Spacer(minLength: 4)
+                Image(systemName: session.cloudSyncIcon)
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(secondaryColor)
+                    .frame(width: 14)
+                    .accessibilityLabel(session.cloudSyncTitle)
+                    .help(cloudSyncDescription)
                 Text(WhispFormatting.lectureDate(session.startedAt ?? session.createdAt))
                     .foregroundStyle(secondaryColor)
+                    .fixedSize()
             }
             .font(.caption2)
-            Label(session.cloudSyncTitle, systemImage: session.cloudSyncIcon)
-                .font(.caption2)
-                .foregroundStyle(secondaryColor)
-                .help(session.syncedAt.map { "Последняя успешная загрузка: \($0.formatted(date: .numeric, time: .shortened))" } ?? "Лекция ещё не загружена в WebDAV")
             if let snippet = matchingSnippet, !snippet.isEmpty {
                 Text(MarkdownDisplayFormatting.attributed(snippet.replacingOccurrences(of: #"^(?:#{1,6}|[-*])\s+"#, with: "", options: .regularExpression)))
                     .font(.caption2)
@@ -158,7 +161,12 @@ private struct LectureRow: View {
                     .padding(.top, 1)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
+    }
+
+    private var cloudSyncDescription: String {
+        guard let date = session.syncedAt else { return session.cloudSyncTitle }
+        return "\(session.cloudSyncTitle). Последняя успешная загрузка: \(date.formatted(date: .numeric, time: .shortened))"
     }
 
     private var matchingSnippet: String? {
