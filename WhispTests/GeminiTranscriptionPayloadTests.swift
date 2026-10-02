@@ -67,3 +67,71 @@ final class GeminiTranscriptionPayloadTests: XCTestCase {
         }
     }
 }
+
+
+final class GeminiLectureTextPayloadTests: XCTestCase {
+    func testLectureTextSurvivesSerializationWithAndWithoutPhotos() throws {
+        let transcript = "[00:01] Преподаватель: Митоз — деление клетки.\n[00:12] Дочерние клетки сохраняют набор хромосом."
+        for images in [[], [GeminiAPIClient.InputImage(mimeType: "image/jpeg", data: Data([1, 2, 3]))]] {
+            let body = GeminiAPIClient.textInteractionRequest(prompt: transcript, model: "test", images: images)
+            let data = try JSONSerialization.data(withJSONObject: body)
+            let decoded = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let input = try XCTUnwrap(decoded["input"] as? [[String: Any]])
+            XCTAssertEqual(input.count, 1)
+            XCTAssertEqual(input[0]["type"] as? String, "user_input")
+            let content = try XCTUnwrap(input[0]["content"] as? [[String: Any]])
+            XCTAssertEqual(content[0]["text"] as? String, transcript)
+            XCTAssertEqual(content.count, 1 + images.count)
+            XCTAssertEqual(decoded["store"] as? Bool, false)
+        }
+    }
+
+    func testKeepsEveryTextBlockOfFinalModelOutput() throws {
+        let json = ###"{"steps":[{"type":"model_output","content":[{"type":"text","text":"Промежуточный ответ"}]},{"type":"thought","content":[]},{"type":"model_output","content":[{"type":"text","text":"## Митоз"},{"type":"text","text":"Деление клетки."}]}]}"###
+        let text = try GeminiAPIClient.extractText(Data(json.utf8), transport: .gemini)
+        XCTAssertEqual(text, "## Митоз\nДеление клетки.")
+    }
+}
+
+
+final class LectureInputRegressionTests: XCTestCase {
+    func testSparseLongLectureIsNotSplitBySilentTime() {
+        let segments = (0..<176).map { index in
+            TranscriptSegment(start: Double(index * 28), end: Double(index * 28 + 1),
+                text: "Короткая реплика урока", source: .geminiLive, model: "test")
+        }
+        let parts = LectureAnalysisService.partitionSegments(segments)
+        XCTAssertEqual(parts.count, 1)
+        XCTAssertTrue(parts[0].text.contains("[00:00]"))
+        XCTAssertTrue(parts[0].text.contains(WhispFormatting.timestamp(segments.last!.start)))
+    }
+
+    func testTextRequestsAreNotAcceptedAsNotes() {
+        XCTAssertTrue(LectureAnalysisService.isRetrievalPlaceholder("Кидай текст."))
+        XCTAssertTrue(LectureAnalysisService.isRetrievalPlaceholder("Пришли текст лекции"))
+        XCTAssertFalse(LectureAnalysisService.isRetrievalPlaceholder("## Лексика\nОбсуждали образ персонажа."))
+    }
+}
+
+
+final class NoteGenerationQueueTests: XCTestCase {
+    @MainActor
+    func testQueuePreservesOrderDeduplicatesAndRemovesPendingJobs() {
+        let model = AppModel()
+        let segment = TranscriptSegment(start: 0, end: 1, text: "Учебный материал", source: .geminiLive, model: "test")
+        let first = LectureSession(rawTranscript: [segment])
+        let second = LectureSession(finalTranscript: [segment])
+        let empty = LectureSession()
+        model.sessions = [first, second, empty]
+        model.enqueueAnalysis(for: first.id)
+        model.enqueueAnalysis(for: second.id)
+        model.enqueueAnalysis(for: first.id)
+        model.enqueueAnalysis(for: empty.id)
+        XCTAssertEqual(model.queuedAnalysisSessionIDs, [first.id, second.id])
+        XCTAssertTrue(model.isAnalysisQueued(for: first.id))
+        model.removeQueuedAnalysis(for: first.id)
+        XCTAssertEqual(model.queuedAnalysisSessionIDs, [second.id])
+        model.removeQueuedAnalysis(for: second.id)
+        XCTAssertTrue(model.queuedAnalysisSessionIDs.isEmpty)
+    }
+}

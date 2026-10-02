@@ -1,9 +1,13 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import PhotosUI
 
 struct MobileRootView: View {
     @Environment(MobileAppModel.self) private var model
     @State private var showImporter = false
+    @State private var showImportSetup = false
+    @State private var importSetupAudioURLs: [URL] = []
+    @State private var importSetupImageURLs: [URL] = []
     @State private var showSettings = false
     @State private var showToday = false
 
@@ -15,7 +19,7 @@ struct MobileRootView: View {
                     ContentUnavailableView(
                         "Пока нет лекций",
                         systemImage: "waveform",
-                        description: Text("Запишите лекцию или импортируйте аудиофайл.")
+                        description: Text("Запишите лекцию или импортируйте аудио и фото — вместе или только фото.")
                     )
                     .listRowBackground(Color.clear)
                 } else {
@@ -61,14 +65,44 @@ struct MobileRootView: View {
         }
         .fileImporter(
             isPresented: $showImporter,
-            allowedContentTypes: [.audio, .mpeg4Audio, .mp3, .wav],
-            allowsMultipleSelection: false
+            allowedContentTypes: [.audio, .image],
+            allowsMultipleSelection: true
         ) { result in
             switch result {
             case .success(let urls):
-                if let url = urls.first { Task { await model.importAudio(url) } }
+                importSetupAudioURLs = urls.filter {
+                    UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) == true
+                }
+                importSetupImageURLs = urls.filter {
+                    UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
+                }
+                if importSetupAudioURLs.isEmpty && importSetupImageURLs.isEmpty {
+                    model.errorMessage = "Выберите хотя бы одно аудио или фото."
+                } else {
+                    showImportSetup = true
+                }
             case .failure(let error):
                 model.errorMessage = error.localizedDescription
+            }
+        }
+        .sheet(isPresented: $showImportSetup, onDismiss: {
+            importSetupAudioURLs = []
+            importSetupImageURLs = []
+        }) {
+            LectureImportSetupView(
+                initialAudioURLs: importSetupAudioURLs,
+                initialImageURLs: importSetupImageURLs
+            ) { audioURLs, images, combineAudio in
+                Task {
+                    if audioURLs.isEmpty || combineAudio {
+                        await model.importAudio(audioURLs, images: images)
+                    } else {
+                        for audioURL in audioURLs {
+                            await model.importAudio([audioURL], images: images)
+                        }
+                    }
+                    LectureImportStaging.cleanup(images)
+                }
             }
         }
         .sheet(isPresented: $showSettings) { MobileSettingsView() }
@@ -203,6 +237,9 @@ private struct LectureRow: View {
 struct MobileLectureView: View {
     @Environment(MobileAppModel.self) private var model
     @State private var section: LectureSection = .notebook
+    @State private var showPhotoFileImporter = false
+    @State private var selectedGalleryPhotos: [PhotosPickerItem] = []
+    @State private var isLoadingGalleryPhotos = false
     let session: LectureSession
 
     var body: some View {
@@ -228,6 +265,8 @@ struct MobileLectureView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 .background(.thinMaterial, in: .rect(cornerRadius: 12))
+
+                photoAttachments
 
                 Picker("Представление", selection: Binding(
                     get: { section },
@@ -298,6 +337,23 @@ struct MobileLectureView: View {
         .navigationTitle("Лекция")
         .navigationBarTitleDisplayMode(.inline)
         .animation(.snappy(duration: 0.28), value: section)
+        .fileImporter(
+            isPresented: $showPhotoFileImporter,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard !urls.isEmpty else { return }
+                Task { await model.attachPhotos(urls, to: session.id) }
+            case .failure(let error):
+                model.errorMessage = error.localizedDescription
+            }
+        }
+        .onChange(of: selectedGalleryPhotos) { _, items in
+            guard !items.isEmpty else { return }
+            Task { await addGalleryPhotos(items) }
+        }
         .safeAreaInset(edge: .bottom) {
             MobileLectureActionBar(session: session)
                 .padding(.horizontal, 14)
@@ -324,6 +380,74 @@ struct MobileLectureView: View {
             session.quizMarkdown.nonEmpty ?? "Вопросы к зачёту ещё не созданы."
         }
     }
+
+    private var photoAttachments: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Фото лекции · \(session.attachedImagePaths.count)/10", systemImage: "photo.stack")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Button {
+                    showPhotoFileImporter = true
+                } label: {
+                    Label("Файлы", systemImage: "folder")
+                }
+                .disabled(session.attachedImagePaths.count >= 10 || isLoadingGalleryPhotos || model.isProcessing || model.isImporting)
+
+                PhotosPicker(
+                    selection: $selectedGalleryPhotos,
+                    maxSelectionCount: max(1, 10 - session.attachedImagePaths.count),
+                    matching: .images
+                ) {
+                    Label("Галерея", systemImage: "photo.on.rectangle")
+                }
+                .disabled(session.attachedImagePaths.count >= 10 || isLoadingGalleryPhotos || model.isProcessing || model.isImporting)
+            }
+            ForEach(session.attachedImagePaths, id: \.self) { name in
+                Label(name, systemImage: "photo")
+                    .font(.caption)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+            }
+            if isLoadingGalleryPhotos {
+                ProgressView("Добавляем фото из галереи…")
+                    .font(.caption)
+            }
+            if !session.attachedImagePaths.isEmpty {
+                Text("Добавьте снимки, затем нажмите ✨, чтобы пересобрать конспект с их учётом.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thinMaterial, in: .rect(cornerRadius: 14))
+    }
+
+    @MainActor
+    private func addGalleryPhotos(_ items: [PhotosPickerItem]) async {
+        isLoadingGalleryPhotos = true
+        defer {
+            isLoadingGalleryPhotos = false
+            selectedGalleryPhotos = []
+        }
+        var stagedURLs: [URL] = []
+        do {
+            for item in items {
+                guard let data = try await item.loadTransferable(type: Data.self) else { continue }
+                let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+                stagedURLs.append(try LectureImportStaging.writePhoto(data, filename: "Фото-\(UUID().uuidString).\(ext)"))
+            }
+            guard !stagedURLs.isEmpty else {
+                model.errorMessage = "Не удалось прочитать фото из галереи."
+                return
+            }
+            await model.attachPhotos(stagedURLs, to: session.id)
+        } catch {
+            model.errorMessage = error.localizedDescription
+        }
+        LectureImportStaging.cleanup(stagedURLs)
+    }
 }
 
 private struct MobileLectureActionBar: View {
@@ -332,6 +456,15 @@ private struct MobileLectureActionBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            iconButton("sparkles", accessibilityLabel: "Перегенерировать конспект с фото") {
+                Task { await model.regenerateAnalysis(for: session.id) }
+            } isDisabled: {
+                model.isSyncingWebDAV || model.isProcessing || model.isImporting
+                    || (session.finalTranscript.isEmpty && session.attachedImagePaths.isEmpty)
+            }
+            Divider()
+                .frame(height: 24)
+                .opacity(0.45)
             iconButton("arrow.triangle.2.circlepath", accessibilityLabel: "Синхронизировать с WebDAV") {
                 Task { await model.sync(session) }
             } isDisabled: { model.isSyncingWebDAV || model.isProcessing || model.isImporting }
@@ -345,7 +478,7 @@ private struct MobileLectureActionBar: View {
         .padding(6)
         .background(.black.opacity(0.58), in: .capsule)
         .glassEffect(.regular.interactive(), in: .capsule)
-        .frame(width: 108, height: 56)
+        .frame(width: 156, height: 56)
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(.snappy(duration: 0.25), value: session.id)
     }

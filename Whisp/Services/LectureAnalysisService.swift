@@ -4,7 +4,6 @@ actor LectureAnalysisService {
     private let client: GeminiAPIClient
     private let model: String
     private let fallbackModels: [String]
-    private let transport: ProviderTransport
     private let jevClient: JevAPIClient?
     private let jevConfiguration: JevConfiguration?
 
@@ -13,13 +12,11 @@ actor LectureAnalysisService {
         model: String,
         fallbackModel: String? = nil,
         fallbackModels: [String] = [],
-        transport: ProviderTransport = .gemini,
         jevClient: JevAPIClient? = nil,
         jevConfiguration: JevConfiguration? = nil
     ) {
         self.client = client
         self.model = model
-        self.transport = transport
         self.jevClient = jevClient
         self.jevConfiguration = jevConfiguration
         var candidates = fallbackModel.map { [$0] } ?? []
@@ -58,12 +55,14 @@ actor LectureAnalysisService {
     func analyze(
         segments: [TranscriptSegment],
         subjects: [String],
+        images: [GeminiAPIClient.InputImage] = [],
+        imageNames: [String] = [],
         onStatus: (@Sendable (String) async -> Void)? = nil,
         onMetadata: (@Sendable (AnalysisResult) async -> Void)? = nil,
         onPartCompleted: (@Sendable (_ currentPart: Int, _ totalParts: Int, _ partText: String) async -> Void)? = nil
     ) async throws -> AnalysisResult {
         let sortedSegments = segments.sorted { $0.start < $1.start }
-        guard !sortedSegments.isEmpty else {
+        guard !sortedSegments.isEmpty || !images.isEmpty else {
             return AnalysisResult(
                 title: "Новая лекция",
                 subject: "Не определено",
@@ -81,14 +80,43 @@ actor LectureAnalysisService {
             "[\(WhispFormatting.timestamp($0.start))] \($0.speaker.map { "\($0): " } ?? "")\($0.text)"
         }.joined(separator: "\n")
 
-        await onStatus?(
-            "Передаём в AI расшифровку: \(sortedSegments.count) фрагментов, \(fullTranscript.count) символов…"
-        )
+        var visualContext = ""
+        if !images.isEmpty {
+            await onStatus?("Анализируем фото доски и слайдов через \(model)…")
+            let imageLabels = images.indices.map { index in
+                "IMAGE_\(index + 1): \(imageNames.indices.contains(index) ? imageNames[index] : "фото \(index + 1)")"
+            }.joined(separator: "\n")
+            do {
+                visualContext = try await generateText(
+                    prompt: """
+                    Проанализируй приложенные фотографии лекции. Сопоставляй изображения строго по порядку с метками:
+                    \(imageLabels)
+
+                    Для каждой фотографии кратко извлеки только видимое и учебно важное: текст с доски или слайда, формулы, схемы, подписи и примеры. Если надпись нельзя уверенно прочесть, так и укажи. Не додумывай содержание. Верни результат отдельным блоком для каждой метки.
+                    """,
+                    responseSchema: nil,
+                    images: images,
+                    onStatus: onStatus
+                )
+            } catch {
+                if sortedSegments.isEmpty { throw error }
+                await onStatus?("Провайдер не обработал фото — продолжаем составлять конспект по аудио.")
+            }
+        }
+
+        await onStatus?(sortedSegments.isEmpty
+            ? "Составляем конспект по \(images.count) фотографиям…"
+            : "Передаём в AI расшифровку: \(sortedSegments.count) фрагментов, \(fullTranscript.count) символов…")
 
         // 1. Быстрый этап метаданных (название, предмет, теги, краткая суть)
         await onStatus?("Определяем тему и предмет через \(model)...")
-        var metadata = try await extractMetadata(transcript: fullTranscript, subjects: subjects, onStatus: onStatus)
-        if let jevClient, let jevConfiguration {
+        var metadata = try await extractMetadata(
+            transcript: fullTranscript,
+            subjects: subjects,
+            visualContext: visualContext,
+            onStatus: onStatus
+        )
+        if !fullTranscript.isEmpty, let jevClient, let jevConfiguration {
             metadata = await applyJevClassification(
                 metadata,
                 transcript: fullTranscript,
@@ -115,7 +143,9 @@ actor LectureAnalysisService {
         await onMetadata?(partialResult)
 
         // 2. Разбиение на части для прогрессивной генерации
-        let parts = partitionSegments(sortedSegments)
+        let parts = sortedSegments.isEmpty
+            ? [LecturePart(index: 1, total: 1, start: 0, end: 0, text: "")]
+            : Self.partitionSegments(sortedSegments)
         var generatedParts: [String] = []
 
         for part in parts {
@@ -130,6 +160,7 @@ actor LectureAnalysisService {
                 part: part,
                 title: metadata.title,
                 subject: metadata.subject,
+                visualContext: visualContext,
                 onStatus: onStatus
             )
             let formattedPart = WhispFormatting.formatMarkdownNotes(partNotes)
@@ -139,11 +170,9 @@ actor LectureAnalysisService {
 
         let combinedPartNotes = generatedParts.joined(separator: "\n\n")
         let consolidatedNotes: String
-        // A single part is already a complete note. Sending it through a
-        // second prompt only adds latency and can make context-compressing
-        // OpenAI-compatible gateways replace the text with a retrieval hash.
-        let canConsolidate = transport == .gemini
-            && generatedParts.count > 1
+        // A single part is already complete. Consolidate multiple parts for
+        // every provider, keeping the originals if the editorial pass fails.
+        let canConsolidate = generatedParts.count > 1
             && combinedPartNotes.count <= 30_000
         if !canConsolidate {
             if generatedParts.count > 1 {
@@ -175,7 +204,11 @@ actor LectureAnalysisService {
             }
         }
 
-        let formattedNotes = WhispFormatting.formatMarkdownNotes(consolidatedNotes)
+        let notesWithImages = Self.insertingImageEmbeds(
+            into: consolidatedNotes,
+            imageNames: imageNames
+        )
+        let formattedNotes = WhispFormatting.formatMarkdownNotes(notesWithImages)
         partialResult.studentNotebook = formattedNotes
         partialResult.detailedNotes = formattedNotes
 
@@ -227,9 +260,14 @@ actor LectureAnalysisService {
         }
     }
 
-    private static func isRetrievalPlaceholder(_ text: String) -> Bool {
+    static func isRetrievalPlaceholder(_ text: String) -> Bool {
         let normalized = text.lowercased()
-        return normalized.contains("ccr retrieve")
+        return normalized.contains("кидай текст")
+            || normalized.contains("пришли текст")
+            || normalized.contains("пришлите текст")
+            || normalized.contains("отправь текст")
+            || normalized.contains("отправьте текст")
+            || normalized.contains("ccr retrieve")
             || normalized.contains("retrieve hash=")
             || normalized.contains("не отобразились части конспекта")
             || normalized.contains("пришлите текст частей")
@@ -252,12 +290,11 @@ actor LectureAnalysisService {
             || normalized.contains("данные для обработки отсутствуют")
     }
 
-    private func partitionSegments(_ segments: [TranscriptSegment]) -> [LecturePart] {
+    static func partitionSegments(_ segments: [TranscriptSegment]) -> [LecturePart] {
         let totalChars = segments.reduce(0) { $0 + $1.text.count }
-        let totalDuration = (segments.last?.end ?? 0) - (segments.first?.start ?? 0)
 
         // Для коротких записей достаточно 1 части
-        guard totalChars > 14_000 || totalDuration > 1_000 else {
+        guard totalChars > 18_000 else {
             let text = segments.map {
                 "[\(WhispFormatting.timestamp($0.start))] \($0.speaker.map { "\($0): " } ?? "")\($0.text)"
             }.joined(separator: "\n")
@@ -270,25 +307,21 @@ actor LectureAnalysisService {
             )]
         }
 
-        // Целевой размер части: ~18 000 символов или ~15 минут аудио
+        // Sparse transcripts can span hours; split by text volume, not silence.
         let targetCharsPerPart = 18_000
-        let targetDurationPerPart = 1_000.0
 
         var groups: [[TranscriptSegment]] = []
         var currentGroup: [TranscriptSegment] = []
         var currentChars = 0
-        var groupStartTime = segments.first?.start ?? 0
 
         for segment in segments {
             currentGroup.append(segment)
             currentChars += segment.text.count
-            let elapsedInGroup = segment.end - groupStartTime
 
-            if (currentChars >= targetCharsPerPart && elapsedInGroup >= 600) || elapsedInGroup >= targetDurationPerPart {
+            if currentChars >= targetCharsPerPart {
                 groups.append(currentGroup)
                 currentGroup = []
                 currentChars = 0
-                groupStartTime = segment.end
             }
         }
         if !currentGroup.isEmpty {
@@ -317,6 +350,7 @@ actor LectureAnalysisService {
     private func extractMetadata(
         transcript: String,
         subjects: [String],
+        visualContext: String,
         onStatus: (@Sendable (String) async -> Void)?
     ) async throws -> MetadataEnvelope {
         let sampleTranscript: String
@@ -328,39 +362,27 @@ actor LectureAnalysisService {
             sampleTranscript = transcript
         }
 
-        let prompt: String
-        if transport == .gemini {
-            prompt = """
-            Ты анализируешь расшифровку русской лекции для базы знаний Obsidian.
-            Выбери наиболее подходящий предмет из списка: \(subjects.joined(separator: ", ")).
+        let prompt = """
+        Ты анализируешь материалы русской лекции для базы знаний Obsidian: расшифровку и/или фотографии.
+        \(sampleTranscript.isEmpty ? "Расшифровки нет: опирайся только на видимый учебный материал фотографий." : "Ниже передана расшифровка для анализа. Используй её как источник; не проси прислать текст повторно.")
+        Выбери наиболее подходящий предмет из списка: \(subjects.joined(separator: ", ")).
 
-            Верни строго JSON со следующими ключами:
-            - title: точное, ёмкое и понятное название темы лекции (без кавычек и дат)
-            - subject: предмет из предложенного списка (или самый точный школьный/университетский предмет)
-            - confidence: число от 0.0 до 1.0
-            - alternatives: массив до 3 альтернативных предметов
-            - tags: массив из 3-6 тегов для Obsidian
-            - keyConcepts: массив из 3-7 ключевых понятий
-            - reminders: только реальные задания из лекции, до 5 элементов; если их нет, пустой массив
-            - summary: краткая суть лекции (1-2 ёмких абзаца без воды)
+        Верни строго JSON со следующими ключами:
+        - title: точное, ёмкое и понятное название темы лекции (без кавычек и дат)
+        - subject: предмет из предложенного списка (или самый точный школьный/университетский предмет)
+        - confidence: число от 0.0 до 1.0
+        - alternatives: массив до 3 альтернативных предметов
+        - tags: массив из 3-6 тегов для Obsidian
+        - keyConcepts: массив из 3-7 ключевых понятий
+        - reminders: только реальные задания из лекции, до 5 элементов; если их нет, пустой массив
+        - summary: краткая суть лекции (1-2 ёмких абзаца без воды)
 
-            НАЧАЛО ИСХОДНОГО ТЕКСТА
-            \(sampleTranscript)
-            КОНЕЦ ИСХОДНОГО ТЕКСТА
-            """
-        } else {
-            prompt = """
-            НАЧАЛО ИСХОДНОГО ТЕКСТА
-            \(sampleTranscript)
-            КОНЕЦ ИСХОДНОГО ТЕКСТА
+        НАЧАЛО ИСХОДНОГО ТЕКСТА
+        \(sampleTranscript)
+        КОНЕЦ ИСХОДНОГО ТЕКСТА
 
-            ЗАДАНИЕ: верни только один JSON-объект без Markdown и пояснений.
-            Поля: title, subject, confidence, alternatives, tags, keyConcepts, reminders, summary.
-            Предмет выбери из списка: \(subjects.joined(separator: ", ")).
-            Текст уже предоставлен. Не проси прислать его снова.
-            """
-        }
-
+        \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
+        """
         let schema: [String: Any] = [
             "type": "OBJECT",
             "properties": [
@@ -384,18 +406,17 @@ actor LectureAnalysisService {
         do {
             text = try await generateText(prompt: prompt, responseSchema: schema, onStatus: onStatus)
         } catch let structuredError {
-            if transport != .gemini {
-                await onStatus?("Кастомный провайдер не вернул JSON — не повторяем платный запрос, продолжаем без метаданных.")
-                return Self.neutralMetadata(subjects: subjects)
-            }
             await onStatus?("Структурированный ответ не получен — запрашиваем обычный текст, чтобы продолжить…")
             let fallbackPrompt = """
             Ты оформляешь краткий конспект русской лекции для базы знаний Obsidian.
-            Сохрани только факты из расшифровки: тему, определения, правила, важные примеры и выводы.
+            Сохрани только факты из расшифровки и/или фотографий: тему, определения, правила, важные примеры и выводы.
+            Если расшифровки нет, опирайся только на видимые сведения фотографий.
             Верни связный Markdown без JSON, вступления и комментариев о своей работе.
 
-            РАСШИФРОВКА:
-            \(sampleTranscript)
+            ИСХОДНЫЙ МАТЕРИАЛ:
+            \(sampleTranscript.isEmpty ? "Расшифровки нет." : sampleTranscript)
+
+            \(visualContext.isEmpty ? "" : "КОНТЕКСТ ФОТО:\n\(visualContext)")
             """
 
             do {
@@ -439,10 +460,6 @@ actor LectureAnalysisService {
             }
             return metadata
         } catch {
-            if transport != .gemini {
-                await onStatus?("Кастомный провайдер вернул не JSON, а обычный текст — не сохраняем его как метаданные.")
-                return Self.neutralMetadata(subjects: subjects)
-            }
             let plainSummary = text.trimmingCharacters(in: .whitespacesAndNewlines)
             return MetadataEnvelope(
                 title: "Лекция (\(subjects.first ?? "Новая"))",
@@ -502,76 +519,41 @@ actor LectureAnalysisService {
         part: LecturePart,
         title: String,
         subject: String,
+        visualContext: String,
         onStatus: (@Sendable (String) async -> Void)?
     ) async throws -> String {
         let partInfo = part.total > 1
             ? "часть \(part.index) из \(part.total) (интервал: \(part.timeRange))"
             : "вся лекция"
 
-        let prompt: String
-        if transport == .gemini {
-            prompt = """
-            Ты оформляешь конспект русской лекции для базы знаний Obsidian.
-            Тема всей лекции: «\(title)». Предмет: \(subject).
-            Текущий фрагмент: \(partInfo).
-            Синтезируй конспект, а не расшифровку.
-            Не переписывай строки исходника, таймкоды, номера спикеров и диалоги дословно.
-            Объедини близкие мысли в 3–8 смысловых пунктов, убери приветствия, бытовой шум, повторы и обрывки.
-            Сохрани только определения, правила, задания, формулы, примеры и выводы.
-            Если во фрагменте нет учебного содержания, напиши одну строку: «Содержательного материала нет».
-            Верни только Markdown-конспект без вступления и мета-комментариев. Формулы оформляй в LaTeX.
-            НАЧАЛО ИСХОДНОГО ТЕКСТА
-            \(part.text)
-            КОНЕЦ ИСХОДНОГО ТЕКСТА
-            """
-        } else {
-            prompt = """
-            НАЧАЛО ИСХОДНОГО ТЕКСТА
-            \(part.text)
-            КОНЕЦ ИСХОДНОГО ТЕКСТА
-
-            ЗАДАНИЕ: составь короткий аккуратный конспект русской лекции для студента.
-            Тема: «\(title)». Предмет: \(subject). Фрагмент: \(partInfo).
-            Синтезируй содержание, не переписывай исходник. Не включай таймкоды, номера спикеров и реплики дословно.
-            Удали бытовой шум, повторы и обрывки; оставь 3–8 смысловых пунктов, определения, задания, формулы, примеры и выводы.
-            Если учебного содержания нет, напиши одну строку: «Содержательного материала нет».
-            Верни только Markdown: заголовки, определения, тезисы, списки, формулы и примеры.
-            Текст уже предоставлен. Не проси прислать его снова и не пиши, что он отсутствует.
-            """
-        }
-
+        let prompt = """
+        Ты оформляешь конспект русской лекции для базы знаний Obsidian.
+        Тема всей лекции: «\(title)». Предмет: \(subject).
+        Текущий фрагмент: \(partInfo).
+        \(part.text.isEmpty ? "Источник — учебное содержание фотографий." : "Источник — расшифровка ниже между метками начала и конца. Текст уже передан; не проси прислать его повторно.")
+        Синтезируй конспект, а не расшифровку.
+        Не переписывай строки исходника, таймкоды, номера спикеров и диалоги дословно.
+        Объедини близкие мысли в 3–8 смысловых пунктов, убери приветствия, бытовой шум, повторы и обрывки.
+        Сохрани только определения, правила, задания, формулы, примеры и выводы.
+        Используй визуальный контекст фото, если он дополняет фрагмент. Вставляй метку [[IMAGE_1]] (и далее по номеру) в уместном месте конспекта только когда фото действительно иллюстрирует этот материал; не добавляй фото ради формальности. Не изменяй метки.
+        \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
+        Для уроков языка сохраняй упражнения, исправления, вопросы и ответы, лексику и обсуждённые темы, даже если они поданы короткими репликами.
+        Если материал скудный, составь краткую заметку из доступных сведений и укажи ограничения. Не объявляй весь урок бессодержательным из-за коротких реплик.
+        Верни только Markdown-конспект без вступления и мета-комментариев. Формулы оформляй в LaTeX.
+        \(part.text.isEmpty
+            ? "Расшифровка отсутствует. Составь конспект только по видимому учебному содержанию фотографий."
+            : "НАЧАЛО ИСХОДНОГО ТЕКСТА\n\(part.text)\nКОНЕЦ ИСХОДНОГО ТЕКСТА")
+        """
         let result = try await generateText(prompt: prompt, responseSchema: nil, onStatus: onStatus)
         let normalizedResult = result.lowercased()
         let isBadResult = Self.isRetrievalPlaceholder(result)
             || normalizedResult.contains("я не могу")
             || normalizedResult.contains("не могу составить")
             || normalizedResult.contains("как языковая модель")
-        if !isBadResult,
-           transport != .gemini,
-           !Self.isGrounded(result, in: part.text) {
-            await onStatus?("Ответ кастомной модели не совпал с расшифровкой — сохраняем проверенный текст фрагмента.")
-            return Self.safeTranscriptFallback(from: part.text)
-        }
         guard isBadResult else { return result }
 
         await onStatus?("AI не увидел уже переданный фрагмент — сохраняем расшифровку без нового платного запроса.")
-        return Self.safeTranscriptFallback(from: part.text)
-    }
-
-    private static func isGrounded(_ note: String, in transcript: String) -> Bool {
-        let sourceWords = Set(contentWords(transcript))
-        let noteWords = Set(contentWords(note))
-        guard noteWords.count >= 12 else { return true }
-        let overlap = noteWords.intersection(sourceWords).count
-        let required = min(12, max(5, noteWords.count / 20))
-        return overlap >= required
-    }
-
-    private static func contentWords(_ text: String) -> [String] {
-        text.lowercased()
-            .split { !$0.isLetter && !$0.isNumber }
-            .map(String.init)
-            .filter { $0.count >= 5 }
+        return Self.safeTranscriptFallback(from: part.text.isEmpty ? visualContext : part.text)
     }
 
     private static func safeTranscriptFallback(from transcript: String) -> String {
@@ -630,6 +612,7 @@ actor LectureAnalysisService {
     private func generateText(
         prompt: String,
         responseSchema: [String: Any]?,
+        images: [GeminiAPIClient.InputImage] = [],
         onStatus: (@Sendable (String) async -> Void)?
     ) async throws -> String {
         try await client.generateText(
@@ -637,7 +620,14 @@ actor LectureAnalysisService {
             model: model,
             fallbackModels: fallbackModels,
             responseSchema: responseSchema,
+            images: images,
             onStatus: onStatus
         )
+    }
+
+    private static func insertingImageEmbeds(into markdown: String, imageNames: [String]) -> String {
+        imageNames.enumerated().reduce(markdown) { result, item in
+            result.replacingOccurrences(of: "[[IMAGE_\(item.offset + 1)]]", with: "![[\(item.element)]]")
+        }
     }
 }

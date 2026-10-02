@@ -1,7 +1,9 @@
 import AVFoundation
 import Foundation
+import ImageIO
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum MobileTranscriptionMode: String, CaseIterable, Identifiable {
     case cloud = "cloud"
@@ -130,13 +132,22 @@ final class MobileAppModel {
         }
     }
 
-    func importAudio(_ source: URL) async {
+    func importAudio(_ sources: [URL], images: [URL] = []) async {
         guard !isRecording, !isProcessing else { return }
+        guard !sources.isEmpty || !images.isEmpty else { return }
+        guard images.count <= 10 else {
+            errorMessage = "К одной лекции можно добавить не более 10 фото."
+            return
+        }
         isImporting = true
-        processingProgress = "Сжимаем аудио…"
-        let scoped = source.startAccessingSecurityScopedResource()
+        processingProgress = sources.isEmpty
+            ? "Подготавливаем фото…"
+            : sources.count > 1 ? "Объединяем аудио…" : "Сжимаем аудио…"
+        let scopedSources = sources.map { ($0, $0.startAccessingSecurityScopedResource()) }
+        let scopedImages = images.map { ($0, $0.startAccessingSecurityScopedResource()) }
         defer {
-            if scoped { source.stopAccessingSecurityScopedResource() }
+            scopedSources.forEach { url, didAccess in if didAccess { url.stopAccessingSecurityScopedResource() } }
+            scopedImages.forEach { url, didAccess in if didAccess { url.stopAccessingSecurityScopedResource() } }
             isImporting = false
         }
 
@@ -145,16 +156,49 @@ final class MobileAppModel {
         session.endedAt = Date()
         do {
             let directory = try await store.directory(for: session.id)
-            // Store the normalized import under the same canonical name as a
-            // microphone recording so Markdown export and WebDAV sync include it.
+            for (index, imageURL) in images.enumerated() {
+                let extensionName = imageURL.pathExtension.isEmpty ? "jpg" : imageURL.pathExtension.lowercased()
+                let baseName = WhispFormatting.safePathComponent(imageURL.deletingPathExtension().lastPathComponent)
+                let imageName = "Фото-\(String(format: "%02d", index + 1))-\(baseName).\(extensionName)"
+                try FileManager.default.copyItem(at: imageURL, to: directory.appending(path: imageName))
+                session.attachedImagePaths.append(imageName)
+            }
+            if sources.isEmpty {
+                session.title = "Конспект по фото"
+                session.startedAt = Date()
+                session.endedAt = session.startedAt
+                try await store.save(session)
+                sessions.insert(session, at: 0)
+                searchIndex.rebuild(sessions: sessions)
+                selectedSessionID = session.id
+                await processImagesOnly(sessionID: session.id)
+                return
+            }
             let destination = directory.appending(path: "Микрофон.m4a")
-            _ = try await MobileAudioCompressor().compress(
-                source: source,
-                destination: destination,
-                onProgress: { [weak self] progress in
-                    self?.processingProgress = "Сжимаем аудио… \(Int(progress * 100))%"
+            if sources.count == 1 {
+                _ = try await MobileAudioCompressor().compress(
+                    source: sources[0],
+                    destination: destination,
+                    onProgress: { [weak self] progress in
+                        self?.processingProgress = "Сжимаем аудио… \(Int(progress * 100))%"
+                    }
+                )
+            } else {
+                var preparedAudio: [URL] = []
+                for (index, source) in sources.enumerated() {
+                    let prepared = directory.appending(path: "Подготовка-аудио-\(index + 1).m4a")
+                    _ = try await MobileAudioCompressor().compress(
+                        source: source,
+                        destination: prepared,
+                        onProgress: { [weak self] progress in
+                            self?.processingProgress = "Подготавливаем запись \(index + 1) из \(sources.count)… \(Int(progress * 100))%"
+                        }
+                    )
+                    preparedAudio.append(prepared)
                 }
-            )
+                try await ImportedAudioComposer.concatenate(preparedAudio, destination: destination)
+                preparedAudio.forEach { try? FileManager.default.removeItem(at: $0) }
+            }
             session.importedAudioPath = destination.lastPathComponent
             try await store.save(session)
             sessions.insert(session, at: 0)
@@ -163,6 +207,145 @@ final class MobileAppModel {
             await process(sessionID: session.id, audioURL: destination)
         } catch {
             fail(sessionID: session.id, error: error)
+        }
+    }
+
+    private func processImagesOnly(sessionID: UUID) async {
+        guard var session = sessions.first(where: { $0.id == sessionID }) else { return }
+        isProcessing = true
+        defer { isProcessing = false }
+        processingProgress = "Создаём конспект по фото…"
+        do {
+            guard !settingsStore.activeProviderRequiresAPIKey || !settingsStore.activeProviderAPIKeys.isEmpty else {
+                throw MobileError.missingAPIKey
+            }
+            let progress = MobileProgressReporter(model: self)
+            let service = LectureAnalysisService(
+                client: makeClient(),
+                model: settingsStore.activeAnalysisModel,
+                fallbackModels: settingsStore.activeAnalysisFallbackModels
+            )
+            let directory = try await store.directory(for: sessionID)
+            let imageNames = Array(session.attachedImagePaths.prefix(10))
+            let analysis = try await service.analyze(
+                segments: [],
+                subjects: settingsStore.settings.subjects.filter(\.isEnabled).sorted { $0.order < $1.order }.map(\.name),
+                images: try Self.loadAnalysisImages(names: imageNames, directory: directory),
+                imageNames: imageNames,
+                onStatus: { status in await progress.report(status) }
+            )
+            session.analysis = analysis
+            session.title = analysis.title
+            session.subject = analysis.subject
+            session.status = .review
+            let rendered = MarkdownExporter.render(session: session)
+            session.studentNotesMarkdown = rendered.studentNotebook
+            session.notesMarkdown = rendered.notes
+            session.finalMarkdown = rendered.final
+            session.rawMarkdown = rendered.raw
+            try await store.save(session)
+            replace(session)
+            processingProgress = "Готово"
+        } catch {
+            fail(sessionID: sessionID, error: error)
+        }
+    }
+
+    func attachPhotos(_ sources: [URL], to sessionID: UUID) async {
+        guard !isProcessing, !isImporting, var session = sessions.first(where: { $0.id == sessionID }) else { return }
+        let imageURLs = sources.filter {
+            $0.isFileURL && UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
+        }
+        guard !imageURLs.isEmpty else {
+            errorMessage = "Выберите фото для этой лекции."
+            return
+        }
+        guard session.attachedImagePaths.count + imageURLs.count <= 10 else {
+            errorMessage = "К одной лекции можно добавить не более 10 фото."
+            return
+        }
+
+        isImporting = true
+        processingProgress = "Сохраняем фото лекции…"
+        let accessedURLs = imageURLs.map { ($0, $0.startAccessingSecurityScopedResource()) }
+        defer {
+            accessedURLs.forEach { url, didAccess in
+                if didAccess { url.stopAccessingSecurityScopedResource() }
+            }
+            isImporting = false
+        }
+
+        do {
+            let directory = try await store.directory(for: sessionID)
+            var usedNames = Set(session.attachedImagePaths)
+            var addedNames: [String] = []
+            for sourceURL in imageURLs {
+                let ext = sourceURL.pathExtension.isEmpty ? "jpg" : sourceURL.pathExtension.lowercased()
+                let base = WhispFormatting.safePathComponent(sourceURL.deletingPathExtension().lastPathComponent)
+                var suffix = session.attachedImagePaths.count + addedNames.count + 1
+                var name = "Фото-\(String(format: "%02d", suffix))-\(base).\(ext)"
+                while usedNames.contains(name) {
+                    suffix += 1
+                    name = "Фото-\(String(format: "%02d", suffix))-\(base).\(ext)"
+                }
+                try FileManager.default.copyItem(at: sourceURL, to: directory.appending(path: name))
+                usedNames.insert(name)
+                addedNames.append(name)
+            }
+            session.attachedImagePaths.append(contentsOf: addedNames)
+            await update(session)
+            processingProgress = "Фото добавлены. Нажмите «Перегенерировать», чтобы учесть их в конспекте."
+        } catch {
+            errorMessage = "Не удалось добавить фото: \(error.localizedDescription)"
+        }
+    }
+
+    func regenerateAnalysis(for sessionID: UUID) async {
+        guard !isProcessing, !isImporting, var session = sessions.first(where: { $0.id == sessionID }) else { return }
+        if session.finalTranscript.isEmpty && !session.rawTranscript.isEmpty {
+            session.finalTranscript = session.rawTranscript
+        }
+        guard !session.finalTranscript.isEmpty || !session.attachedImagePaths.isEmpty else {
+            errorMessage = "Для конспекта нужны расшифровка или фото."
+            return
+        }
+
+        isProcessing = true
+        processingProgress = "Создаём конспект по лекции и фото…"
+        defer { isProcessing = false }
+        do {
+            guard !settingsStore.activeProviderRequiresAPIKey || !settingsStore.activeProviderAPIKeys.isEmpty else {
+                throw MobileError.missingAPIKey
+            }
+            let progress = MobileProgressReporter(model: self)
+            let service = LectureAnalysisService(
+                client: makeClient(),
+                model: settingsStore.activeAnalysisModel,
+                fallbackModels: settingsStore.activeAnalysisFallbackModels
+            )
+            let directory = try await store.directory(for: sessionID)
+            let imageNames = Array(session.attachedImagePaths.prefix(10))
+            let analysis = try await service.analyze(
+                segments: session.finalTranscript,
+                subjects: settingsStore.settings.subjects.filter(\.isEnabled).sorted { $0.order < $1.order }.map(\.name),
+                images: try Self.loadAnalysisImages(names: imageNames, directory: directory),
+                imageNames: imageNames,
+                onStatus: { status in await progress.report(status) }
+            )
+            session.analysis = analysis
+            session.title = analysis.title
+            session.subject = analysis.subject
+            session.status = .review
+            session.lastError = nil
+            let rendered = MarkdownExporter.render(session: session)
+            session.studentNotesMarkdown = rendered.studentNotebook
+            session.notesMarkdown = rendered.notes
+            session.finalMarkdown = rendered.final
+            session.rawMarkdown = rendered.raw
+            await update(session)
+            processingProgress = "Конспект обновлён с учётом фото"
+        } catch {
+            fail(sessionID: sessionID, error: error)
         }
     }
 
@@ -460,9 +643,13 @@ final class MobileAppModel {
                 model: settingsStore.activeAnalysisModel,
                 fallbackModels: settingsStore.activeAnalysisFallbackModels
             )
+            let directory = try await store.directory(for: session.id)
+            let imageNames = Array(session.attachedImagePaths.prefix(10))
             let analysis = try await analysisService.analyze(
                 segments: segments,
                 subjects: settingsStore.settings.subjects.filter(\.isEnabled).sorted { $0.order < $1.order }.map(\.name),
+                images: try Self.loadAnalysisImages(names: imageNames, directory: directory),
+                imageNames: imageNames,
                 onStatus: { status in
                     await progress.report(status)
                 }
@@ -517,7 +704,14 @@ final class MobileAppModel {
 
             let client = makeClient()
             let service = LectureAnalysisService(client: client, model: settingsStore.activeAnalysisModel, fallbackModels: settingsStore.activeAnalysisFallbackModels)
-            let analysis = try await service.analyze(segments: segments, subjects: settingsStore.settings.subjects.filter(\.isEnabled).map(\.name))
+            let directory = try await store.directory(for: session.id)
+            let imageNames = Array(session.attachedImagePaths.prefix(10))
+            let analysis = try await service.analyze(
+                segments: segments,
+                subjects: settingsStore.settings.subjects.filter(\.isEnabled).map(\.name),
+                images: try Self.loadAnalysisImages(names: imageNames, directory: directory),
+                imageNames: imageNames
+            )
             session.analysis = analysis
             session.title = analysis.title
             session.subject = analysis.subject
@@ -530,6 +724,42 @@ final class MobileAppModel {
             await update(session)
             processingProgress = "Готово (локальный Whisper)"
         } catch { fail(sessionID: sessionID, error: error) }
+    }
+
+    private static func loadAnalysisImages(
+        names: [String],
+        directory: URL
+    ) throws -> [GeminiAPIClient.InputImage] {
+        try names.map { name in
+            guard URL(fileURLWithPath: name).lastPathComponent == name else {
+                throw MobileError.imageCouldNotBeRead(name)
+            }
+            let url = directory.appending(path: name)
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 1_800
+                  ] as CFDictionary) else {
+                throw MobileError.imageCouldNotBeRead(name)
+            }
+            let output = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(
+                output,
+                UTType.jpeg.identifier as CFString,
+                1,
+                nil
+            ) else {
+                throw MobileError.imageCouldNotBePrepared(name)
+            }
+            CGImageDestinationAddImage(destination, image, [
+                kCGImageDestinationLossyCompressionQuality: 0.82
+            ] as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else {
+                throw MobileError.imageCouldNotBePrepared(name)
+            }
+            return GeminiAPIClient.InputImage(mimeType: "image/jpeg", data: output as Data)
+        }
     }
 
     private func makeClient() -> GeminiAPIClient {
@@ -571,12 +801,14 @@ private struct MobileProgressReporter: @unchecked Sendable {
 }
 
 private enum MobileError: LocalizedError {
-    case missingAPIKey, audioMissing, localMode
+    case missingAPIKey, audioMissing, localMode, imageCouldNotBeRead(String), imageCouldNotBePrepared(String)
     var errorDescription: String? {
         switch self {
         case .missingAPIKey: "Добавьте API key активного провайдера в настройках Whisp."
         case .audioMissing: "Исходный аудиофайл этой лекции не найден."
         case .localMode: "Локальная расшифровка WhisperKit."
+        case .imageCouldNotBeRead(let name): "Не удалось открыть фото «\(name)»."
+        case .imageCouldNotBePrepared(let name): "Не удалось подготовить фото «\(name)» для модели."
         }
     }
 }

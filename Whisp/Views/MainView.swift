@@ -541,6 +541,9 @@ private struct StartView: View {
     @Bindable var model: AppModel
     @State private var captureMode: CaptureMode = .microphoneAndSystem
     @State private var showAudioImporter = false
+    @State private var showImportSetup = false
+    @State private var importSetupAudioURLs: [URL] = []
+    @State private var importSetupImageURLs: [URL] = []
 
     var body: some View {
         ScrollView {
@@ -551,10 +554,30 @@ private struct StartView: View {
                         .foregroundStyle(WhispPalette.accent)
                     Text("Новая лекция")
                         .font(.largeTitle.weight(.semibold))
-                    Text("Запишите лекцию или импортируйте аудиофайл. Результат можно проверить, отредактировать и сохранить в Obsidian.")
+                    Text("Запишите лекцию или импортируйте несколько аудио и фото — вместе или только фотографии.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if model.isBusy {
+                    Label {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Действие выполняется")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Запись и импорт временно отключены. \(model.statusMessage)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } icon: {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                    .accessibilityElement(children: .combine)
                 }
 
                 WhispGlassSurface(tint: WhispPalette.accent) {
@@ -627,14 +650,14 @@ private struct StartView: View {
                             Button {
                                 showAudioImporter = true
                             } label: {
-                                Label("Импортировать аудиофайл", systemImage: "waveform.badge.plus")
+                                Label("Выбрать аудио и фото", systemImage: "waveform.badge.plus")
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.glass)
                             .controlSize(.large)
                         }
 
-                        Text("Можно также перетащить аудиофайлы прямо сюда")
+                        Text("Можно выбрать несколько аудио и фото вместе или только фото")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -643,7 +666,20 @@ private struct StartView: View {
                 }
                 .disabled(model.isBusy)
                 .dropDestination(for: URL.self) { urls, _ in
-                    model.enqueueAudioImports(urls)
+                    let audioURLs = urls.filter {
+                        UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) == true
+                    }
+                    let imageURLs = urls.filter {
+                        UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
+                    }
+                    guard !audioURLs.isEmpty || !imageURLs.isEmpty else { return false }
+                    guard imageURLs.count <= 10 else {
+                        model.lastError = "К одной лекции можно добавить не более 10 фото."
+                        return false
+                    }
+                    importSetupAudioURLs = audioURLs
+                    importSetupImageURLs = imageURLs
+                    showImportSetup = true
                     return true
                 }
 
@@ -657,14 +693,39 @@ private struct StartView: View {
         }
         .fileImporter(
             isPresented: $showAudioImporter,
-            allowedContentTypes: [.audio],
+            allowedContentTypes: [.audio, .image],
             allowsMultipleSelection: true
         ) { result in
             switch result {
             case .success(let urls):
-                model.enqueueAudioImports(urls)
+                importSetupAudioURLs = urls.filter {
+                    UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) == true
+                }
+                importSetupImageURLs = urls.filter {
+                    UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
+                }
+                if !importSetupAudioURLs.isEmpty || !importSetupImageURLs.isEmpty {
+                    showImportSetup = true
+                } else {
+                    model.lastError = "Выберите хотя бы одно аудио или фото."
+                }
             case .failure(let error):
                 model.lastError = error.localizedDescription
+            }
+        }
+        .sheet(isPresented: $showImportSetup, onDismiss: {
+            importSetupAudioURLs = []
+            importSetupImageURLs = []
+        }) {
+            LectureImportSetupView(
+                initialAudioURLs: importSetupAudioURLs,
+                initialImageURLs: importSetupImageURLs
+            ) { audioURLs, imageURLs, combineAudio in
+                model.enqueueLectureImports(
+                    audioURLs: audioURLs,
+                    imageURLs: imageURLs,
+                    combineAudio: combineAudio
+                )
             }
         }
     }

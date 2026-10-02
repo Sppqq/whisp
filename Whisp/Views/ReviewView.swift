@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ReviewView: View {
     @Bindable var model: AppModel
@@ -12,249 +13,20 @@ struct ReviewView: View {
     @State private var editingSegment: TranscriptSegment?
     @State private var editingSegmentIsRaw = false
     @State private var isDatePickerPresented = false
+    @State private var showPhotoImporter = false
     @State private var isReadingChromeCollapsed = false
-    @State private var lastReadingScrollOffset: CGFloat = 0
-    @State private var readingScrollTravel: CGFloat = 0
+    // Updating this reference does not invalidate the entire reading view on every scroll tick.
+    @State private var readingScrollTracker = ReadingScrollTracker()
 
+    @State private var readingChromeHeight: CGFloat = 360
+    @State private var isFloatingReadingChromeVisible = false
     private let readingChromeCollapseTravel: CGFloat = 56
+    private var usesInlineReadingChrome: Bool { isPreviewMode && tab != "quiz" }
 
     var body: some View {
         VStack(spacing: 0) {
-            if !isReadingChromeCollapsed {
-                VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    TextField("Название пары", text: Binding(
-                        get: { model.currentSession?.title ?? "" },
-                        set: { model.updateReview(title: $0) }
-                    ))
-                    .font(.title2.bold())
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(minWidth: 0, maxWidth: .infinity)
-                    .whispGlassField()
-                    .overlay(alignment: .trailing) {
-                        if hasManualEdits {
-                            Image(systemName: "pencil.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(WhispPalette.accent)
-                                .padding(.trailing, 11)
-                                .help("Есть ручные правки — изменения сохраняются автоматически")
-                        }
-                    }
-
-                    Menu {
-                        Picker("Предмет", selection: Binding(
-                            get: { model.currentSession?.subject ?? "Не определено" },
-                            set: { model.updateReview(subject: $0) }
-                        )) {
-                            Text("Не определено").tag("Не определено")
-                            ForEach(model.activeSubjects, id: \.self) { Text($0).tag($0) }
-                        }
-                        .pickerStyle(.inline)
-                        .labelsHidden()
-                    } label: {
-                        ReviewHeaderControlLabel(
-                            title: model.currentSession?.subject ?? "Не определено",
-                            systemImage: "book.closed"
-                        )
-                    }
-                    .menuStyle(.borderlessButton)
-                    .help("Предмет лекции")
-
-                    Button {
-                        isDatePickerPresented.toggle()
-                    } label: {
-                        ReviewHeaderControlLabel(
-                            title: selectedLectureDateText,
-                            systemImage: "calendar",
-                            monospaced: true
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .help("Дата лекции — можно выбрать дату вчерашней или более старой записи")
-                    .popover(isPresented: $isDatePickerPresented, arrowEdge: .bottom) {
-                        VStack(spacing: 10) {
-                            DatePicker(
-                                "Дата лекции",
-                                selection: Binding(
-                                    get: { model.currentSession?.startedAt ?? model.currentSession?.createdAt ?? Date() },
-                                    set: { model.updateReview(date: $0) }
-                                ),
-                                displayedComponents: .date
-                            )
-                            .datePickerStyle(.graphical)
-                            .labelsHidden()
-
-                            HStack {
-                                Button("Сегодня") {
-                                    model.updateReview(date: Date())
-                                }
-                                .buttonStyle(.glass)
-                                .controlSize(.small)
-
-                                Spacer()
-
-                                Button("Готово") {
-                                    isDatePickerPresented = false
-                                }
-                                .buttonStyle(.glass)
-                                .controlSize(.small)
-                            }
-                            .padding(.horizontal, 4)
-                        }
-                        .padding(12)
-                    }
-                }
-
-                metadataStrip
-            }
-            .padding(.horizontal, 22)
-            .padding(.top, 18)
-            .padding(.bottom, 8)
-
-            if model.currentSession?.subject == "Не определено",
-               let alternatives = model.currentSession?.analysis?.alternatives,
-               !alternatives.isEmpty {
-                HStack(spacing: 8) {
-                    Text("Возможные предметы:")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    WhispGlassGroup {
-                        HStack(spacing: 6) {
-                            ForEach(alternatives.prefix(3), id: \.self) { subject in
-                                Button(subject) { model.updateReview(subject: subject) }
-                                    .buttonStyle(.glass)
-                                    .controlSize(.small)
-                            }
-                        }
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal, 22)
-                .padding(.bottom, 12)
-            }
-
-            if model.currentSession?.hasPendingBackfill == true {
-                HStack {
-                    Label("Часть лекции распознана локально", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
-                    Spacer()
-                    Button("Проверить Gemini") { Task { await model.backfillNow() } }
-                        .buttonStyle(.glass)
-                        .controlSize(.small)
-                }
-                .padding(12)
-                .background(Color.orange.opacity(0.08), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
-            }
-
-            remindersSection
-
-            VStack(alignment: .leading, spacing: 12) {
-                WhispGlassSegment(
-                    selection: animatedTabSelection,
-                    options: [
-                        ("student", "Тетрадь", "book.closed"),
-                        ("notes", "Разбор", "doc.text.magnifyingglass"),
-                        ("quiz", "К зачёту", "graduationcap"),
-                        ("final", "Стенограмма", "text.quote")
-                    ]
-                )
-
-                HStack(spacing: 10) {
-                    if tab != "quiz" || quizViewMode == "markdown" {
-                        WhispGlassSegment(
-                            selection: animatedPreviewSelection,
-                            options: [
-                                (false, "Правка", "pencil"),
-                                (true, "Просмотр", "eye")
-                            ],
-                            minHeight: 28
-                        )
-                        .frame(width: 220)
-                    } else {
-                        Color.clear
-                            .frame(width: 220, height: 36)
-                            .accessibilityHidden(true)
-                    }
-
-                    Button {
-                        let textToCopy = currentContent
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(textToCopy, forType: .string)
-                        withAnimation { copied = true }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
-                            withAnimation { copied = false }
-                        }
-                    } label: {
-                        Label(copied ? "Скопировано" : "Копировать", systemImage: copied ? "checkmark" : "doc.on.doc")
-                            .font(.callout.weight(.medium))
-                            .foregroundStyle(.primary)
-                            .padding(.horizontal, 12)
-                            .frame(minHeight: 32)
-                            .glassEffect(.regular.interactive(), in: .capsule)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Скопировать Markdown в буфер обмена")
-
-                    if tab != "quiz",
-                       !(model.currentSession?.finalTranscript.isEmpty ?? true),
-                       model.currentSession?.status != .processing {
-                        Button {
-                            Task { await model.regenerateAnalysis(forceOverwriteNotes: true) }
-                        } label: {
-                            Label(model.currentSession?.analysis == nil ? "Создать" : "Перегенерировать", systemImage: "sparkles")
-                                .font(.callout.weight(.medium))
-                                .foregroundStyle(Color.white)
-                                .padding(.horizontal, 12)
-                                .frame(minHeight: 32)
-                                .glassEffect(
-                                    .regular.tint(WhispPalette.accent).interactive(),
-                                    in: .capsule
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(model.isGeneratingNotes)
-                        .help("Перегенерировать конспекты через Gemini")
-                    } else {
-                        Color.clear
-                            .frame(width: 170, height: 32)
-                            .accessibilityHidden(true)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
-            }
-            .padding(.horizontal, 22)
-            .padding(.vertical, 8)
-
-            playerBar
-
-            if model.isGeneratingNotes {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(model.statusMessage)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(WhispPalette.accent)
-                    Spacer()
-                    Text("\(Int(model.processingProgress * 100))%")
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(WhispPalette.accent)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 4)
-            }
-
-            if tab == "final" {
-                transcriptModeBanner
-            }
-                }
-                .transition(
-                    reduceMotion
-                        ? .opacity
-                        : .move(edge: .top).combined(with: .opacity)
-                )
+            if !usesInlineReadingChrome {
+                readingChrome
             }
 
             Group {
@@ -280,6 +52,7 @@ struct ReviewView: View {
                         if isPreviewMode {
                             MarkdownPreview(
                                 markdown: currentContent,
+                                header: inlineReadingChrome,
                                 onScrollOffsetChange: updateReadingChrome
                             )
                         } else {
@@ -493,8 +266,26 @@ struct ReviewView: View {
             revealReadingChrome(resetOffset: true)
         }
         .background(WhispPalette.canvas)
+        .fileImporter(
+            isPresented: $showPhotoImporter,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard !urls.isEmpty else { return }
+                Task { await model.attachPhotosToCurrentSession(urls) }
+            case .failure(let error):
+                model.lastError = error.localizedDescription
+            }
+        }
         .overlay(alignment: .top) {
-            if isReadingChromeCollapsed {
+            if usesInlineReadingChrome && isFloatingReadingChromeVisible {
+                readingChrome
+                    .background(WhispPalette.content)
+                    .shadow(color: .black.opacity(0.08), radius: 8, y: 4)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            } else if usesInlineReadingChrome && isReadingChromeCollapsed {
                 Button {
                     revealReadingChrome(resetOffset: false)
                 } label: {
@@ -542,45 +333,311 @@ struct ReviewView: View {
         )
     }
 
-    private func updateReadingChrome(_ offset: CGFloat) {
-        let delta = offset - lastReadingScrollOffset
-        lastReadingScrollOffset = offset
-
-        if offset < 12 {
-            readingScrollTravel = 0
-            if isReadingChromeCollapsed {
-                revealReadingChrome(resetOffset: false)
+    private var readingChrome: some View {
+    VStack(spacing: 0) {
+VStack(alignment: .leading, spacing: 10) {
+    HStack(spacing: 10) {
+        TextField("Название пары", text: Binding(
+            get: { model.currentSession?.title ?? "" },
+            set: { model.updateReview(title: $0) }
+        ))
+        .font(.title2.bold())
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .frame(minWidth: 0, maxWidth: .infinity)
+        .whispGlassField()
+        .overlay(alignment: .trailing) {
+            if hasManualEdits {
+                Image(systemName: "pencil.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(WhispPalette.accent)
+                    .padding(.trailing, 11)
+                    .help("Есть ручные правки — изменения сохраняются автоматически")
             }
+        }
+
+        Menu {
+            Picker("Предмет", selection: Binding(
+                get: { model.currentSession?.subject ?? "Не определено" },
+                set: { model.updateReview(subject: $0) }
+            )) {
+                Text("Не определено").tag("Не определено")
+                ForEach(model.activeSubjects, id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            ReviewHeaderControlLabel(
+                title: model.currentSession?.subject ?? "Не определено",
+                systemImage: "book.closed"
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .help("Предмет лекции")
+
+        Button {
+            isDatePickerPresented.toggle()
+        } label: {
+            ReviewHeaderControlLabel(
+                title: selectedLectureDateText,
+                systemImage: "calendar",
+                monospaced: true
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Дата лекции — можно выбрать дату вчерашней или более старой записи")
+        .popover(isPresented: $isDatePickerPresented, arrowEdge: .bottom) {
+            VStack(spacing: 10) {
+                DatePicker(
+                    "Дата лекции",
+                    selection: Binding(
+                        get: { model.currentSession?.startedAt ?? model.currentSession?.createdAt ?? Date() },
+                        set: { model.updateReview(date: $0) }
+                    ),
+                    displayedComponents: .date
+                )
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+
+                HStack {
+                    Button("Сегодня") {
+                        model.updateReview(date: Date())
+                    }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+
+                    Spacer()
+
+                    Button("Готово") {
+                        isDatePickerPresented = false
+                    }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                }
+                .padding(.horizontal, 4)
+            }
+            .padding(12)
+        }
+    }
+
+    metadataStrip
+}
+.padding(.horizontal, 22)
+.padding(.top, 18)
+.padding(.bottom, 8)
+
+if model.currentSession?.subject == "Не определено",
+   let alternatives = model.currentSession?.analysis?.alternatives,
+   !alternatives.isEmpty {
+    HStack(spacing: 8) {
+        Text("Возможные предметы:")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        WhispGlassGroup {
+            HStack(spacing: 6) {
+                ForEach(alternatives.prefix(3), id: \.self) { subject in
+                    Button(subject) { model.updateReview(subject: subject) }
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
+                }
+            }
+        }
+        Spacer()
+    }
+    .padding(.horizontal, 22)
+    .padding(.bottom, 12)
+}
+
+if model.currentSession?.hasPendingBackfill == true {
+    HStack {
+        Label("Часть лекции распознана локально", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+        Spacer()
+        Button("Проверить Gemini") { Task { await model.backfillNow() } }
+            .buttonStyle(.glass)
+            .controlSize(.small)
+    }
+    .padding(12)
+    .background(Color.orange.opacity(0.08), in: .rect(cornerRadius: WhispMetrics.compactCornerRadius))
+}
+
+remindersSection
+
+VStack(alignment: .leading, spacing: 12) {
+    WhispGlassSegment(
+        selection: animatedTabSelection,
+        options: [
+            ("student", "Тетрадь", "book.closed"),
+            ("notes", "Разбор", "doc.text.magnifyingglass"),
+            ("quiz", "К зачёту", "graduationcap"),
+            ("final", "Стенограмма", "text.quote")
+        ]
+    )
+
+    HStack(spacing: 10) {
+        if tab != "quiz" || quizViewMode == "markdown" {
+            WhispGlassSegment(
+                selection: animatedPreviewSelection,
+                options: [
+                    (false, "Правка", "pencil"),
+                    (true, "Просмотр", "eye")
+                ],
+                minHeight: 28
+            )
+            .frame(width: 220)
+        } else {
+            Color.clear
+                .frame(width: 220, height: 36)
+                .accessibilityHidden(true)
+        }
+
+        Button {
+            let textToCopy = currentContent
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(textToCopy, forType: .string)
+            withAnimation { copied = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                withAnimation { copied = false }
+            }
+        } label: {
+            Label(copied ? "Скопировано" : "Копировать", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 32)
+                .glassEffect(.regular.interactive(), in: .capsule)
+        }
+        .buttonStyle(.plain)
+        .help("Скопировать Markdown в буфер обмена")
+
+        if tab != "quiz", let session = model.currentSession {
+            Button {
+                showPhotoImporter = true
+            } label: {
+                Label("Фото \(session.attachedImagePaths.count)/10", systemImage: "photo.badge.plus")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 32)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+            }
+            .buttonStyle(.plain)
+            .disabled(model.isBusy || session.attachedImagePaths.count >= 10)
+            .help("Добавить фото к лекции для следующего анализа")
+        }
+
+        if tab != "quiz",
+           (!(model.currentSession?.finalTranscript.isEmpty ?? true)
+            || !(model.currentSession?.attachedImagePaths.isEmpty ?? true)),
+           model.currentSession?.status != .processing {
+            Button {
+                Task { await model.regenerateAnalysis(forceOverwriteNotes: true) }
+            } label: {
+                Label(model.currentSession.map { model.isAnalysisQueued(for: $0.id) } == true ? "В очереди" : (model.isGeneratingNotes ? "В очередь" : (model.currentSession?.analysis == nil ? "Создать" : "Перегенерировать")), systemImage: "sparkles")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 32)
+                    .glassEffect(
+                        .regular.tint(WhispPalette.accent).interactive(),
+                        in: .capsule
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(model.currentSession.map { model.isAnalysisQueued(for: $0.id) } ?? true)
+            .help("Перегенерировать конспекты через Gemini")
+        } else {
+            Color.clear
+                .frame(width: 170, height: 32)
+                .accessibilityHidden(true)
+        }
+    }
+    .frame(maxWidth: .infinity, alignment: .center)
+    if let session = model.currentSession, !session.attachedImagePaths.isEmpty {
+        Label("При перегенерации будут проанализированы все \(session.attachedImagePaths.count) фото лекции.", systemImage: "photo")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+    }
+}
+.padding(.horizontal, 22)
+.padding(.vertical, 8)
+
+playerBar
+
+if model.isGeneratingNotes {
+    HStack(spacing: 8) {
+        ProgressView().controlSize(.small)
+        Text(model.statusMessage)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(WhispPalette.accent)
+        Spacer()
+        Text("\(Int(model.processingProgress * 100))%")
+            .font(.caption.monospacedDigit().weight(.semibold))
+            .foregroundStyle(WhispPalette.accent)
+    }
+    .padding(.horizontal, 14)
+    .padding(.vertical, 8)
+    .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+    .padding(.horizontal, 18)
+    .padding(.vertical, 4)
+}
+
+if tab == "final" {
+    transcriptModeBanner
+}
+    }
+    }
+
+    private var inlineReadingChrome: AnyView? {
+        guard usesInlineReadingChrome else { return nil }
+        return AnyView(readingChrome.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+            if abs(readingChromeHeight - height) > 1 { readingChromeHeight = height }
+        })
+    }
+
+    private func updateReadingChrome(_ offset: CGFloat) {
+        guard usesInlineReadingChrome else { return }
+        let isPastHeader = offset >= readingChromeHeight
+        if isReadingChromeCollapsed != isPastHeader { isReadingChromeCollapsed = isPastHeader }
+        guard let previous = readingScrollTracker.lastOffset else {
+            readingScrollTracker.lastOffset = offset
             return
         }
-
+        readingScrollTracker.lastOffset = offset
+        let delta = offset - previous
         guard abs(delta) > 0.5 else { return }
-        if delta > 0 {
-            readingScrollTravel = max(0, readingScrollTravel) + delta
-        } else {
-            // Scrolling up must not open the large header unexpectedly. It is
-            // revealed only by the chevron or an explicit context change.
-            readingScrollTravel = 0
+        if !isPastHeader {
+            readingScrollTracker.travel = 0
+            if isFloatingReadingChromeVisible { isFloatingReadingChromeVisible = false }
+            return
         }
-
-        if readingScrollTravel >= readingChromeCollapseTravel,
-           offset > 42,
-           !isReadingChromeCollapsed {
+        if (delta > 0) != (readingScrollTracker.travel > 0) {
+            readingScrollTracker.travel = 0
+        }
+        readingScrollTracker.travel += delta
+        if readingScrollTracker.travel <= -80 && !isFloatingReadingChromeVisible {
             withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
-                isReadingChromeCollapsed = true
+                isFloatingReadingChromeVisible = true
             }
-            readingScrollTravel = 0
+            readingScrollTracker.travel = 0
+        } else if readingScrollTracker.travel >= readingChromeCollapseTravel && isFloatingReadingChromeVisible {
+            withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                isFloatingReadingChromeVisible = false
+            }
+            readingScrollTracker.travel = 0
         }
     }
 
     private func revealReadingChrome(resetOffset: Bool) {
+        readingScrollTracker.lastOffset = nil
+        readingScrollTracker.travel = 0
         if resetOffset {
-            lastReadingScrollOffset = 0
-        }
-        readingScrollTravel = 0
-        guard isReadingChromeCollapsed else { return }
-        withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
             isReadingChromeCollapsed = false
+            isFloatingReadingChromeVisible = false
+        } else {
+            withAnimation(reduceMotion ? nil : WhispMotion.navigation) {
+                isFloatingReadingChromeVisible = true
+            }
         }
     }
 
@@ -1027,11 +1084,6 @@ private struct ReviewHeaderControlLabel: View {
                             .listStyle(.inset)
                             .scrollContentBackground(.hidden)
                             .background(WhispPalette.content)
-                            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                                geometry.contentOffset.y + geometry.contentInsets.top
-                            } action: { _, offset in
-                                updateReadingChrome(offset)
-                            }
                             .onChange(of: model.player.currentTime) { _, newTime in
                                 guard model.player.isPlaying else { return }
                                 if let current = filtered.first(where: { newTime >= $0.start && newTime <= $0.end }) {
@@ -1055,6 +1107,7 @@ private struct ReviewHeaderControlLabel: View {
             if isPreviewMode {
                 MarkdownPreview(
                     markdown: binding.wrappedValue,
+                    header: inlineReadingChrome,
                     onScrollOffsetChange: updateReadingChrome
                 )
             } else {
@@ -1673,4 +1726,10 @@ struct BackfillComparisonView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
+}
+
+
+private final class ReadingScrollTracker {
+    var lastOffset: CGFloat?
+    var travel: CGFloat = 0
 }

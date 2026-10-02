@@ -2,7 +2,20 @@ import AppKit
 import AVFoundation
 import CFNetwork
 import Foundation
+import ImageIO
 import Observation
+import UniformTypeIdentifiers
+
+private struct NoteGenerationJob {
+    let sessionID: UUID
+    var forceOverwriteNotes: Bool
+    var waiters: [CheckedContinuation<Void, Never>] = []
+}
+
+private struct LectureImportJob {
+    let audioURLs: [URL]
+    let imageURLs: [URL]
+}
 
 struct ProcessingLogEntry: Identifiable, Sendable {
     let id = UUID()
@@ -65,9 +78,10 @@ final class AppModel {
     var webDAVState: ServiceConnectionState = .unchecked
     var inputDevices: [AudioInputDevice] = []
     var importedFileName: String?
-    var pendingImportURLs: [URL] = []
+    private var pendingImportJobs: [LectureImportJob] = []
+    private var stagedImportURLs: [URL] = []
     private(set) var isImportQueueActive = false
-    var pendingImportFileNames: [String] { pendingImportURLs.map(\.lastPathComponent) }
+    var pendingImportFileNames: [String] { pendingImportJobs.flatMap { $0.audioURLs.map(\.lastPathComponent) } }
     var needsScreenCapturePermission = false
     var needsMicrophonePermission = false
     private(set) var isWorking = false
@@ -135,6 +149,59 @@ final class AppModel {
     var batchLogs: [ProcessingLogEntry] = []
     var isGeneratingQuiz = false
     var isGeneratingNotes = false
+    private var noteGenerationQueue: [NoteGenerationJob] = []
+    private(set) var activeAnalysisSessionID: UUID?
+    @ObservationIgnored private var noteQueueTask: Task<Void, Never>?
+    @ObservationIgnored private var activeAnalysisWaiters: [CheckedContinuation<Void, Never>] = []
+    var queuedAnalysisSessionIDs: [UUID] { noteGenerationQueue.map(\.sessionID) }
+
+    func isAnalysisQueued(for id: UUID) -> Bool {
+        activeAnalysisSessionID == id || queuedAnalysisSessionIDs.contains(id)
+    }
+
+    func enqueueAnalysis(for id: UUID, forceOverwriteNotes: Bool = true) {
+        enqueueAnalysis(for: id, forceOverwriteNotes: forceOverwriteNotes, waiter: nil)
+    }
+
+    private func enqueueAnalysis(for id: UUID, forceOverwriteNotes: Bool, waiter: CheckedContinuation<Void, Never>?) {
+        guard let session = sessions.first(where: { $0.id == id }),
+              !session.finalTranscript.isEmpty || !session.rawTranscript.isEmpty || !session.attachedImagePaths.isEmpty else {
+            waiter?.resume()
+            return
+        }
+        if activeAnalysisSessionID == id {
+            if let waiter { activeAnalysisWaiters.append(waiter) }
+            return
+        }
+        if let index = noteGenerationQueue.firstIndex(where: { $0.sessionID == id }) {
+            noteGenerationQueue[index].forceOverwriteNotes = noteGenerationQueue[index].forceOverwriteNotes || forceOverwriteNotes
+            if let waiter { noteGenerationQueue[index].waiters.append(waiter) }
+            return
+        }
+        noteGenerationQueue.append(NoteGenerationJob(sessionID: id, forceOverwriteNotes: forceOverwriteNotes, waiters: waiter.map { [$0] } ?? []))
+        guard noteQueueTask == nil else { return }
+        noteQueueTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !self.noteGenerationQueue.isEmpty {
+                let job = self.noteGenerationQueue.removeFirst()
+                self.activeAnalysisSessionID = job.sessionID
+                self.activeAnalysisWaiters = job.waiters
+                await self.performAnalysis(for: job.sessionID, forceOverwriteNotes: job.forceOverwriteNotes)
+                self.activeAnalysisSessionID = nil
+                let waiters = self.activeAnalysisWaiters
+                self.activeAnalysisWaiters.removeAll()
+                waiters.forEach { $0.resume() }
+            }
+            self.noteQueueTask = nil
+        }
+    }
+
+    func removeQueuedAnalysis(for id: UUID) {
+        guard let index = noteGenerationQueue.firstIndex(where: { $0.sessionID == id }) else { return }
+        let job = noteGenerationQueue.remove(at: index)
+        job.waiters.forEach { $0.resume() }
+    }
+
     var isRestoringFromWebDAV = false
     private var batchRegenerateTask: Task<Void, Never>?
 
@@ -356,7 +423,9 @@ final class AppModel {
     }
 
     func cancelProcessing() async {
-        pendingImportURLs.removeAll()
+        pendingImportJobs.removeAll()
+        LectureImportStaging.cleanup(stagedImportURLs)
+        stagedImportURLs.removeAll()
         addProcessingLog("Запрос на отмену обработки...")
         statusMessage = "Отменяем обработку..."
         processingTask?.cancel()
@@ -375,36 +444,63 @@ final class AppModel {
         }
     }
 
-    func enqueueAudioImports(_ sourceURLs: [URL]) {
+    func enqueueLectureImports(audioURLs sourceURLs: [URL], imageURLs: [URL], combineAudio: Bool) {
         guard !isRecording, !isBatchRegenerating, !isRestoringFromWebDAV else {
             lastError = "Завершите текущую задачу перед импортом файлов"
             return
         }
 
-        let existingPaths = Set(pendingImportURLs.map(\.standardizedFileURL.path))
-        let unique = sourceURLs.filter { url in
-            url.isFileURL && !existingPaths.contains(url.standardizedFileURL.path)
+        let existingPaths = Set(pendingImportJobs.flatMap(\.audioURLs).map { $0.standardizedFileURL.path })
+        let audioURLs = sourceURLs.filter { url in
+            url.isFileURL
+                && UTType(filenameExtension: url.pathExtension)?.conforms(to: .audio) == true
+                && !existingPaths.contains(url.standardizedFileURL.path)
         }
-        guard !unique.isEmpty else { return }
-        pendingImportURLs.append(contentsOf: unique)
-        statusMessage = unique.count == 1
-            ? "Файл добавлен в очередь"
-            : "В очередь добавлено " + String(unique.count) + " файлов"
+        let imageURLs = imageURLs.filter {
+            $0.isFileURL && UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
+        }
+        guard !audioURLs.isEmpty || !imageURLs.isEmpty else {
+            lastError = "Добавьте хотя бы одно аудио или фото."
+            return
+        }
+        guard imageURLs.count <= 10 else {
+            lastError = "К одной лекции можно добавить не более 10 фото."
+            return
+        }
+        if audioURLs.isEmpty {
+            pendingImportJobs.append(LectureImportJob(audioURLs: [], imageURLs: imageURLs))
+        } else if combineAudio {
+            pendingImportJobs.append(LectureImportJob(audioURLs: audioURLs, imageURLs: imageURLs))
+        } else {
+            pendingImportJobs.append(contentsOf: audioURLs.map {
+                LectureImportJob(audioURLs: [$0], imageURLs: imageURLs)
+            })
+        }
+        stagedImportURLs.append(contentsOf: imageURLs)
+        statusMessage = audioURLs.isEmpty
+            ? "Создаём конспект по \(imageURLs.count) фото"
+            : combineAudio
+            ? "Готовим один урок из \(audioURLs.count) аудиофайлов"
+            : "Создаём отдельные уроки: \(audioURLs.count)"
 
         guard !isImportQueueActive else { return }
         isImportQueueActive = true
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.isImportQueueActive = false }
-            while !self.pendingImportURLs.isEmpty, !Task.isCancelled {
-                let next = self.pendingImportURLs.removeFirst()
-                await self.importAudio(from: next)
+            defer {
+                LectureImportStaging.cleanup(self.stagedImportURLs)
+                self.stagedImportURLs.removeAll()
+                self.isImportQueueActive = false
+            }
+            while !self.pendingImportJobs.isEmpty, !Task.isCancelled {
+                let next = self.pendingImportJobs.removeFirst()
+                await self.importAudio(from: next.audioURLs, images: next.imageURLs)
             }
         }
     }
 
     func cancelImportQueue() {
-        pendingImportURLs.removeAll()
+        pendingImportJobs.removeAll()
         Task { await cancelProcessing() }
     }
 
@@ -436,57 +532,162 @@ final class AppModel {
             await retryProcessing()
         }
     }
-    func importAudio(from sourceURL: URL) async {
-        guard !isBusy else { return }
+    func attachPhotosToCurrentSession(_ sourceURLs: [URL]) async {
+        guard !isBusy, var session = currentSession else { return }
+        let imageURLs = sourceURLs.filter {
+            $0.isFileURL && UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
+        }
+        guard !imageURLs.isEmpty else {
+            lastError = "Выберите фото для этой лекции."
+            return
+        }
+        guard session.attachedImagePaths.count + imageURLs.count <= 10 else {
+            lastError = "К одной лекции можно добавить не более 10 фото."
+            return
+        }
+
+        isWorking = true
+        defer { isWorking = false }
+        let accessedURLs = imageURLs.map { ($0, $0.startAccessingSecurityScopedResource()) }
+        defer {
+            accessedURLs.forEach { url, didAccess in
+                if didAccess { url.stopAccessingSecurityScopedResource() }
+            }
+        }
+
+        do {
+            let directory = try await store.directory(for: session.id)
+            var usedNames = Set(session.attachedImagePaths)
+            var addedNames: [String] = []
+            for sourceURL in imageURLs {
+                let ext = sourceURL.pathExtension.isEmpty ? "jpg" : sourceURL.pathExtension.lowercased()
+                let base = WhispFormatting.safePathComponent(sourceURL.deletingPathExtension().lastPathComponent)
+                var suffix = session.attachedImagePaths.count + addedNames.count + 1
+                var name = "Фото-\(String(format: "%02d", suffix))-\(base).\(ext)"
+                while usedNames.contains(name) {
+                    suffix += 1
+                    name = "Фото-\(String(format: "%02d", suffix))-\(base).\(ext)"
+                }
+                try FileManager.default.copyItem(at: sourceURL, to: directory.appending(path: name))
+                usedNames.insert(name)
+                addedNames.append(name)
+            }
+            session.attachedImagePaths.append(contentsOf: addedNames)
+            currentSession = session
+            if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+                sessions[index] = session
+            } else {
+                sessions.insert(session, at: 0)
+            }
+            try await store.save(session)
+            statusMessage = "Добавлено фото: \(addedNames.count). Теперь нажмите «Перегенерировать»."
+            lastError = nil
+        } catch {
+            lastError = "Не удалось добавить фото: \(error.localizedDescription)"
+        }
+    }
+
+    func importAudio(from sourceURLs: [URL], images: [URL] = []) async {
+        guard (!sourceURLs.isEmpty || !images.isEmpty), !isBusy else { return }
         isWorking = true
         defer { isWorking = false }
         processingTask?.cancel()
 
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.executeImportAudio(from: sourceURL)
+            await self.executeImportAudio(from: sourceURLs, images: images)
         }
         processingTask = task
         await task.value
     }
 
-    private func executeImportAudio(from sourceURL: URL) async {
+    private func executeImportAudio(from sourceURLs: [URL], images: [URL]) async {
         resetSessionTasks()
         lastError = nil
-        let accessed = sourceURL.startAccessingSecurityScopedResource()
+        let accessedSources = sourceURLs.map { ($0, $0.startAccessingSecurityScopedResource()) }
+        let accessedImages = images.map { ($0, $0.startAccessingSecurityScopedResource()) }
+        let firstAudioURL = sourceURLs.first
 
         var session = LectureSession()
         session.startedAt = Date()
         session.status = .processing
         session.captureSystemAudio = false
-        session.title = WhispFormatting.datedTitle(title: sourceURL.deletingPathExtension().lastPathComponent, date: session.startedAt ?? Date())
+        session.title = WhispFormatting.datedTitle(
+            title: firstAudioURL?.deletingPathExtension().lastPathComponent ?? "Конспект по фото",
+            date: session.startedAt ?? Date()
+        )
         currentSession = session
         selectedSessionID = session.id
-        importedFileName = sourceURL.lastPathComponent
+        importedFileName = sourceURLs.isEmpty
+            ? "Фото: \(images.count)"
+            : sourceURLs.map(\.lastPathComponent).joined(separator: ", ")
         activeProcessingSessionID = session.id
         processingProgress = 0.02
-        statusMessage = "Импортируем \(sourceURL.lastPathComponent)"
+        statusMessage = sourceURLs.isEmpty
+            ? "Импортируем фото для конспекта"
+            : sourceURLs.count == 1
+                ? "Импортируем \(firstAudioURL?.lastPathComponent ?? "аудиофайл")"
+                : "Объединяем \(sourceURLs.count) аудиофайлов"
         clearProcessingLogs()
-        addProcessingLog("Импорт файла: \(sourceURL.lastPathComponent)")
+        addProcessingLog(sourceURLs.isEmpty
+            ? "Импорт фото: \(images.count)"
+            : "Импорт аудио: \(sourceURLs.map(\.lastPathComponent).joined(separator: ", "))")
 
         defer {
             activeProcessingSessionID = nil
-            if accessed { sourceURL.stopAccessingSecurityScopedResource() }
+            accessedSources.forEach { url, didAccess in if didAccess { url.stopAccessingSecurityScopedResource() } }
+            accessedImages.forEach { url, didAccess in if didAccess { url.stopAccessingSecurityScopedResource() } }
         }
 
         do {
             let directory = try await store.directory(for: session.id)
-            let preservedName = "Исходник-\(WhispFormatting.safePathComponent(sourceURL.lastPathComponent))"
-            let preservedURL = directory.appending(path: preservedName)
-            addProcessingLog("Копирование исходного аудио в рабочую папку...")
-            try await Task.detached(priority: .userInitiated) {
-                if FileManager.default.fileExists(atPath: preservedURL.path) {
-                    try FileManager.default.removeItem(at: preservedURL)
+            var preservedAudioURLs: [URL] = []
+            for (index, sourceURL) in sourceURLs.enumerated() {
+                let prefix = sourceURLs.count > 1 ? "Исходник-\(String(format: "%02d", index + 1))-" : "Исходник-"
+                let preservedURL = directory.appending(
+                    path: prefix + WhispFormatting.safePathComponent(sourceURL.lastPathComponent)
+                )
+                try await Task.detached(priority: .userInitiated) {
+                    try FileManager.default.copyItem(at: sourceURL, to: preservedURL)
+                }.value
+                preservedAudioURLs.append(preservedURL)
+            }
+            if !preservedAudioURLs.isEmpty {
+                session.importedAudioPath = preservedAudioURLs[0].lastPathComponent
+                if sourceURLs.count == 1 {
+                    _ = try await processor.prepareImportedAudio(source: preservedAudioURLs[0], directory: directory)
+                } else {
+                    var preparedURLs: [URL] = []
+                    var temporaryDirectories: [URL] = []
+                    defer { temporaryDirectories.forEach { try? FileManager.default.removeItem(at: $0) } }
+                    for (index, preservedURL) in preservedAudioURLs.enumerated() {
+                        let temporaryDirectory = directory.appending(
+                            path: "Подготовка-аудио-\(index + 1)",
+                            directoryHint: .isDirectory
+                        )
+                        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+                        temporaryDirectories.append(temporaryDirectory)
+                        preparedURLs.append(
+                            try await processor.prepareImportedAudio(source: preservedURL, directory: temporaryDirectory)
+                        )
+                    }
+                    let combined = directory.appending(path: "Микрофон.m4a")
+                    try await ImportedAudioComposer.concatenate(preparedURLs, destination: combined)
                 }
-                try FileManager.default.copyItem(at: sourceURL, to: preservedURL)
-            }.value
-
-            session.importedAudioPath = preservedName
+            }
+            if !images.isEmpty {
+                addProcessingLog("Сохраняем фото лекции…")
+                for (index, imageURL) in images.enumerated() {
+                    let extensionName = imageURL.pathExtension.isEmpty ? "jpg" : imageURL.pathExtension.lowercased()
+                    let baseName = WhispFormatting.safePathComponent(imageURL.deletingPathExtension().lastPathComponent)
+                    let imageName = "Фото-\(String(format: "%02d", index + 1))-\(baseName).\(extensionName)"
+                    let destination = directory.appending(path: imageName)
+                    try await Task.detached(priority: .userInitiated) {
+                        try FileManager.default.copyItem(at: imageURL, to: destination)
+                    }.value
+                    session.attachedImagePaths.append(imageName)
+                }
+            }
             if let index = sessions.firstIndex(where: { $0.id == session.id }) { sessions[index] = session }
             else { sessions.insert(session, at: 0) }
             if currentSession?.id == session.id { currentSession = session }
@@ -494,10 +695,29 @@ final class AppModel {
 
             try Task.checkCancellation()
 
+            if sourceURLs.isEmpty {
+                guard settingsStore.isAnalysisProviderConfigured else {
+                    throw GeminiAPIError(
+                        code: 401,
+                        status: "API_KEY",
+                        message: "Сначала настройте провайдер анализа в Настройках",
+                        retryAfter: nil
+                    )
+                }
+                statusMessage = "Создаём конспект по фото"
+                processingProgress = 0.15
+                addProcessingLog("Расшифровки нет — используем только выбранные фотографии.")
+                await regenerateAnalysis(for: session.id)
+                return
+            }
+
             statusMessage = "Подготавливаем аудиодорожку..."
             processingProgress = 0.05
             addProcessingLog("Подготовка аудиофайла...")
-            let microphone = try await processor.prepareImportedAudio(source: preservedURL, directory: directory)
+            let microphone = directory.appending(path: "Микрофон.m4a")
+            guard FileManager.default.fileExists(atPath: microphone.path) else {
+                throw AudioPostProcessor.ProcessingError.noAudio
+            }
             currentMixURL = microphone
             player.load(microphone)
             let asset = AVURLAsset(url: microphone)
@@ -1061,7 +1281,7 @@ final class AppModel {
         let eligible = sessions.filter {
             $0.analysis != nil
                 && $0.createdReminderIDs.isEmpty
-                && (!$0.finalTranscript.isEmpty || !$0.rawTranscript.isEmpty)
+                && (!$0.finalTranscript.isEmpty || !$0.rawTranscript.isEmpty || !$0.attachedImagePaths.isEmpty)
         }
         guard !eligible.isEmpty else {
             statusMessage = "Готовых разборов для повторной проверки не найдено"
@@ -1355,7 +1575,14 @@ final class AppModel {
     }
 
     func regenerateAnalysis(for sessionID: UUID? = nil, forceOverwriteNotes: Bool = true) async {
-        let targetID = sessionID ?? currentSession?.id
+        guard let targetID = sessionID ?? currentSession?.id else { return }
+        await withCheckedContinuation { waiter in
+            enqueueAnalysis(for: targetID, forceOverwriteNotes: forceOverwriteNotes, waiter: waiter)
+        }
+    }
+
+    private func performAnalysis(for sessionID: UUID, forceOverwriteNotes: Bool) async {
+        let targetID: UUID? = sessionID
         guard let targetID, let index = sessions.firstIndex(where: { $0.id == targetID }) else { return }
         var session = sessions[index]
         if session.finalTranscript.isEmpty && !session.rawTranscript.isEmpty {
@@ -1366,7 +1593,8 @@ final class AppModel {
         defer { isGeneratingNotes = false }
 
         var analysisError: String?
-        if settingsStore.isAnalysisProviderConfigured, !session.finalTranscript.isEmpty {
+        if settingsStore.isAnalysisProviderConfigured,
+           (!session.finalTranscript.isEmpty || !session.attachedImagePaths.isEmpty) {
             do {
                 statusMessage = "Создаём конспект через \(settingsStore.analysisProviderName)..."
                 addProcessingLog("Начало анализа и составления конспекта...")
@@ -1385,17 +1613,24 @@ final class AppModel {
                         proxy: settingsStore.proxy
                     )
                     : nil
+                let sessionDirectory = try await store.directory(for: session.id)
+                let imageNames = Array(session.attachedImagePaths.prefix(10))
+                let imageAttachments = try Self.loadAnalysisImages(
+                    names: imageNames,
+                    directory: sessionDirectory
+                )
                 let analysis = try await LectureAnalysisService(
                     client: try providerClient(for: .analysis),
                     model: settingsStore.analysisProviderModel,
                     fallbackModels: settingsStore.activeAnalysisFallbackModels,
-                    transport: settingsStore.providerTransport(for: settingsStore.analysisProviderID),
                     jevClient: jevClient,
                     jevConfiguration: settingsStore.isJevClassificationConfigured ? settingsStore.settings.jev : nil
                 )
                     .analyze(
                         segments: session.finalTranscript,
                         subjects: activeSubjects,
+                        images: imageAttachments,
+                        imageNames: imageNames,
                         onStatus: { [weak self] status in
                             await MainActor.run {
                                 self?.statusMessage = status
@@ -1506,14 +1741,17 @@ final class AppModel {
         session.finalMarkdown = session.userEditedFinal ? previousFinal : rendered.final
         session.notesMarkdown = preserveEditedNotes ? previousNotes : (session.notesMarkdown.isEmpty ? rendered.notes : session.notesMarkdown)
         session.studentNotesMarkdown = preserveEditedStudentNotes ? previousStudentNotes : (session.studentNotesMarkdown.isEmpty ? rendered.studentNotebook : session.studentNotesMarkdown)
-        sessions[index] = session
+        guard let finalIndex = sessions.firstIndex(where: { $0.id == targetID }) else { return }
+        sessions[finalIndex] = session
         try? await store.save(session)
         if currentSession?.id == targetID {
             currentSession = session
         }
         processingProgress = 1
         if let analysisError {
-            statusMessage = "Расшифровка сохранена. Конспект можно создать отдельно: \(analysisError)"
+            statusMessage = session.finalTranscript.isEmpty
+                ? "Фото сохранены, но конспект не создан: \(analysisError)"
+                : "Расшифровка сохранена. Конспект можно создать отдельно: \(analysisError)"
         } else {
             statusMessage = "Конспект обновлён"
         }
@@ -1529,9 +1767,11 @@ final class AppModel {
 
     func startBatchRegeneration(forceOverwrite: Bool) {
         guard !isBusy else { return }
-        let eligible = sessions.filter { !$0.finalTranscript.isEmpty || !$0.rawTranscript.isEmpty }
+        let eligible = sessions.filter {
+            !$0.finalTranscript.isEmpty || !$0.rawTranscript.isEmpty || !$0.attachedImagePaths.isEmpty
+        }
         guard !eligible.isEmpty else {
-            statusMessage = "Нет доступных лекций с расшифровкой"
+            statusMessage = "Нет лекций с аудио или фото для анализа"
             return
         }
 
@@ -1954,6 +2194,62 @@ final class AppModel {
 
     private func geminiClient() -> GeminiAPIClient {
         GeminiAPIClient(apiKeys: settingsStore.geminiAPIKeys, proxy: settingsStore.proxy)
+    }
+
+    private static func loadAnalysisImages(
+        names: [String],
+        directory: URL
+    ) throws -> [GeminiAPIClient.InputImage] {
+        try names.map { name in
+            guard URL(fileURLWithPath: name).lastPathComponent == name else {
+                throw GeminiAPIError(
+                    code: -1,
+                    status: "IMAGE_PATH",
+                    message: "Некорректный путь к фото лекции",
+                    retryAfter: nil
+                )
+            }
+            let url = directory.appending(path: name)
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 1_800
+                  ] as CFDictionary) else {
+                throw GeminiAPIError(
+                    code: -1,
+                    status: "IMAGE_READ",
+                    message: "Не удалось открыть фото «\(name)»",
+                    retryAfter: nil
+                )
+            }
+            let output = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(
+                output,
+                UTType.jpeg.identifier as CFString,
+                1,
+                nil
+            ) else {
+                throw GeminiAPIError(
+                    code: -1,
+                    status: "IMAGE_ENCODE",
+                    message: "Не удалось подготовить фото «\(name)» для модели",
+                    retryAfter: nil
+                )
+            }
+            CGImageDestinationAddImage(destination, image, [
+                kCGImageDestinationLossyCompressionQuality: 0.82
+            ] as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else {
+                throw GeminiAPIError(
+                    code: -1,
+                    status: "IMAGE_ENCODE",
+                    message: "Не удалось сжать фото «\(name)» для передачи модели",
+                    retryAfter: nil
+                )
+            }
+            return GeminiAPIClient.InputImage(mimeType: "image/jpeg", data: output as Data)
+        }
     }
 
     private func providerClient(for role: ProviderRole) throws -> GeminiAPIClient {

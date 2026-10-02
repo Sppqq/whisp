@@ -2,6 +2,12 @@ import Foundation
 import CryptoKit
 
 actor GeminiAPIClient {
+    struct InputImage: Sendable {
+        let mimeType: String
+        let data: Data
+        var base64: String { data.base64EncodedString() }
+    }
+
     struct UploadedFile: Decodable, Sendable {
         let name: String
         let uri: String
@@ -227,6 +233,7 @@ actor GeminiAPIClient {
         fallbackModel: String? = nil,
         fallbackModels: [String] = [],
         responseSchema: [String: Any]? = nil,
+        images: [InputImage] = [],
         onStatus: (@Sendable (String) async -> Void)? = nil
     ) async throws -> String {
         let canUseAnalysisModelPin = transport == .gemini && Self.supportsAnalysisModelPin(model)
@@ -266,6 +273,7 @@ actor GeminiAPIClient {
                     prompt: prompt,
                     model: candidateModel,
                     responseSchema: responseSchema,
+                    images: images,
                     maxAttemptsOverride: maxAttemptsPerModel,
                     // A pinned key is a preference, not a reason to keep
                     // sending requests to a key that just failed. The retry
@@ -321,6 +329,7 @@ actor GeminiAPIClient {
         prompt: String,
         model: String,
         responseSchema: [String: Any]?,
+        images: [InputImage],
         maxAttemptsOverride: Int? = nil,
         allowKeyRotation: Bool = true,
         clearPinnedKeyOnFailure: Bool = false,
@@ -342,30 +351,26 @@ actor GeminiAPIClient {
                     // legacy generateContent route can list these models but
                     // may reject the actual generation request, which then
                     // incorrectly triggers the model/key fallback chain.
-                    var body: [String: Any] = [
-                        "model": model,
-                        "store": false,
-                        "input": prompt
-                    ]
-                    if let responseSchema {
-                        body["response_format"] = [
-                            "type": "text",
-                            "mime_type": "application/json",
-                            "schema": Self.interactionSchema(responseSchema)
-                        ]
-                    }
+                    let body = Self.textInteractionRequest(
+                        prompt: prompt, model: model, images: images, responseSchema: responseSchema
+                    )
                     data = try await sendJSON(body, path: "v1beta/interactions", apiKeyOverride: key)
                 case .openAICompatible:
+                    let userContent: Any = images.isEmpty
+                        ? prompt
+                        : ([["type": "text", "text": prompt]] + images.map { image in
+                            [
+                                "type": "image_url",
+                                "image_url": [
+                                    "url": "data:\(image.mimeType);base64,\(image.base64)"
+                                ]
+                            ] as [String: Any]
+                        })
                     var body: [String: Any] = [
                         "model": model,
                         "messages": [
-                            [
-                                "role": "system",
-                                "content": "Ты редактор конспектов. В сообщении пользователя всегда есть исходный текст лекции. Используй его полностью. Никогда не утверждай, что текст не предоставлен, не проси прислать его снова и не описывай процесс работы. Не выдумывай факты."
-                            ],
-                            ["role": "user", "content": prompt]
+                            ["role": "user", "content": userContent]
                         ],
-                        "temperature": 0.2,
                         "stream": false
                     ]
                     if responseSchema != nil {
@@ -373,15 +378,26 @@ actor GeminiAPIClient {
                     }
                     data = try await sendProviderJSON(body, path: "chat/completions", apiKeyOverride: key)
                 case .anthropic:
+                    let userContent: Any = images.isEmpty
+                        ? prompt
+                        : ([["type": "text", "text": prompt]] + images.map { image in
+                            [
+                                "type": "image",
+                                "source": [
+                                    "type": "base64",
+                                    "media_type": image.mimeType,
+                                    "data": image.base64
+                                ]
+                            ] as [String: Any]
+                        })
                     let body: [String: Any] = [
                         "model": model,
                         "max_tokens": 8_192,
-                        "temperature": 0.2,
-                        "messages": [["role": "user", "content": prompt]]
+                        "messages": [["role": "user", "content": userContent]]
                     ]
                     data = try await sendProviderJSON(body, path: "v1/messages", apiKeyOverride: key)
                 }
-                return try extractText(data, transport: transport)
+                return try Self.extractText(data, transport: transport)
             } catch let error as GeminiAPIError where error.isRateLimitOrQuota ||
                 (shouldClearPinnedKey && (error.code == 401 || error.code == 403)) {
                 lastError = error
@@ -758,7 +774,32 @@ actor GeminiAPIClient {
         }
     }
 
-    private func extractText(_ data: Data, transport: ProviderTransport) throws -> String {
+    /// Explicit user input keeps lecture text and image attachments in the same turn.
+    static func textInteractionRequest(
+        prompt: String,
+        model: String,
+        images: [InputImage] = [],
+        responseSchema: [String: Any]? = nil
+    ) -> [String: Any] {
+        let content: [[String: Any]] = [["type": "text", "text": prompt]] + images.map {
+            ["type": "image", "mime_type": $0.mimeType, "data": $0.base64]
+        }
+        var body: [String: Any] = [
+            "model": model,
+            "store": false,
+            "input": [["type": "user_input", "content": content]]
+        ]
+        if let responseSchema {
+            body["response_format"] = [
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": interactionSchema(responseSchema)
+            ]
+        }
+        return body
+    }
+
+    static func extractText(_ data: Data, transport: ProviderTransport) throws -> String {
         if transport == .openAICompatible,
            let streamText = String(data: data, encoding: .utf8),
            streamText.contains("data:") {
@@ -776,13 +817,14 @@ actor GeminiAPIClient {
             }
 
             let steps = root?["steps"] as? [[String: Any]] ?? []
-            for step in steps where (step["type"] as? String) == "model_output" {
-                let content = step["content"] as? [[String: Any]] ?? []
-                for part in content where (part["type"] as? String) == "text" {
-                    if let text = part["text"] as? String,
-                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        return text
-                    }
+            if let output = steps.last(where: { ($0["type"] as? String) == "model_output" }) {
+                let content = output["content"] as? [[String: Any]] ?? []
+                let text = content.compactMap { part -> String? in
+                    guard (part["type"] as? String) == "text" else { return nil }
+                    return part["text"] as? String
+                }.joined(separator: "\n")
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return text
                 }
             }
         }

@@ -2,19 +2,21 @@ import SwiftUI
 
 struct MarkdownPreview: View {
     let markdown: String
+    var header: AnyView?
     var onScrollOffsetChange: ((CGFloat) -> Void)?
 
-    init(markdown: String, onScrollOffsetChange: ((CGFloat) -> Void)? = nil) {
+    init(markdown: String, header: AnyView? = nil, onScrollOffsetChange: ((CGFloat) -> Void)? = nil) {
         self.markdown = markdown
+        self.header = header
         self.onScrollOffsetChange = onScrollOffsetChange
     }
 
-    private var blocks: [MarkdownPreviewBlock] {
-        MarkdownPreviewParser.parse(markdown)
-    }
+    @State private var blocks: [MarkdownPreviewBlock] = []
 
     var body: some View {
         ScrollView {
+            VStack(spacing: 0) {
+                if let header { header }
             LazyVStack(alignment: .leading, spacing: 14) {
                 if blocks.isEmpty {
                     ContentUnavailableView(
@@ -33,6 +35,7 @@ struct MarkdownPreview: View {
             .padding(.horizontal, 32)
             .padding(.vertical, 28)
             .frame(maxWidth: .infinity, alignment: .center)
+            }
         }
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             geometry.contentOffset.y + geometry.contentInsets.top
@@ -41,6 +44,9 @@ struct MarkdownPreview: View {
         }
         .background(WhispPalette.content)
         .textSelection(.enabled)
+        .onChange(of: markdown, initial: true) { _, text in
+            blocks = MarkdownPreviewParser.parse(text)
+        }
     }
 }
 
