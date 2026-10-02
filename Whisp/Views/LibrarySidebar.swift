@@ -4,6 +4,8 @@ struct LibrarySidebar: View {
     @Bindable var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @State private var showNoteQueue = false
+    @State private var queueSelection: Set<UUID> = []
     @State private var searchText = ""
     @State private var selectedSubject = "Все"
     @State private var matchingSessionIDs: Set<UUID> = []
@@ -26,6 +28,18 @@ struct LibrarySidebar: View {
             header
             todayButton
             subjectFilters
+            Button {
+                showNoteQueue = true
+            } label: {
+                Label("Очередь конспектов · \(model.queuedAnalysisSessionIDs.count + (model.activeAnalysisSessionID == nil ? 0 : 1))", systemImage: "text.badge.plus")
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .popover(isPresented: $showNoteQueue) { noteQueuePanel }
+
 
             if model.isRestoringFromWebDAV {
                 HStack(spacing: 8) {
@@ -51,9 +65,9 @@ struct LibrarySidebar: View {
                                 .tag(session.id)
                                 .contextMenu {
                                     Button {
-                                        Task { await model.regenerateAnalysis(for: session.id, forceOverwriteNotes: true) }
+                                        model.enqueueAnalysis(for: session.id)
                                     } label: {
-                                        Label("Перегенерировать конспект", systemImage: "sparkles")
+                                        Label(model.isAnalysisQueued(for: session.id) ? "Уже в очереди" : "Добавить конспект в очередь", systemImage: "sparkles")
                                     }
                                     Button {
                                         model.revealInFinder(sessionID: session.id)
@@ -128,6 +142,60 @@ struct LibrarySidebar: View {
             guard !Task.isCancelled else { return }
             matchingSessionIDs = model.matchingSessionIDs(for: query)
         }
+    }
+
+    private var noteQueuePanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Очередь конспектов").font(.headline)
+            if let id = model.activeAnalysisSessionID,
+               let session = model.sessions.first(where: { $0.id == id }) {
+                Label("Генерируется: \(session.title)", systemImage: "sparkles")
+                    .font(.caption)
+                Text(model.statusMessage).font(.caption2).foregroundStyle(.secondary)
+            }
+            ForEach(model.queuedAnalysisSessionIDs, id: \.self) { id in
+                if let session = model.sessions.first(where: { $0.id == id }) {
+                    HStack {
+                        Text(session.title).font(.caption).lineLimit(2)
+                        Spacer()
+                        Button { model.removeQueuedAnalysis(for: id) } label: { Image(systemName: "xmark.circle") }
+                            .buttonStyle(.plain)
+                            .help("Убрать из очереди")
+                    }
+                }
+            }
+            Divider()
+            Text("Выберите лекции для генерации").font(.subheadline)
+            Text("Готовые конспекты выбранных лекций будут перегенерированы.")
+                .font(.caption).foregroundStyle(.secondary)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(model.sessions.filter { !$0.finalTranscript.isEmpty || !$0.rawTranscript.isEmpty || !$0.attachedImagePaths.isEmpty }) { session in
+                        Toggle(session.title, isOn: Binding(
+                            get: { queueSelection.contains(session.id) },
+                            set: { checked in
+                                if checked { queueSelection.insert(session.id) }
+                                else { queueSelection.remove(session.id) }
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+                        .disabled(model.isAnalysisQueued(for: session.id))
+                    }
+                }
+            }
+            .frame(height: 230)
+            Button("Добавить выбранные (\(queueSelection.count))") {
+                for session in model.sessions where queueSelection.contains(session.id) {
+                    model.enqueueAnalysis(for: session.id)
+                }
+                queueSelection.removeAll()
+            }
+            .buttonStyle(.glassProminent)
+            .disabled(queueSelection.isEmpty)
+        }
+        .padding(18)
+        .frame(width: 390)
     }
 
     private var header: some View {

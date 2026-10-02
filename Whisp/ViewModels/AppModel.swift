@@ -6,6 +6,12 @@ import ImageIO
 import Observation
 import UniformTypeIdentifiers
 
+private struct NoteGenerationJob {
+    let sessionID: UUID
+    var forceOverwriteNotes: Bool
+    var waiters: [CheckedContinuation<Void, Never>] = []
+}
+
 private struct LectureImportJob {
     let audioURLs: [URL]
     let imageURLs: [URL]
@@ -143,6 +149,59 @@ final class AppModel {
     var batchLogs: [ProcessingLogEntry] = []
     var isGeneratingQuiz = false
     var isGeneratingNotes = false
+    private var noteGenerationQueue: [NoteGenerationJob] = []
+    private(set) var activeAnalysisSessionID: UUID?
+    @ObservationIgnored private var noteQueueTask: Task<Void, Never>?
+    @ObservationIgnored private var activeAnalysisWaiters: [CheckedContinuation<Void, Never>] = []
+    var queuedAnalysisSessionIDs: [UUID] { noteGenerationQueue.map(\.sessionID) }
+
+    func isAnalysisQueued(for id: UUID) -> Bool {
+        activeAnalysisSessionID == id || queuedAnalysisSessionIDs.contains(id)
+    }
+
+    func enqueueAnalysis(for id: UUID, forceOverwriteNotes: Bool = true) {
+        enqueueAnalysis(for: id, forceOverwriteNotes: forceOverwriteNotes, waiter: nil)
+    }
+
+    private func enqueueAnalysis(for id: UUID, forceOverwriteNotes: Bool, waiter: CheckedContinuation<Void, Never>?) {
+        guard let session = sessions.first(where: { $0.id == id }),
+              !session.finalTranscript.isEmpty || !session.rawTranscript.isEmpty || !session.attachedImagePaths.isEmpty else {
+            waiter?.resume()
+            return
+        }
+        if activeAnalysisSessionID == id {
+            if let waiter { activeAnalysisWaiters.append(waiter) }
+            return
+        }
+        if let index = noteGenerationQueue.firstIndex(where: { $0.sessionID == id }) {
+            noteGenerationQueue[index].forceOverwriteNotes = noteGenerationQueue[index].forceOverwriteNotes || forceOverwriteNotes
+            if let waiter { noteGenerationQueue[index].waiters.append(waiter) }
+            return
+        }
+        noteGenerationQueue.append(NoteGenerationJob(sessionID: id, forceOverwriteNotes: forceOverwriteNotes, waiters: waiter.map { [$0] } ?? []))
+        guard noteQueueTask == nil else { return }
+        noteQueueTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !self.noteGenerationQueue.isEmpty {
+                let job = self.noteGenerationQueue.removeFirst()
+                self.activeAnalysisSessionID = job.sessionID
+                self.activeAnalysisWaiters = job.waiters
+                await self.performAnalysis(for: job.sessionID, forceOverwriteNotes: job.forceOverwriteNotes)
+                self.activeAnalysisSessionID = nil
+                let waiters = self.activeAnalysisWaiters
+                self.activeAnalysisWaiters.removeAll()
+                waiters.forEach { $0.resume() }
+            }
+            self.noteQueueTask = nil
+        }
+    }
+
+    func removeQueuedAnalysis(for id: UUID) {
+        guard let index = noteGenerationQueue.firstIndex(where: { $0.sessionID == id }) else { return }
+        let job = noteGenerationQueue.remove(at: index)
+        job.waiters.forEach { $0.resume() }
+    }
+
     var isRestoringFromWebDAV = false
     private var batchRegenerateTask: Task<Void, Never>?
 
@@ -1516,7 +1575,14 @@ final class AppModel {
     }
 
     func regenerateAnalysis(for sessionID: UUID? = nil, forceOverwriteNotes: Bool = true) async {
-        let targetID = sessionID ?? currentSession?.id
+        guard let targetID = sessionID ?? currentSession?.id else { return }
+        await withCheckedContinuation { waiter in
+            enqueueAnalysis(for: targetID, forceOverwriteNotes: forceOverwriteNotes, waiter: waiter)
+        }
+    }
+
+    private func performAnalysis(for sessionID: UUID, forceOverwriteNotes: Bool) async {
+        let targetID: UUID? = sessionID
         guard let targetID, let index = sessions.firstIndex(where: { $0.id == targetID }) else { return }
         var session = sessions[index]
         if session.finalTranscript.isEmpty && !session.rawTranscript.isEmpty {
@@ -1675,7 +1741,8 @@ final class AppModel {
         session.finalMarkdown = session.userEditedFinal ? previousFinal : rendered.final
         session.notesMarkdown = preserveEditedNotes ? previousNotes : (session.notesMarkdown.isEmpty ? rendered.notes : session.notesMarkdown)
         session.studentNotesMarkdown = preserveEditedStudentNotes ? previousStudentNotes : (session.studentNotesMarkdown.isEmpty ? rendered.studentNotebook : session.studentNotesMarkdown)
-        sessions[index] = session
+        guard let finalIndex = sessions.firstIndex(where: { $0.id == targetID }) else { return }
+        sessions[finalIndex] = session
         try? await store.save(session)
         if currentSession?.id == targetID {
             currentSession = session

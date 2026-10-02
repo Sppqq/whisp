@@ -92,3 +92,46 @@ final class GeminiLectureTextPayloadTests: XCTestCase {
         XCTAssertEqual(text, "## Митоз\nДеление клетки.")
     }
 }
+
+
+final class LectureInputRegressionTests: XCTestCase {
+    func testSparseLongLectureIsNotSplitBySilentTime() {
+        let segments = (0..<176).map { index in
+            TranscriptSegment(start: Double(index * 28), end: Double(index * 28 + 1),
+                text: "Короткая реплика урока", source: .geminiLive, model: "test")
+        }
+        let parts = LectureAnalysisService.partitionSegments(segments)
+        XCTAssertEqual(parts.count, 1)
+        XCTAssertTrue(parts[0].text.contains("[00:00]"))
+        XCTAssertTrue(parts[0].text.contains(WhispFormatting.timestamp(segments.last!.start)))
+    }
+
+    func testTextRequestsAreNotAcceptedAsNotes() {
+        XCTAssertTrue(LectureAnalysisService.isRetrievalPlaceholder("Кидай текст."))
+        XCTAssertTrue(LectureAnalysisService.isRetrievalPlaceholder("Пришли текст лекции"))
+        XCTAssertFalse(LectureAnalysisService.isRetrievalPlaceholder("## Лексика\nОбсуждали образ персонажа."))
+    }
+}
+
+
+final class NoteGenerationQueueTests: XCTestCase {
+    @MainActor
+    func testQueuePreservesOrderDeduplicatesAndRemovesPendingJobs() {
+        let model = AppModel()
+        let segment = TranscriptSegment(start: 0, end: 1, text: "Учебный материал", source: .geminiLive, model: "test")
+        let first = LectureSession(rawTranscript: [segment])
+        let second = LectureSession(finalTranscript: [segment])
+        let empty = LectureSession()
+        model.sessions = [first, second, empty]
+        model.enqueueAnalysis(for: first.id)
+        model.enqueueAnalysis(for: second.id)
+        model.enqueueAnalysis(for: first.id)
+        model.enqueueAnalysis(for: empty.id)
+        XCTAssertEqual(model.queuedAnalysisSessionIDs, [first.id, second.id])
+        XCTAssertTrue(model.isAnalysisQueued(for: first.id))
+        model.removeQueuedAnalysis(for: first.id)
+        XCTAssertEqual(model.queuedAnalysisSessionIDs, [second.id])
+        model.removeQueuedAnalysis(for: second.id)
+        XCTAssertTrue(model.queuedAnalysisSessionIDs.isEmpty)
+    }
+}

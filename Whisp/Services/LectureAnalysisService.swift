@@ -145,7 +145,7 @@ actor LectureAnalysisService {
         // 2. Разбиение на части для прогрессивной генерации
         let parts = sortedSegments.isEmpty
             ? [LecturePart(index: 1, total: 1, start: 0, end: 0, text: "")]
-            : partitionSegments(sortedSegments)
+            : Self.partitionSegments(sortedSegments)
         var generatedParts: [String] = []
 
         for part in parts {
@@ -260,9 +260,14 @@ actor LectureAnalysisService {
         }
     }
 
-    private static func isRetrievalPlaceholder(_ text: String) -> Bool {
+    static func isRetrievalPlaceholder(_ text: String) -> Bool {
         let normalized = text.lowercased()
-        return normalized.contains("ccr retrieve")
+        return normalized.contains("кидай текст")
+            || normalized.contains("пришли текст")
+            || normalized.contains("пришлите текст")
+            || normalized.contains("отправь текст")
+            || normalized.contains("отправьте текст")
+            || normalized.contains("ccr retrieve")
             || normalized.contains("retrieve hash=")
             || normalized.contains("не отобразились части конспекта")
             || normalized.contains("пришлите текст частей")
@@ -285,12 +290,11 @@ actor LectureAnalysisService {
             || normalized.contains("данные для обработки отсутствуют")
     }
 
-    private func partitionSegments(_ segments: [TranscriptSegment]) -> [LecturePart] {
+    static func partitionSegments(_ segments: [TranscriptSegment]) -> [LecturePart] {
         let totalChars = segments.reduce(0) { $0 + $1.text.count }
-        let totalDuration = (segments.last?.end ?? 0) - (segments.first?.start ?? 0)
 
         // Для коротких записей достаточно 1 части
-        guard totalChars > 14_000 || totalDuration > 1_000 else {
+        guard totalChars > 18_000 else {
             let text = segments.map {
                 "[\(WhispFormatting.timestamp($0.start))] \($0.speaker.map { "\($0): " } ?? "")\($0.text)"
             }.joined(separator: "\n")
@@ -303,25 +307,21 @@ actor LectureAnalysisService {
             )]
         }
 
-        // Целевой размер части: ~18 000 символов или ~15 минут аудио
+        // Sparse transcripts can span hours; split by text volume, not silence.
         let targetCharsPerPart = 18_000
-        let targetDurationPerPart = 1_000.0
 
         var groups: [[TranscriptSegment]] = []
         var currentGroup: [TranscriptSegment] = []
         var currentChars = 0
-        var groupStartTime = segments.first?.start ?? 0
 
         for segment in segments {
             currentGroup.append(segment)
             currentChars += segment.text.count
-            let elapsedInGroup = segment.end - groupStartTime
 
-            if (currentChars >= targetCharsPerPart && elapsedInGroup >= 600) || elapsedInGroup >= targetDurationPerPart {
+            if currentChars >= targetCharsPerPart {
                 groups.append(currentGroup)
                 currentGroup = []
                 currentChars = 0
-                groupStartTime = segment.end
             }
         }
         if !currentGroup.isEmpty {
@@ -537,7 +537,8 @@ actor LectureAnalysisService {
         Сохрани только определения, правила, задания, формулы, примеры и выводы.
         Используй визуальный контекст фото, если он дополняет фрагмент. Вставляй метку [[IMAGE_1]] (и далее по номеру) в уместном месте конспекта только когда фото действительно иллюстрирует этот материал; не добавляй фото ради формальности. Не изменяй метки.
         \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
-        Если во фрагменте нет учебного содержания, напиши одну строку: «Содержательного материала нет».
+        Для уроков языка сохраняй упражнения, исправления, вопросы и ответы, лексику и обсуждённые темы, даже если они поданы короткими репликами.
+        Если материал скудный, составь краткую заметку из доступных сведений и укажи ограничения. Не объявляй весь урок бессодержательным из-за коротких реплик.
         Верни только Markdown-конспект без вступления и мета-комментариев. Формулы оформляй в LaTeX.
         \(part.text.isEmpty
             ? "Расшифровка отсутствует. Составь конспект только по видимому учебному содержанию фотографий."
