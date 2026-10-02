@@ -146,6 +146,10 @@ private struct LectureRow: View {
                     .foregroundStyle(secondaryColor)
             }
             .font(.caption2)
+            Label(session.cloudSyncTitle, systemImage: session.cloudSyncIcon)
+                .font(.caption2)
+                .foregroundStyle(secondaryColor)
+                .help(session.syncedAt.map { "Последняя успешная загрузка: \($0.formatted(date: .numeric, time: .shortened))" } ?? "Лекция ещё не загружена в WebDAV")
             if let snippet = matchingSnippet, !snippet.isEmpty {
                 Text(MarkdownDisplayFormatting.attributed(snippet.replacingOccurrences(of: #"^(?:#{1,6}|[-*])\s+"#, with: "", options: .regularExpression)))
                     .font(.caption2)

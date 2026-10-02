@@ -582,7 +582,6 @@ private struct StartView: View {
                     }
                     VStack(spacing: 20) { recordingCard; importCard }
                 }
-                .disabled(model.isBusy)
                 HStack(spacing: 24) {
                     Label("Запись", systemImage: "waveform")
                     Image(systemName: "chevron.right").font(.caption)
@@ -598,7 +597,6 @@ private struct StartView: View {
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .dropDestination(for: URL.self) { urls, _ in
-            guard !model.isBusy else { return false }
             let audio = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) == true }
             let images = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true }
             guard !audio.isEmpty || !images.isEmpty else { return false }
@@ -667,6 +665,10 @@ private struct StartView: View {
             Button { Task { await model.startRecording(captureSystemAudio: captureMode == .microphoneAndSystem) } } label: {
                 Label("Начать запись", systemImage: "record.circle").frame(maxWidth: .infinity)
             }.buttonStyle(WhispActionStyle(prominent: true, tint: WhispPalette.recording))
+            .disabled(!model.canStartRecording)
+            if let reason = model.recordingUnavailableReason {
+                Text(reason).font(.caption).foregroundStyle(.secondary)
+            }
         }
         .frame(height: 400, alignment: .top)
         .padding(24).frame(maxWidth: .infinity, alignment: .leading).whispContentCard()
@@ -688,7 +690,7 @@ private struct StartView: View {
             }.font(.caption).foregroundStyle(.secondary).frame(height: 98, alignment: .top)
             Spacer(minLength: 0)
             Button { showAudioImporter = true } label: {
-                Label("Выбрать файлы…", systemImage: "folder").frame(maxWidth: .infinity)
+                Label(model.isBusy ? "Добавить файлы в очередь…" : "Выбрать файлы…", systemImage: "folder").frame(maxWidth: .infinity)
             }.buttonStyle(WhispActionStyle()).tint(.primary).controlSize(.large)
         }
         .frame(height: 400, alignment: .top)

@@ -207,6 +207,15 @@ final class AppModel {
     private var batchRegenerateTask: Task<Void, Never>?
 
     var isBusy: Bool { isRecording || isBatchRegenerating || isRestoringFromWebDAV || isWorking || isGeneratingNotes }
+    // Note generation works on its own session and does not use audio capture.
+    var canStartRecording: Bool { !isRecording && !isBatchRegenerating && !isRestoringFromWebDAV && !isWorking }
+    var recordingUnavailableReason: String? {
+        if isRecording { return "Уже идёт запись лекции." }
+        if isRestoringFromWebDAV { return "Дождитесь загрузки лекций из облака." }
+        if isBatchRegenerating { return "Дождитесь завершения массовой обработки." }
+        if isWorking { return "Дождитесь завершения обработки или синхронизации." }
+        return nil
+    }
     private(set) var activeProcessingSessionID: UUID?
     var selectedMicrophoneID: UInt32? {
         get { settingsStore.settings.preferredMicrophoneID }
@@ -248,7 +257,7 @@ final class AppModel {
         selectedSessionID = nil
         importedFileName = nil
         lastError = nil
-        if activeProcessingSessionID == nil {
+        if activeProcessingSessionID == nil && !isBusy {
             processingProgress = 0
             statusMessage = "Готово к записи"
         }
@@ -390,7 +399,7 @@ final class AppModel {
     }
 
     func startRecording(captureSystemAudio: Bool = true) async {
-        guard !isBusy else { return }
+        guard canStartRecording else { return }
         resetSessionTasks()
         needsScreenCapturePermission = false
         needsMicrophonePermission = false
@@ -504,6 +513,11 @@ final class AppModel {
                 self.isImportQueueActive = false
             }
             while !self.pendingImportJobs.isEmpty, !Task.isCancelled {
+                // Keep selected files in the queue while another operation owns the pipeline.
+                while self.isBusy, !self.pendingImportJobs.isEmpty, !Task.isCancelled {
+                    do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+                }
+                guard !self.pendingImportJobs.isEmpty, !Task.isCancelled else { break }
                 let next = self.pendingImportJobs.removeFirst()
                 await self.importAudio(from: next.audioURLs, images: next.imageURLs)
             }
@@ -952,6 +966,8 @@ final class AppModel {
             session.quizMarkdown = quiz
             session.quizProgress.reset()
         }
+        guard session != currentSession else { return }
+        if session.status == .synced { session.status = .review }
         currentSession = session
         schedulePersistCurrent()
     }
@@ -2293,6 +2309,9 @@ final class AppModel {
 private var pendingPersistenceSnapshots: [UUID: LectureSession] = [:]
 
     private func schedulePersistCurrent() {
+        if currentSession?.status == .synced {
+            currentSession?.status = .review
+        }
         guard let session = currentSession else { return }
         pendingPersistenceSnapshots[session.id] = session
         if let index = sessions.firstIndex(where: { $0.id == session.id }) { sessions[index] = session }

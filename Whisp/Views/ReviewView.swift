@@ -226,7 +226,7 @@ struct ReviewView: View {
         VStack(spacing: 12) {
             Divider()
             HStack {
-                Label(model.currentSession?.status == .synced ? "Синхронизировано" : "Сохранено на Mac", systemImage: model.currentSession?.status == .synced ? "checkmark.icloud" : "checkmark")
+                Label(model.currentSession?.cloudSyncTitle ?? "Только на Mac", systemImage: model.currentSession?.cloudSyncIcon ?? "internaldrive")
                 Spacer()
                 if !readingTimeText.isEmpty { Text(readingTimeText) }
             }
@@ -305,6 +305,10 @@ struct ReviewView: View {
                         .font(.title2.weight(.bold)).fixedSize(horizontal: false, vertical: true)
                     Text("\(model.currentSession?.subject ?? "") · \(selectedLectureDateText)")
                         .font(.callout).foregroundStyle(.secondary)
+                    if let session = model.currentSession {
+                        Label(session.cloudSyncTitle, systemImage: session.cloudSyncIcon)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer(minLength: 12)
                 Button { showLectureDetails = true } label: {

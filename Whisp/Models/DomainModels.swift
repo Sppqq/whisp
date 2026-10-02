@@ -282,6 +282,17 @@ struct LectureSession: Identifiable, Codable, Hashable, Sendable {
     var quizProgress = QuizProgress()
     var lastError: String?
     var syncedAt: Date?
+    var cloudSyncTitle: String {
+        if status == .uploading { return lastError == nil ? "Загрузка в облако" : "Ошибка загрузки" }
+        if status == .synced { return "В облаке" }
+        if syncedAt != nil { return "Есть изменения на Mac" }
+        return "Только на Mac"
+    }
+    var cloudSyncIcon: String {
+        if status == .uploading { return lastError == nil ? "icloud.and.arrow.up" : "exclamationmark.icloud" }
+        if status == .synced { return "checkmark.icloud" }
+        return syncedAt == nil ? "internaldrive" : "icloud.and.arrow.up"
+    }
     var remotePath: String?
     var remoteETag: String?
     var userEditedFinal = false

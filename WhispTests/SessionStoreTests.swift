@@ -2,6 +2,34 @@ import XCTest
 @testable import Whisp
 
 final class SessionStoreTests: XCTestCase {
+    @MainActor
+    func testNewLectureDuringBackgroundNotesKeepsProgressAndAllowsRecording() {
+        let model = AppModel()
+        model.isGeneratingNotes = true
+        model.statusMessage = "Создаём конспект"
+        model.showStartScreen()
+        XCTAssertEqual(model.statusMessage, "Создаём конспект")
+        XCTAssertTrue(model.canStartRecording)
+        XCTAssertTrue(model.isBusy)
+        model.isRestoringFromWebDAV = true
+        XCTAssertFalse(model.canStartRecording)
+        XCTAssertNotNil(model.recordingUnavailableReason)
+    }
+
+    func testCloudStatusDistinguishesUploadFailureAndLocalChanges() {
+        var session = LectureSession()
+        XCTAssertEqual(session.cloudSyncTitle, "Только на Mac")
+        session.status = .synced
+        session.syncedAt = Date()
+        XCTAssertEqual(session.cloudSyncTitle, "В облаке")
+        session.status = .review
+        XCTAssertEqual(session.cloudSyncTitle, "Есть изменения на Mac")
+        session.status = .uploading
+        XCTAssertEqual(session.cloudSyncTitle, "Загрузка в облако")
+        session.lastError = "Нет сети"
+        XCTAssertEqual(session.cloudSyncTitle, "Ошибка загрузки")
+    }
+
     func testRoundTripAndRecovery() async throws {
         let base = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }
