@@ -1557,7 +1557,6 @@ final class AppModel {
                     client: try providerClient(for: .analysis),
                     model: settingsStore.analysisProviderModel,
                     fallbackModels: settingsStore.activeAnalysisFallbackModels,
-                    transport: settingsStore.providerTransport(for: settingsStore.analysisProviderID),
                     jevClient: jevClient,
                     jevConfiguration: settingsStore.isJevClassificationConfigured ? settingsStore.settings.jev : nil
                 )

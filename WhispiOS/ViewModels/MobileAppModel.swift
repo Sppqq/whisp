@@ -302,6 +302,9 @@ final class MobileAppModel {
 
     func regenerateAnalysis(for sessionID: UUID) async {
         guard !isProcessing, !isImporting, var session = sessions.first(where: { $0.id == sessionID }) else { return }
+        if session.finalTranscript.isEmpty && !session.rawTranscript.isEmpty {
+            session.finalTranscript = session.rawTranscript
+        }
         guard !session.finalTranscript.isEmpty || !session.attachedImagePaths.isEmpty else {
             errorMessage = "Для конспекта нужны расшифровка или фото."
             return

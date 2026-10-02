@@ -4,7 +4,6 @@ actor LectureAnalysisService {
     private let client: GeminiAPIClient
     private let model: String
     private let fallbackModels: [String]
-    private let transport: ProviderTransport
     private let jevClient: JevAPIClient?
     private let jevConfiguration: JevConfiguration?
 
@@ -13,13 +12,11 @@ actor LectureAnalysisService {
         model: String,
         fallbackModel: String? = nil,
         fallbackModels: [String] = [],
-        transport: ProviderTransport = .gemini,
         jevClient: JevAPIClient? = nil,
         jevConfiguration: JevConfiguration? = nil
     ) {
         self.client = client
         self.model = model
-        self.transport = transport
         self.jevClient = jevClient
         self.jevConfiguration = jevConfiguration
         var candidates = fallbackModel.map { [$0] } ?? []
@@ -173,11 +170,9 @@ actor LectureAnalysisService {
 
         let combinedPartNotes = generatedParts.joined(separator: "\n\n")
         let consolidatedNotes: String
-        // A single part is already a complete note. Sending it through a
-        // second prompt only adds latency and can make context-compressing
-        // OpenAI-compatible gateways replace the text with a retrieval hash.
-        let canConsolidate = transport == .gemini
-            && generatedParts.count > 1
+        // A single part is already complete. Consolidate multiple parts for
+        // every provider, keeping the originals if the editorial pass fails.
+        let canConsolidate = generatedParts.count > 1
             && combinedPartNotes.count <= 30_000
         if !canConsolidate {
             if generatedParts.count > 1 {
@@ -367,44 +362,27 @@ actor LectureAnalysisService {
             sampleTranscript = transcript
         }
 
-        let prompt: String
-        if transport == .gemini {
-            prompt = """
-            Ты анализируешь материалы русской лекции для базы знаний Obsidian: расшифровку и/или фотографии.
-            Если расшифровки нет, опирайся только на видимый учебный материал фотографий и не придумывай сказанное преподавателем.
-            Выбери наиболее подходящий предмет из списка: \(subjects.joined(separator: ", ")).
+        let prompt = """
+        Ты анализируешь материалы русской лекции для базы знаний Obsidian: расшифровку и/или фотографии.
+        \(sampleTranscript.isEmpty ? "Расшифровки нет: опирайся только на видимый учебный материал фотографий." : "Ниже передана расшифровка для анализа. Используй её как источник; не проси прислать текст повторно.")
+        Выбери наиболее подходящий предмет из списка: \(subjects.joined(separator: ", ")).
 
-            Верни строго JSON со следующими ключами:
-            - title: точное, ёмкое и понятное название темы лекции (без кавычек и дат)
-            - subject: предмет из предложенного списка (или самый точный школьный/университетский предмет)
-            - confidence: число от 0.0 до 1.0
-            - alternatives: массив до 3 альтернативных предметов
-            - tags: массив из 3-6 тегов для Obsidian
-            - keyConcepts: массив из 3-7 ключевых понятий
-            - reminders: только реальные задания из лекции, до 5 элементов; если их нет, пустой массив
-            - summary: краткая суть лекции (1-2 ёмких абзаца без воды)
+        Верни строго JSON со следующими ключами:
+        - title: точное, ёмкое и понятное название темы лекции (без кавычек и дат)
+        - subject: предмет из предложенного списка (или самый точный школьный/университетский предмет)
+        - confidence: число от 0.0 до 1.0
+        - alternatives: массив до 3 альтернативных предметов
+        - tags: массив из 3-6 тегов для Obsidian
+        - keyConcepts: массив из 3-7 ключевых понятий
+        - reminders: только реальные задания из лекции, до 5 элементов; если их нет, пустой массив
+        - summary: краткая суть лекции (1-2 ёмких абзаца без воды)
 
-            НАЧАЛО ИСХОДНОГО ТЕКСТА
-            \(sampleTranscript)
-            КОНЕЦ ИСХОДНОГО ТЕКСТА
+        НАЧАЛО ИСХОДНОГО ТЕКСТА
+        \(sampleTranscript)
+        КОНЕЦ ИСХОДНОГО ТЕКСТА
 
-            \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
-            """
-        } else {
-            prompt = """
-            НАЧАЛО ИСХОДНОГО ТЕКСТА
-            \(sampleTranscript)
-            КОНЕЦ ИСХОДНОГО ТЕКСТА
-
-            \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
-
-            ЗАДАНИЕ: верни только один JSON-объект без Markdown и пояснений.
-            Поля: title, subject, confidence, alternatives, tags, keyConcepts, reminders, summary.
-            Предмет выбери из списка: \(subjects.joined(separator: ", ")).
-            Используй расшифровку и/или контекст фотографий. Если расшифровки нет, делай выводы только по фотографиям и не выдумывай устную часть лекции.
-            """
-        }
-
+        \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
+        """
         let schema: [String: Any] = [
             "type": "OBJECT",
             "properties": [
@@ -428,10 +406,6 @@ actor LectureAnalysisService {
         do {
             text = try await generateText(prompt: prompt, responseSchema: schema, onStatus: onStatus)
         } catch let structuredError {
-            if transport != .gemini {
-                await onStatus?("Кастомный провайдер не вернул JSON — не повторяем платный запрос, продолжаем без метаданных.")
-                return Self.neutralMetadata(subjects: subjects)
-            }
             await onStatus?("Структурированный ответ не получен — запрашиваем обычный текст, чтобы продолжить…")
             let fallbackPrompt = """
             Ты оформляешь краткий конспект русской лекции для базы знаний Obsidian.
@@ -486,10 +460,6 @@ actor LectureAnalysisService {
             }
             return metadata
         } catch {
-            if transport != .gemini {
-                await onStatus?("Кастомный провайдер вернул не JSON, а обычный текст — не сохраняем его как метаданные.")
-                return Self.neutralMetadata(subjects: subjects)
-            }
             let plainSummary = text.trimmingCharacters(in: .whitespacesAndNewlines)
             return MetadataEnvelope(
                 title: "Лекция (\(subjects.first ?? "Новая"))",
@@ -556,74 +526,33 @@ actor LectureAnalysisService {
             ? "часть \(part.index) из \(part.total) (интервал: \(part.timeRange))"
             : "вся лекция"
 
-        let prompt: String
-        if transport == .gemini {
-            prompt = """
-            Ты оформляешь конспект русской лекции для базы знаний Obsidian.
-            Тема всей лекции: «\(title)». Предмет: \(subject).
-            Текущий фрагмент: \(partInfo).
-            Синтезируй конспект, а не расшифровку.
-            Не переписывай строки исходника, таймкоды, номера спикеров и диалоги дословно.
-            Объедини близкие мысли в 3–8 смысловых пунктов, убери приветствия, бытовой шум, повторы и обрывки.
-            Сохрани только определения, правила, задания, формулы, примеры и выводы.
-            Используй визуальный контекст фото, если он дополняет фрагмент. Вставляй метку [[IMAGE_1]] (и далее по номеру) в уместном месте конспекта только когда фото действительно иллюстрирует этот материал; не добавляй фото ради формальности. Не изменяй метки.
-            \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
-            Если во фрагменте нет учебного содержания, напиши одну строку: «Содержательного материала нет».
-            Верни только Markdown-конспект без вступления и мета-комментариев. Формулы оформляй в LaTeX.
-            \(part.text.isEmpty
-                ? "Расшифровка отсутствует. Составь конспект только по видимому учебному содержанию фотографий."
-                : "НАЧАЛО ИСХОДНОГО ТЕКСТА\n\(part.text)\nКОНЕЦ ИСХОДНОГО ТЕКСТА")
-            """
-        } else {
-            prompt = """
-            \(part.text.isEmpty
-                ? "Расшифровки нет. Составь конспект только по фотографиям и не добавляй сведения, которых на них не видно."
-                : "НАЧАЛО ИСХОДНОГО ТЕКСТА\n\(part.text)\nКОНЕЦ ИСХОДНОГО ТЕКСТА")
-
-            ЗАДАНИЕ: составь короткий аккуратный конспект русской лекции для студента.
-            Тема: «\(title)». Предмет: \(subject). Фрагмент: \(partInfo).
-            Синтезируй содержание, не переписывай исходник. Не включай таймкоды, номера спикеров и реплики дословно.
-            Удали бытовой шум, повторы и обрывки; оставь 3–8 смысловых пунктов, определения, задания, формулы, примеры и выводы.
-            Используй визуальный контекст фото, если он дополняет фрагмент. Вставляй метку [[IMAGE_1]] (и далее по номеру) в уместном месте конспекта только когда фото действительно иллюстрирует этот материал; не добавляй фото ради формальности. Не изменяй метки.
-            \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
-            Если учебного содержания нет, напиши одну строку: «Содержательного материала нет».
-            Верни только Markdown: заголовки, определения, тезисы, списки, формулы и примеры.
-            \(part.text.isEmpty ? "Расшифровки нет; не упоминай её отсутствие в конспекте." : "Текст уже предоставлен. Не проси прислать его снова и не пиши, что он отсутствует.")
-            """
-        }
-
+        let prompt = """
+        Ты оформляешь конспект русской лекции для базы знаний Obsidian.
+        Тема всей лекции: «\(title)». Предмет: \(subject).
+        Текущий фрагмент: \(partInfo).
+        \(part.text.isEmpty ? "Источник — учебное содержание фотографий." : "Источник — расшифровка ниже между метками начала и конца. Текст уже передан; не проси прислать его повторно.")
+        Синтезируй конспект, а не расшифровку.
+        Не переписывай строки исходника, таймкоды, номера спикеров и диалоги дословно.
+        Объедини близкие мысли в 3–8 смысловых пунктов, убери приветствия, бытовой шум, повторы и обрывки.
+        Сохрани только определения, правила, задания, формулы, примеры и выводы.
+        Используй визуальный контекст фото, если он дополняет фрагмент. Вставляй метку [[IMAGE_1]] (и далее по номеру) в уместном месте конспекта только когда фото действительно иллюстрирует этот материал; не добавляй фото ради формальности. Не изменяй метки.
+        \(visualContext.isEmpty ? "" : "ВИЗУАЛЬНЫЙ КОНТЕКСТ ФОТО:\n\(visualContext)")
+        Если во фрагменте нет учебного содержания, напиши одну строку: «Содержательного материала нет».
+        Верни только Markdown-конспект без вступления и мета-комментариев. Формулы оформляй в LaTeX.
+        \(part.text.isEmpty
+            ? "Расшифровка отсутствует. Составь конспект только по видимому учебному содержанию фотографий."
+            : "НАЧАЛО ИСХОДНОГО ТЕКСТА\n\(part.text)\nКОНЕЦ ИСХОДНОГО ТЕКСТА")
+        """
         let result = try await generateText(prompt: prompt, responseSchema: nil, onStatus: onStatus)
         let normalizedResult = result.lowercased()
         let isBadResult = Self.isRetrievalPlaceholder(result)
             || normalizedResult.contains("я не могу")
             || normalizedResult.contains("не могу составить")
             || normalizedResult.contains("как языковая модель")
-        if !isBadResult,
-           transport != .gemini,
-           !Self.isGrounded(result, in: part.text + "\n" + visualContext) {
-            await onStatus?("Ответ кастомной модели не совпал с расшифровкой — сохраняем проверенный текст фрагмента.")
-            return Self.safeTranscriptFallback(from: part.text.isEmpty ? visualContext : part.text)
-        }
         guard isBadResult else { return result }
 
         await onStatus?("AI не увидел уже переданный фрагмент — сохраняем расшифровку без нового платного запроса.")
         return Self.safeTranscriptFallback(from: part.text.isEmpty ? visualContext : part.text)
-    }
-
-    private static func isGrounded(_ note: String, in transcript: String) -> Bool {
-        let sourceWords = Set(contentWords(transcript))
-        let noteWords = Set(contentWords(note))
-        guard noteWords.count >= 12 else { return true }
-        let overlap = noteWords.intersection(sourceWords).count
-        let required = min(12, max(5, noteWords.count / 20))
-        return overlap >= required
-    }
-
-    private static func contentWords(_ text: String) -> [String] {
-        text.lowercased()
-            .split { !$0.isLetter && !$0.isNumber }
-            .map(String.init)
-            .filter { $0.count >= 5 }
     }
 
     private static func safeTranscriptFallback(from transcript: String) -> String {

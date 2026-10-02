@@ -67,3 +67,28 @@ final class GeminiTranscriptionPayloadTests: XCTestCase {
         }
     }
 }
+
+
+final class GeminiLectureTextPayloadTests: XCTestCase {
+    func testLectureTextSurvivesSerializationWithAndWithoutPhotos() throws {
+        let transcript = "[00:01] Преподаватель: Митоз — деление клетки.\n[00:12] Дочерние клетки сохраняют набор хромосом."
+        for images in [[], [GeminiAPIClient.InputImage(mimeType: "image/jpeg", data: Data([1, 2, 3]))]] {
+            let body = GeminiAPIClient.textInteractionRequest(prompt: transcript, model: "test", images: images)
+            let data = try JSONSerialization.data(withJSONObject: body)
+            let decoded = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let input = try XCTUnwrap(decoded["input"] as? [[String: Any]])
+            XCTAssertEqual(input.count, 1)
+            XCTAssertEqual(input[0]["type"] as? String, "user_input")
+            let content = try XCTUnwrap(input[0]["content"] as? [[String: Any]])
+            XCTAssertEqual(content[0]["text"] as? String, transcript)
+            XCTAssertEqual(content.count, 1 + images.count)
+            XCTAssertEqual(decoded["store"] as? Bool, false)
+        }
+    }
+
+    func testKeepsEveryTextBlockOfFinalModelOutput() throws {
+        let json = ###"{"steps":[{"type":"model_output","content":[{"type":"text","text":"Промежуточный ответ"}]},{"type":"thought","content":[]},{"type":"model_output","content":[{"type":"text","text":"## Митоз"},{"type":"text","text":"Деление клетки."}]}]}"###
+        let text = try GeminiAPIClient.extractText(Data(json.utf8), transport: .gemini)
+        XCTAssertEqual(text, "## Митоз\nДеление клетки.")
+    }
+}
