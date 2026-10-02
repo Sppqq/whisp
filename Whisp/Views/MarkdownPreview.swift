@@ -2,11 +2,13 @@ import SwiftUI
 
 struct MarkdownPreview: View {
     let markdown: String
+    var showsDocumentTitle: Bool
     var header: AnyView?
     var onScrollOffsetChange: ((CGFloat) -> Void)?
 
-    init(markdown: String, header: AnyView? = nil, onScrollOffsetChange: ((CGFloat) -> Void)? = nil) {
+    init(markdown: String, showsDocumentTitle: Bool = true, header: AnyView? = nil, onScrollOffsetChange: ((CGFloat) -> Void)? = nil) {
         self.markdown = markdown
+        self.showsDocumentTitle = showsDocumentTitle
         self.header = header
         self.onScrollOffsetChange = onScrollOffsetChange
     }
@@ -31,9 +33,9 @@ struct MarkdownPreview: View {
                     }
                 }
             }
-            .frame(maxWidth: 860, alignment: .leading)
+            .frame(maxWidth: WhispMetrics.contentWidth, alignment: .leading)
             .padding(.horizontal, 32)
-            .padding(.vertical, 28)
+            .padding(.top, 8).padding(.bottom, 28)
             .frame(maxWidth: .infinity, alignment: .center)
             }
         }
@@ -46,6 +48,9 @@ struct MarkdownPreview: View {
         .textSelection(.enabled)
         .onChange(of: markdown, initial: true) { _, text in
             blocks = MarkdownPreviewParser.parse(text)
+            if !showsDocumentTitle, case .heading(level: 1, _) = blocks.first {
+                blocks.removeFirst()
+            }
         }
     }
 }
@@ -148,8 +153,8 @@ enum MarkdownPreviewParser {
     }
 
     private static func numberedItem(from line: String) -> String? {
-        guard let range = line.range(of: "^[0-9]+[.)]\\s+", options: .regularExpression) else { return nil }
-        return String(line[range.upperBound...])
+        guard line.range(of: "^[0-9]+[.)]\\s+", options: .regularExpression) != nil else { return nil }
+        return line
     }
 
     private static func stripQuote(_ line: String) -> String {
@@ -239,21 +244,16 @@ private struct MarkdownPreviewBlockView: View {
                 .fixedSize(horizontal: false, vertical: true)
         case .bullet(let text):
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Circle().fill(WhispPalette.accent).frame(width: 5, height: 5)
+                Circle().fill(Color.secondary).frame(width: 5, height: 5)
                 Text(MarkdownDisplayFormatting.attributed(text))
                     .font(.body)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.leading, 6)
         case .numbered(let text):
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "checkmark.circle")
-                    .foregroundStyle(WhispPalette.accent)
-                Text(MarkdownDisplayFormatting.attributed(text))
-                    .font(.body)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.leading, 4)
+            Text(MarkdownDisplayFormatting.attributed(text))
+                .font(.body).lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
         case .quote(let text):
             HStack(spacing: 12) {
                 RoundedRectangle(cornerRadius: 2).fill(WhispPalette.accent.opacity(0.7)).frame(width: 3)
@@ -266,9 +266,9 @@ private struct MarkdownPreviewBlockView: View {
             .padding(.vertical, 4)
         case .callout(let title, let body):
             VStack(alignment: .leading, spacing: 8) {
-                Label(title, systemImage: "link")
+                Text(WhispFormatting.withoutDecorativeEmoji(title))
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(WhispPalette.accent)
+                    .foregroundStyle(.primary)
                 if !body.isEmpty {
                     Text(MarkdownDisplayFormatting.attributed(body))
                         .font(.subheadline)
@@ -350,7 +350,7 @@ private struct MarkdownPreviewTable: View {
 
 enum MarkdownDisplayFormatting {
     static func attributed(_ source: String) -> AttributedString {
-        let cleaned = readableFormula(cleanWikiText(source))
+        let cleaned = readableFormula(cleanWikiText(WhispFormatting.withoutDecorativeEmoji(source)))
         return (try? AttributedString(
             markdown: cleaned,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)

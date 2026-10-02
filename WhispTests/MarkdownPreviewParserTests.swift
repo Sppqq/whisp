@@ -81,4 +81,17 @@ final class MarkdownPreviewParserTests: XCTestCase {
             [.callout(title: "NB!", body: "Формулу достаточно вывести из базового уравнения.")]
         )
     }
+    func testNumberedStepsRetainTheirOriginalNumbers() {
+        XCTAssertEqual(MarkdownPreviewParser.parse("1. Первый шаг\n2. Второй шаг\n10) Последний шаг"), [
+            .numbered("1. Первый шаг"), .numbered("2. Второй шаг"), .numbered("10) Последний шаг")
+        ])
+    }
+
+    func testDisplayOmitsEmojiAndPreservesMathAndSource() {
+        let source = "🔗 Связи: x² ≥ 2; Δv → 0; № 1 ✅"
+        XCTAssertEqual(WhispFormatting.withoutDecorativeEmoji(source), "Связи: x² ≥ 2; Δv → 0; № 1")
+        XCTAssertEqual(source, "🔗 Связи: x² ≥ 2; Δv → 0; № 1 ✅")
+        XCTAssertEqual(String(MarkdownDisplayFormatting.attributed("🔗 **Связи**: $x \\geq 2$").characters), "Связи: x ≥ 2")
+    }
+
 }

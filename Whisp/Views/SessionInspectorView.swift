@@ -113,7 +113,7 @@ struct SessionInspectorView: View {
                 Label("Сохранить в Obsidian", systemImage: "icloud.and.arrow.up")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.glassProminent)
+            .buttonStyle(WhispActionStyle(prominent: true))
             .disabled(model.currentSession == nil || model.currentSession?.status == .processing)
 
             Button {
@@ -122,7 +122,7 @@ struct SessionInspectorView: View {
                 Label("Открыть в Obsidian", systemImage: "arrow.up.forward.app")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.glass)
+            .buttonStyle(WhispActionStyle())
 
             Button {
                 model.revealInFinder()
@@ -130,7 +130,7 @@ struct SessionInspectorView: View {
                 Label("Показать файлы", systemImage: "folder")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.glass)
+            .buttonStyle(WhispActionStyle())
         }
     }
 

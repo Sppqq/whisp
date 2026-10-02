@@ -24,6 +24,6 @@ struct MenuBarView: View {
             }
         }
         .padding(4)
-        .buttonStyle(.glass)
+        .buttonStyle(WhispActionStyle())
     }
 }

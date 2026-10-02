@@ -51,12 +51,13 @@ struct TodayView: View {
             VStack(alignment: .leading, spacing: 24) {
                 header
                 summary
-                lessonsSection
+                recentSection
                 tasksSection
+                lessonsSection
                 reviewSection
             }
-            .frame(maxWidth: 920, alignment: .leading)
-            .padding(.horizontal, 34)
+            .frame(maxWidth: WhispMetrics.contentWidth, alignment: .leading)
+            .padding(.horizontal, 32)
             .padding(.vertical, 30)
             .frame(maxWidth: .infinity, alignment: .top)
         }
@@ -67,7 +68,7 @@ struct TodayView: View {
         HStack(alignment: .top, spacing: 18) {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Сегодня")
-                    .font(.largeTitle.bold())
+                    .font(.largeTitle.weight(.semibold))
                 Text(Date().formatted(
                     Date.FormatStyle()
                         .weekday(.wide)
@@ -79,61 +80,52 @@ struct TodayView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button {
-                model.showStartScreen()
-            } label: {
-                WhispGlassActionLabel(title: "Новая лекция", systemImage: "plus")
-            }
-            .buttonStyle(.plain)
-            .disabled(model.isBusy)
         }
     }
 
     private var summary: some View {
-        HStack(spacing: 12) {
-            summaryCard(
-                value: lessons.filter { Calendar.current.isDateInToday($0.date) }.count,
-                title: "занятий сегодня",
-                icon: "calendar",
-                color: WhispPalette.accent
-            )
-            summaryCard(
-                value: tasks.filter { !$0.isCompleted }.count,
-                title: "актуальных заданий",
-                icon: "checklist",
-                color: WhispPalette.warning
-            )
-            summaryCard(
-                value: reviewSessions.count,
-                title: "лекций повторить",
-                icon: "clock.arrow.circlepath",
-                color: .purple
-            )
+        HStack(spacing: 0) {
+            summaryCard(value: lessons.filter { Calendar.current.isDateInToday($0.date) }.count, title: "Занятия сегодня", icon: "calendar", color: WhispPalette.accent)
+            Divider().frame(height: 38)
+            summaryCard(value: tasks.filter { !$0.isCompleted }.count, title: "Задания", icon: "checklist", color: WhispPalette.warning)
+            Divider().frame(height: 38)
+            summaryCard(value: reviewSessions.count, title: "Повторение", icon: "clock.arrow.circlepath", color: .purple)
         }
+        .padding(.vertical, 8).whispContentCard()
     }
 
     private func summaryCard(value: Int, title: String, icon: String, color: Color) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundStyle(color)
-                .frame(width: 38, height: 38)
-                .glassEffect(
-                    .regular.tint(color.opacity(0.16)),
-                    in: .rect(cornerRadius: WhispMetrics.compactCornerRadius)
-                )
-            VStack(alignment: .leading, spacing: 1) {
-                Text("\(value)")
-                    .font(.title2.monospacedDigit().bold())
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Image(systemName: icon).font(.title3).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(value)").font(.title2.monospacedDigit().bold())
+                Text(title).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity)
-        .whispGlassPanel(cornerRadius: WhispMetrics.surfaceCornerRadius)
+        .padding(18).frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder private var recentSection: some View {
+        if !model.sessions.isEmpty {
+            dashboardSection(title: "Продолжить изучение", icon: "book") {
+                ForEach(model.sessions.prefix(2)) { session in
+                    Button { model.selectSession(session.id) } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: "doc.text").font(.title2).foregroundStyle(.secondary).frame(width: 32)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(WhispFormatting.displayTitle(session.title)).font(.callout.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
+                                Text("\(session.subject) · \(WhispFormatting.lectureDate(session.startedAt ?? session.createdAt))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                        }
+                        .padding(16).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                    }.buttonStyle(.plain).whispContentCard()
+                }
+            }
+        }
     }
 
     @ViewBuilder private var lessonsSection: some View {
@@ -160,10 +152,7 @@ struct TodayView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .frame(width: 48, height: 48)
-                        .glassEffect(
-                            .regular.tint(WhispPalette.accent.opacity(0.14)),
-                            in: .rect(cornerRadius: 11)
-                        )
+.background(WhispPalette.quietFill, in: .rect(cornerRadius: 8))
 
                         VStack(alignment: .leading, spacing: 3) {
                             Text(lesson.entry.subject)
@@ -184,7 +173,7 @@ struct TodayView: View {
                             .foregroundStyle(.secondary)
                     }
                     .padding(12)
-                    .whispGlassPanel()
+                    .whispContentCard()
                 }
             }
         }
@@ -209,7 +198,7 @@ struct TodayView: View {
                                 .contentTransition(.symbolEffect(.replace))
                                 .foregroundStyle(item.isCompleted ? WhispPalette.success : .secondary)
                                 .frame(width: 30, height: 30)
-                                .glassEffect(.regular.interactive(), in: .circle)
+
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(item.isCompleted ? "Вернуть задание" : "Отметить выполненным")
@@ -218,12 +207,12 @@ struct TodayView: View {
                             model.selectSession(item.session.id)
                         } label: {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(item.draft.title)
+                                Text(WhispFormatting.withoutDecorativeEmoji(item.draft.title))
                                     .font(.callout.weight(.semibold))
                                     .foregroundStyle(.primary)
                                     .strikethrough(item.isCompleted)
                                     .multilineTextAlignment(.leading)
-                                Text("\(item.session.subject) · \(item.session.title)")
+                                Text("\(item.session.subject) · \(WhispFormatting.displayTitle(item.session.title))")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -259,15 +248,15 @@ struct TodayView: View {
                             }
                         } label: {
                             Image(systemName: "trash")
-                                .foregroundStyle(.red)
+                                .foregroundStyle(.secondary)
                                 .frame(width: 30, height: 30)
-                                .glassEffect(.regular.interactive(), in: .circle)
+
                         }
                         .buttonStyle(.plain)
                         .help("Удалить задание")
                     }
                     .padding(12)
-                    .whispInteractiveGlassSurface()
+                    .whispContentCard()
                     .opacity(item.isCompleted ? 0.72 : 1)
                     .contextMenu {
                         Button(item.isCompleted ? "Вернуть в активные" : "Отметить выполненным") {
@@ -304,7 +293,7 @@ struct TodayView: View {
                                 .foregroundStyle(session.quizProgress.needsReview.isEmpty ? WhispPalette.accent : WhispPalette.warning)
                                 .frame(width: 34)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(session.title)
+                                Text(WhispFormatting.displayTitle(session.title))
                                     .font(.callout.weight(.semibold))
                                     .foregroundStyle(.primary)
                                 Text(reviewCaption(for: session))
@@ -320,7 +309,7 @@ struct TodayView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .whispInteractiveGlassSurface()
+                    .whispContentCard()
                 }
             }
         }
@@ -342,8 +331,7 @@ struct TodayView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 11) {
-            Label(title, systemImage: icon)
-                .font(.headline)
+            Text(title).font(.headline)
             VStack(spacing: 8) {
                 content()
             }
@@ -366,11 +354,11 @@ struct TodayView: View {
             Spacer()
             if let action {
                 Button("Настроить", action: action)
-                    .buttonStyle(.glass)
+                    .buttonStyle(WhispActionStyle())
                     .controlSize(.small)
             }
         }
         .padding(14)
-        .whispGlassPanel()
+        .whispContentCard()
     }
 }

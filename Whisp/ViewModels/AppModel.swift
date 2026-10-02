@@ -67,6 +67,7 @@ final class AppModel {
     var showSyncConflict = false
     var showPostUpdateScreen = false
     var showsToday = false
+    var showsLibrary = false
     private(set) var previousAppVersion = ""
     var syncConflictPath = ""
     var backfillBefore = ""
@@ -242,6 +243,7 @@ final class AppModel {
         resetSessionTasks()
         player.stop()
         showsToday = false
+        showsLibrary = false
         currentSession = nil
         selectedSessionID = nil
         importedFileName = nil
@@ -254,9 +256,10 @@ final class AppModel {
 
     func selectSession(_ id: UUID?) {
         guard !isRecording else { return }
+        showsLibrary = true
+        showsToday = false
         guard id != currentSession?.id else { return }
         resetSessionTasks()
-        showsToday = false
         selectedSessionID = id
         guard let id else {
             currentSession = nil
@@ -276,6 +279,13 @@ final class AppModel {
         beginBackfillMonitorIfNeeded()
     }
 
+    func showLibrary() {
+        guard !isRecording else { return }
+        showsLibrary = true
+        showsToday = false
+        if currentSession == nil, let first = sessions.first { selectSession(first.id) }
+    }
+
     func showTodayDashboard() {
         guard !isRecording else { return }
         resetSessionTasks()
@@ -284,6 +294,7 @@ final class AppModel {
         importedFileName = nil
         lastError = nil
         showsToday = true
+        showsLibrary = false
     }
 
     func deleteSession(_ id: UUID) {

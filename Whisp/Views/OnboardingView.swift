@@ -54,7 +54,7 @@ struct OnboardingView: View {
                         if step > 0 {
                             Button("Назад") { step -= 1 }
                                 .keyboardShortcut(.cancelAction)
-                                .buttonStyle(.glass)
+                                .buttonStyle(WhispActionStyle())
                         }
 
                         Button(step == 2 ? "Перейти к первой записи" : "Продолжить") {
@@ -67,7 +67,7 @@ struct OnboardingView: View {
                                 step += 1
                             }
                         }
-                        .buttonStyle(.glassProminent)
+                        .buttonStyle(WhispActionStyle(prominent: true))
                         .keyboardShortcut(.defaultAction)
                     }
                 }
@@ -138,7 +138,7 @@ struct OnboardingView: View {
                             Label("Проверить подключение", systemImage: "checkmark.shield")
                         }
                     }
-                    .buttonStyle(.glass)
+                    .buttonStyle(WhispActionStyle())
                     .disabled(isTesting || geminiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     if !testMessage.isEmpty {
@@ -185,7 +185,7 @@ struct OnboardingView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Обновить") { model.refreshInputDevices() }
-                        .buttonStyle(.glass)
+                        .buttonStyle(WhispActionStyle())
                         .controlSize(.small)
                 }
             }
@@ -206,7 +206,6 @@ struct OnboardingView: View {
                 }
                 .labelsHidden()
                 .frame(maxWidth: .infinity)
-                .whispGlassControl()
             }
             .padding(16)
             .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)

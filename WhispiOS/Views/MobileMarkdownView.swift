@@ -32,7 +32,9 @@ struct MobileMarkdownView: View {
                 Capsule().fill(.tint).frame(width: 3)
                 markdownText(String(trimmed.dropFirst(2))).foregroundStyle(.secondary)
             }
-        } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.range(of: "^\\d+[.)] ", options: .regularExpression) != nil {
+        } else if trimmed.range(of: "^\\d+[.)] ", options: .regularExpression) != nil {
+            markdownText(trimmed)
+        } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("•").foregroundStyle(.tint).fontWeight(.bold)
                 markdownText(trimmed.replacingOccurrences(of: "^([-*]|\\d+[.)])\\s+", with: "", options: .regularExpression))
@@ -43,10 +45,11 @@ struct MobileMarkdownView: View {
     }
 
     private func markdownText(_ value: String) -> Text {
-        if let attributed = try? AttributedString(markdown: value, options: .init(interpretedSyntax: .full)) {
+        let clean = WhispFormatting.withoutDecorativeEmoji(value)
+        if let attributed = try? AttributedString(markdown: clean, options: .init(interpretedSyntax: .full)) {
             return Text(attributed)
         }
-        return Text(value)
+        return Text(clean)
     }
 
     private static func readableMarkdown(_ value: String) -> String {

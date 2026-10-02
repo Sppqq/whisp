@@ -20,35 +20,30 @@ struct RecordingView: View {
                 Toggle("Следить за текстом", isOn: $followsTranscript)
                     .toggleStyle(.switch)
                     .controlSize(.small)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .whispGlassControl(cornerRadius: WhispMetrics.compactCornerRadius)
                     .help("Выключите, чтобы читать предыдущие реплики без автоматической прокрутки")
             }
-            .padding(.horizontal, 30)
+            .padding(.horizontal, 32)
             .padding(.top, 20)
             transcript
             controlDock
         }
+        .frame(maxWidth: WhispMetrics.contentWidth + 64)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WhispPalette.canvas)
     }
 
     private var header: some View {
         HStack(spacing: 16) {
-            SettingsLink {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 15, weight: .medium))
-                    .frame(width: 30, height: 30)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Запись лекции").font(.headline)
+                Text(model.isPaused ? "Приостановлена" : "Аудио сохраняется на Mac").font(.caption).foregroundStyle(.secondary)
             }
-            .buttonStyle(.glass)
-            .help("Настройки")
-            .accessibilityLabel("Настройки")
 
             HStack(spacing: 10) {
                 Circle()
-                    .fill(model.isPaused ? Color.orange : WhispPalette.accent)
+                    .fill(model.isPaused ? Color.orange : WhispPalette.recording)
                     .frame(width: 9, height: 9)
-                    .shadow(color: (model.isPaused ? Color.orange : WhispPalette.accent).opacity(0.45), radius: 5)
+                    .shadow(color: (model.isPaused ? Color.orange : WhispPalette.recording).opacity(0.45), radius: 5)
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     Text(WhispFormatting.timestamp(model.currentSession?.duration ?? 0))
                         .font(.system(size: 30, weight: .semibold, design: .rounded))
@@ -60,7 +55,7 @@ struct RecordingView: View {
 
             RecordingStatePill(model: model)
         }
-        .padding(.horizontal, 28).padding(.vertical, 18)
+        .padding(.horizontal, 32).padding(.vertical, 18)
     }
 
     private var transcript: some View {
@@ -87,7 +82,7 @@ struct RecordingView: View {
                         .transition(.offset(y: 12).combined(with: .opacity))
                     }
                 }
-                .padding(.horizontal, 42).padding(.vertical, 36)
+                .padding(.horizontal, 24).padding(.vertical, 36)
                 .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.86), value: model.currentSession?.rawTranscript.count)
             }
             .onChange(of: followsTranscript) { _, follows in
@@ -103,9 +98,9 @@ struct RecordingView: View {
                 }
             }
         }
-        .frame(maxWidth: 920)
-        .background(WhispPalette.content)
-        .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 14)
+        .frame(maxWidth: WhispMetrics.contentWidth)
+        .whispContentCard()
+        .padding(.horizontal, 32).padding(.top, 12).padding(.bottom, 14)
         .overlay {
             if model.currentSession?.rawTranscript.isEmpty == true { listeningState }
         }
@@ -150,19 +145,20 @@ struct RecordingView: View {
                         Label(model.isPaused ? "Продолжить" : "Пауза", systemImage: model.isPaused ? "play.fill" : "pause.fill")
                             .frame(minWidth: 102)
                     }
-                    .buttonStyle(.glassProminent).controlSize(.large)
+                    .buttonStyle(WhispActionStyle(prominent: true)).controlSize(.large)
 
                     Button(role: .destructive) { model.showStopConfirmation = true } label: {
                         Label("Завершить", systemImage: "stop.fill").frame(minWidth: 102)
                     }
-                    .buttonStyle(.glass).controlSize(.large)
+                    .buttonStyle(WhispActionStyle()).controlSize(.large)
                 }
             }
             Text(model.statusMessage).font(.caption).foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 26).padding(.top, 15).padding(.bottom, 17)
-        .whispQuietSurface(cornerRadius: WhispMetrics.surfaceCornerRadius)
-        .padding(.horizontal, 18)
+        .padding(.horizontal, 24).padding(.top, 15).padding(.bottom, 17)
+        .frame(maxWidth: WhispMetrics.contentWidth)
+        .whispContentCard()
+        .padding(.horizontal, 32)
         .padding(.bottom, 18)
     }
 
@@ -186,7 +182,7 @@ private struct RecordingStatePill: View {
     private var color: Color {
         if model.isPaused { return .orange }
         if model.whisperState == .local || !model.geminiState.isAvailable { return .orange }
-        return WhispPalette.accent
+        return WhispPalette.recording
     }
 
     var body: some View {

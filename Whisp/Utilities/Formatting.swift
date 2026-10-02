@@ -1,6 +1,19 @@
 import Foundation
 
 enum WhispFormatting {
+    /// Dates remain in stored/exported titles; the interface shows them separately.
+    static func displayTitle(_ title: String) -> String {
+        let clean = title.replacingOccurrences(of: #"^\d{2}\.\d{2}\.\d{4}\s*[—–-]\s*"#, with: "", options: .regularExpression)
+        return withoutDecorativeEmoji(clean.isEmpty ? title : clean)
+    }
+
+    /// Emoji decorations are omitted from UI text; mathematical symbols stay intact.
+    static func withoutDecorativeEmoji(_ text: String) -> String {
+        String(text.filter { character in
+            !character.unicodeScalars.contains { $0.properties.isEmojiPresentation || $0.value == 0xFE0F || $0.value == 0x20E3 }
+        }).trimmingCharacters(in: .whitespaces)
+    }
+
     static func timestamp(_ seconds: TimeInterval) -> String {
         let total = max(0, Int(seconds.rounded(.down)))
         return String(format: "%02d:%02d", total / 60, total % 60)

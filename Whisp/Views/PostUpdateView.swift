@@ -63,7 +63,7 @@ struct PostUpdateView: View {
                     onDismiss()
                     dismiss()
                 }
-                .buttonStyle(.glassProminent)
+                .buttonStyle(WhispActionStyle(prominent: true))
                 .controlSize(.large)
             }
             .padding(18)

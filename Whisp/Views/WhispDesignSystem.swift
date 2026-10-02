@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Native macOS 26+ visual language for Whisp.
 ///
@@ -27,9 +28,9 @@ enum WhispMetrics {
     static let surfaceCornerRadius: CGFloat = 16
     static let contentWidth: CGFloat = 760
     static let glassFieldHeight: CGFloat = 34
-    static let windowMinWidth: CGFloat = 1_120
+    static let windowMinWidth: CGFloat = 960
     static let windowMinHeight: CGFloat = 720
-    static let settingsMinWidth: CGFloat = 1_400
+    static let settingsMinWidth: CGFloat = 980
     static let settingsMinHeight: CGFloat = 700
 }
 
@@ -85,79 +86,55 @@ struct WhispGlassGroup<Content: View>: View {
     }
 }
 
+/// One glass track with a moving selection pill; segments add no glass layers.
 struct WhispGlassSegment<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [(value: Value, title: String, icon: String?)]
-    var minHeight: CGFloat = 32
-
+    var minHeight: CGFloat = 34
+    @Namespace private var thumb
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var selectionGlassNamespace
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
-        ZStack {
-            Color.clear
-                .frame(height: minHeight + 8)
-                .glassEffect(.regular, in: .capsule)
-
+        GeometryReader { geometry in
             HStack(spacing: 0) {
-                ForEach(options, id: \.value) { option in
-                    ZStack {
-                        if selection == option.value {
-                            Capsule()
-                                .fill(Color.primary.opacity(0.10))
-                                .overlay {
-                                    Capsule()
-                                        .stroke(Color.white.opacity(0.30), lineWidth: 1)
+                ForEach(options.indices, id: \.self) { index in
+                    Button { select(index) } label: {
+                        Text(options[index].title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background {
+                                if selection == options[index].value {
+                                    Capsule().fill(Color.primary.opacity(0.12))
+                                        .matchedGeometryEffect(id: "selection", in: thumb)
                                 }
-                                .shadow(color: Color.black.opacity(0.10), radius: 5, y: 2)
-                                .matchedGeometryEffect(
-                                    id: "selection-lens",
-                                    in: selectionGlassNamespace
-                                )
-                        }
-
-                        Color.clear
+                            }
+                            .contentShape(Capsule())
                     }
-                    .frame(maxWidth: .infinity, minHeight: minHeight)
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selection == options[index].value ? .isSelected : [])
+                    .onKeyPress(.leftArrow) { select(max(0, index - 1)); return .handled }
+                    .onKeyPress(.rightArrow) { select(min(options.count - 1, index + 1)); return .handled }
                 }
             }
-            .padding(4)
+            .padding(3)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { value in
+                guard isEnabled, !options.isEmpty else { return }
+                let width = max(1, geometry.size.width - 6)
+                let index = min(options.count - 1, max(0, Int((value.location.x - 3) / width * CGFloat(options.count))))
+                select(index)
+            })
         }
         .frame(maxWidth: .infinity)
-        .frame(height: minHeight + 8)
-        .overlay {
-            HStack(spacing: 0) {
-                ForEach(options, id: \.value) { option in
-                    segment(option)
-                }
-            }
-            .padding(4)
-        }
+        .frame(height: max(34, minHeight))
+        .opacity(isEnabled ? 1 : 0.4)
     }
 
-    @ViewBuilder
-    private func segment(_ option: (value: Value, title: String, icon: String?)) -> some View {
-        let isSelected = selection == option.value
-        Button {
-            withAnimation(reduceMotion ? nil : WhispMotion.control) {
-                selection = option.value
-            }
-        } label: {
-            HStack(spacing: 6) {
-                if let icon = option.icon {
-                    Image(systemName: icon)
-                }
-                Text(option.title)
-                    .lineLimit(1)
-            }
-            .font(.callout.weight(isSelected ? .semibold : .medium))
-            .foregroundStyle(isSelected ? Color.primary : Color.primary.opacity(0.72))
-            .frame(maxWidth: .infinity, minHeight: minHeight)
-            .padding(.horizontal, 10)
-            .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    private func select(_ index: Int) {
+        guard isEnabled, options.indices.contains(index), selection != options[index].value else { return }
+        withAnimation(reduceMotion ? nil : WhispMotion.control) { selection = options[index].value }
     }
 }
 
@@ -185,7 +162,7 @@ struct WhispGlassActionLabel: View {
             .font(.callout.weight(.medium))
             .foregroundStyle(.primary)
             .padding(.horizontal, 14)
-            .frame(minHeight: 36)
+            .frame(height: 34)
             .glassEffect(.regular.interactive(), in: .capsule)
     }
 }
@@ -193,7 +170,7 @@ struct WhispGlassActionLabel: View {
 struct WhispGlassIconActionLabel: View {
     let systemImage: String
     var foregroundStyle: Color = .primary
-    var size: CGFloat = 32
+    var size: CGFloat = 34
 
     var body: some View {
         Image(systemName: systemImage)
@@ -214,6 +191,11 @@ struct WhispGlassDivider: View {
 }
 
 extension View {
+    /// Content uses a quiet system surface; glass belongs to navigation and controls.
+    func whispContentCard(cornerRadius: CGFloat = WhispMetrics.surfaceCornerRadius) -> some View {
+        background(WhispPalette.quietFill, in: .rect(cornerRadius: cornerRadius))
+    }
+
     /// A quiet, flat container for status and explanatory content.
     ///
     /// Use this when a block contains its own Liquid Glass controls. It keeps
@@ -221,36 +203,21 @@ extension View {
     /// them.
     func whispQuietSurface(cornerRadius: CGFloat = WhispMetrics.controlCornerRadius) -> some View {
         background(WhispPalette.quietFill, in: .rect(cornerRadius: cornerRadius))
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(WhispPalette.hairline, lineWidth: 1)
-            }
-    }
-
-    /// Applies the same interactive Liquid Glass treatment to form controls.
-    /// Keeping this in one modifier prevents a mixture of rounded borders,
-    /// opaque fills and glass controls across the settings and review flows.
-    func whispGlassControl(cornerRadius: CGFloat = WhispMetrics.controlCornerRadius) -> some View {
-        glassEffect(
-            .regular.interactive(),
-            in: .rect(cornerRadius: cornerRadius)
-        )
     }
 
     func whispGlassPanel(cornerRadius: CGFloat = WhispMetrics.surfaceCornerRadius) -> some View {
-        glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+        whispContentCard(cornerRadius: cornerRadius)
     }
 
     func whispInteractiveGlassSurface(cornerRadius: CGFloat = WhispMetrics.controlCornerRadius) -> some View {
-        glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+        whispQuietSurface(cornerRadius: cornerRadius)
     }
 
-    /// A plain text field with the app-wide Liquid Glass field treatment.
     func whispGlassField() -> some View {
         textFieldStyle(.plain)
             .padding(.horizontal, 10)
             .frame(minHeight: WhispMetrics.glassFieldHeight)
-            .whispGlassControl()
+            .whispQuietSurface()
     }
 
     /// A multiline field that keeps the native editor background transparent
@@ -258,6 +225,23 @@ extension View {
     func whispGlassEditor(cornerRadius: CGFloat = WhispMetrics.controlCornerRadius) -> some View {
         scrollContentBackground(.hidden)
             .padding(8)
-            .whispGlassControl(cornerRadius: cornerRadius)
+            .whispQuietSurface(cornerRadius: cornerRadius)
+    }
+}
+
+/// One size, typeface and shape for all ordinary Mac actions.
+struct WhispActionStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    var prominent = false
+    var tint: Color = .accentColor
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(prominent ? Color.white : Color.primary)
+            .padding(.horizontal, 14)
+            .frame(height: 34)
+            .glassEffect(prominent ? .regular.tint(tint).interactive() : .regular.interactive(), in: .capsule)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
     }
 }

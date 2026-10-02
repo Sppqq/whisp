@@ -4,64 +4,92 @@ import PhotosUI
 
 struct MobileRootView: View {
     @Environment(MobileAppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showImporter = false
     @State private var showImportSetup = false
     @State private var importSetupAudioURLs: [URL] = []
     @State private var importSetupImageURLs: [URL] = []
     @State private var showSettings = false
-    @State private var showToday = false
+    @State private var selectedTab = 0
+    @State private var libraryPath: [UUID] = []
+    @State private var subjectFilter = "Все"
+    @State private var showFinishRecording = false
+    @State private var pendingDelete: LectureSession?
+    @State private var showDeleteConfirmation = false
+
+    private var filteredSessions: [LectureSession] {
+        model.visibleSessions.filter { subjectFilter == "Все" || $0.subject == subjectFilter }
+    }
 
     var body: some View {
         @Bindable var model = model
-        NavigationSplitView {
-            List(selection: $model.selectedSessionID) {
-                if model.visibleSessions.isEmpty {
-                    ContentUnavailableView(
-                        "Пока нет лекций",
-                        systemImage: "waveform",
-                        description: Text("Запишите лекцию или импортируйте аудио и фото — вместе или только фото.")
-                    )
-                    .listRowBackground(Color.clear)
-                } else {
-                    ForEach(model.visibleSessions) { session in
-                        NavigationLink(value: session.id) {
-                            LectureRow(session: session)
+        TabView(selection: $selectedTab) {
+            NavigationStack {
+                MobileTodayView { id in openLecture(id) }
+                    .toolbar { ToolbarItem(placement: .topBarTrailing) {
+                        Button { showSettings = true } label: { Label("Настройки", systemImage: "gearshape") }
+                    } }
+            }
+            .tabItem { Label("Сегодня", systemImage: "sun.max") }.tag(0)
+            NavigationStack(path: $libraryPath) {
+                List {
+                    if filteredSessions.isEmpty {
+                        ContentUnavailableView {
+                            Label("Ничего не найдено", systemImage: "magnifyingglass")
+                        } description: { Text("Измените запрос или выберите все предметы.") } actions: {
+                            Button("Сбросить фильтры") { model.searchQuery = ""; subjectFilter = "Все" }
+                        }.listRowBackground(Color.clear)
+                    } else {
+                        ForEach(filteredSessions) { session in
+                            NavigationLink(value: session.id) { LectureRow(session: session) }
+                                .swipeActions(edge: .trailing) {
+                                    Button(role: .destructive) { pendingDelete = session; showDeleteConfirmation = true } label: {
+                                        Label("Удалить", systemImage: "trash")
+                                    }
+                                }
                         }
-                        .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) {
-                                Task { await model.delete(session) }
-                            } label: {
-                                Label("Удалить", systemImage: "trash")
+                    }
+                }
+                .overlay {
+                    if model.sessions.isEmpty {
+                        ContentUnavailableView {
+                            Label("Ваша библиотека", systemImage: "books.vertical")
+                        } description: { Text("Запишите первую лекцию или добавьте аудио и фотографии.") } actions: {
+                            Button("Добавить лекцию") { selectedTab = 2 }.buttonStyle(.glassProminent)
+                        }
+                    }
+                }
+                .navigationTitle("Библиотека")
+                .searchable(text: $model.searchQuery, prompt: "Предмет, название или текст")
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Menu {
+                            Picker("Предмет", selection: $subjectFilter) {
+                                Text("Все предметы").tag("Все")
+                                ForEach(Array(Set(model.sessions.map(\.subject))).sorted(), id: \.self) { Text($0).tag($0) }
                             }
-                        }
+                        } label: { Label(subjectFilter == "Все" ? "Предметы" : subjectFilter, systemImage: "line.3.horizontal.decrease") }
+                    }
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button { selectedTab = 2 } label: { Label("Новая лекция", systemImage: "plus") }
+                        Button { showSettings = true } label: { Label("Настройки", systemImage: "gearshape") }
                     }
                 }
-            }
-            .navigationTitle("Whisp")
-            .searchable(text: $model.searchQuery, prompt: "Лекции, предметы, текст")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { showSettings = true } label: {
-                        Label("Настройки", systemImage: "gearshape")
-                    }
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button { showToday = true } label: {
-                        Label("Сегодня", systemImage: "calendar.badge.clock")
-                    }
-                    Button { showImporter = true } label: {
-                        Label("Импорт", systemImage: "square.and.arrow.down")
-                    }
-                    .disabled(model.isRecording || model.isProcessing)
-                    recordButton
+                .navigationDestination(for: UUID.self) { id in
+                    if let session = model.sessions.first(where: { $0.id == id }) {
+                        MobileLectureView(session: session)
+                    } else { ContentUnavailableView("Лекция недоступна", systemImage: "doc.text") }
                 }
             }
-        } detail: {
-            if let session = model.selectedSession {
-                MobileLectureView(session: session)
-            } else {
-                ContentUnavailableView("Выберите лекцию", systemImage: "doc.text.magnifyingglass")
+            .tabItem { Label("Библиотека", systemImage: "books.vertical") }.tag(1)
+            NavigationStack {
+                createLecture
+                    .navigationTitle(model.isRecording ? "Запись" : "Новая лекция")
+                    .toolbar { ToolbarItem(placement: .topBarTrailing) {
+                        Button { showSettings = true } label: { Label("Настройки", systemImage: "gearshape") }
+                    } }
             }
+            .tabItem { Label(model.isRecording ? "Запись идёт" : "Запись", systemImage: "mic") }.tag(2)
         }
         .fileImporter(
             isPresented: $showImporter,
@@ -102,11 +130,22 @@ struct MobileRootView: View {
                         }
                     }
                     LectureImportStaging.cleanup(images)
+                    if let id = model.selectedSessionID { openLecture(id) }
                 }
             }
         }
         .sheet(isPresented: $showSettings) { MobileSettingsView() }
-        .sheet(isPresented: $showToday) { MobileTodayView() }
+        .alert("Завершить запись?", isPresented: $showFinishRecording) {
+            Button("Продолжить запись", role: .cancel) { }
+            Button("Завершить") { Task { await model.finishRecording(); if let id = model.selectedSessionID { openLecture(id) } } }
+        } message: { Text("Аудио сохранится, затем Whisp подготовит конспект.") }
+        .alert("Удалить лекцию?", isPresented: $showDeleteConfirmation) {
+            Button("Отмена", role: .cancel) { pendingDelete = nil }
+            Button("Удалить", role: .destructive) {
+                if let session = pendingDelete { Task { await model.delete(session) } }
+                pendingDelete = nil
+            }
+        } message: { Text("Аудиозапись и материалы будут удалены с этого iPhone.") }
         .alert("Whisp", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }
@@ -126,24 +165,67 @@ struct MobileRootView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.snappy(duration: 0.28), value: model.isProcessing)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: model.isProcessing)
     }
 
-    private var recordButton: some View {
-        Button {
-            Task {
-                if model.isRecording { await model.finishRecording() }
-                else { await model.startRecording() }
-            }
-        } label: {
-            Label(
-                model.isRecording ? "Завершить" : "Записать",
-                systemImage: model.isRecording ? "stop.circle.fill" : "record.circle"
-            )
-            .foregroundStyle(model.isRecording ? .red : .primary)
-        }
-        .disabled(model.isProcessing)
+    private func openLecture(_ id: UUID) {
+        model.selectedSessionID = id
+        subjectFilter = "Все"
+        selectedTab = 1
+        libraryPath = [id]
     }
+
+    private var createLecture: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                if model.isRecording {
+                    VStack(spacing: 20) {
+                        Image(systemName: "waveform").font(.system(size: 56)).foregroundStyle(.red)
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text(WhispFormatting.timestamp(context.date.timeIntervalSince(model.selectedSession?.startedAt ?? context.date)))
+                                .font(.system(size: 48, weight: .medium, design: .rounded)).monospacedDigit()
+                        }
+                        Text("Идёт запись с микрофона").font(.headline)
+                        Text("Можете открыть библиотеку — запись продолжится.").font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        Button { showFinishRecording = true } label: {
+                            Label("Завершить запись", systemImage: "stop.fill").frame(maxWidth: .infinity)
+                        }.buttonStyle(.glassProminent).tint(.red).controlSize(.large)
+                    }
+                    .frame(maxWidth: .infinity).padding(24)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 24))
+                } else {
+                    Text("Сохраните главное с лекции.")
+                        .font(.title3).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 18) {
+                        Image(systemName: "mic.fill").font(.largeTitle).foregroundStyle(.red)
+                        Text("Записать сейчас").font(.title2.bold())
+                        Text("Whisp сохранит аудио и подготовит конспект после записи.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        Button { Task { await model.startRecording() } } label: {
+                            Label("Начать запись", systemImage: "record.circle").frame(maxWidth: .infinity)
+                        }.buttonStyle(.glassProminent).tint(.red).controlSize(.large)
+                    }
+                    .padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 24))
+                    VStack(alignment: .leading, spacing: 18) {
+                        Image(systemName: "square.and.arrow.down").font(.largeTitle).foregroundStyle(.blue)
+                        Text("Добавить файлы").font(.title2.bold())
+                        Text("Аудиозаписи и до 10 фотографий. Можно добавить только фото.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        Button { showImporter = true } label: {
+                            Label("Выбрать аудио и фото", systemImage: "folder").frame(maxWidth: .infinity)
+                        }.buttonStyle(.glass).controlSize(.large)
+                    }
+                    .padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 24))
+                }
+            }
+            .disabled(!model.isRecording && (model.isProcessing || model.isImporting))
+            .padding(20)
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
+    }
+
 }
 
 private struct MobileProcessingBanner: View {
@@ -183,11 +265,6 @@ private struct MobileProcessingBanner: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.ultraThinMaterial, in: .rect(cornerRadius: 18))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(.white.opacity(0.12), lineWidth: 0.5)
-        }
         .glassEffect(.regular, in: .rect(cornerRadius: 18))
         .onAppear {
             withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
@@ -203,13 +280,13 @@ private struct LectureRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(session.title)
+            Text(WhispFormatting.displayTitle(session.title))
                 .font(.headline)
                 .lineLimit(2)
             HStack {
                 Label(session.subject, systemImage: "book.closed")
                 Spacer()
-                Text(session.createdAt, style: .date)
+                Text(WhispFormatting.lectureDate(session.startedAt ?? session.createdAt))
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -236,27 +313,29 @@ private struct LectureRow: View {
 
 struct MobileLectureView: View {
     @Environment(MobileAppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var section: LectureSection = .notebook
     @State private var showPhotoFileImporter = false
     @State private var selectedGalleryPhotos: [PhotosPickerItem] = []
     @State private var isLoadingGalleryPhotos = false
+    @State private var showAttachments = false
+    @State private var showEditor = false
     let session: LectureSession
 
     var body: some View {
         ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     VStack(alignment: .leading, spacing: 6) {
-                    Text(session.title).font(.title2.weight(.bold)).lineLimit(2)
+                    Text(WhispFormatting.displayTitle(session.title)).font(.title2.weight(.bold)).fixedSize(horizontal: false, vertical: true)
                     Label(session.subject, systemImage: "book.closed.fill")
                         .foregroundStyle(.secondary)
-                    Text(session.createdAt.formatted(date: .long, time: .shortened))
+                    Text(WhispFormatting.lectureDate(session.startedAt ?? session.createdAt))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
 
                 HStack(spacing: 8) {
                     Label(WhispFormatting.durationDescription(session.duration), systemImage: "clock")
-                    Label("\(session.finalTranscript.count) фрагм.", systemImage: "text.quote")
                     Spacer()
                     Text(session.status.title).font(.caption.weight(.medium))
                 }
@@ -266,14 +345,17 @@ struct MobileLectureView: View {
                 .padding(.vertical, 10)
                 .background(.thinMaterial, in: .rect(cornerRadius: 12))
 
-                photoAttachments
+                DisclosureGroup("Фото и материалы (\(session.attachedImagePaths.count))", isExpanded: $showAttachments) {
+                    photoAttachments
+                }
+                .font(.callout)
 
                 Picker("Представление", selection: Binding(
                     get: { section },
-                    set: { value in withAnimation(.snappy(duration: 0.28)) { section = value } }
+                    set: { value in withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) { section = value } }
                 )) {
                     ForEach(LectureSection.allCases) { item in
-                        Label(item.title, systemImage: item.icon).tag(item)
+                        Text(item.title).tag(item)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -325,18 +407,19 @@ struct MobileLectureView: View {
                     }
                 }
                 .id(section)
-                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .trailing)))
 
             }
             .padding()
-            .padding(.bottom, 120)
+            .padding(.bottom, 16)
             .frame(maxWidth: 820)
             .frame(maxWidth: .infinity)
         }
-        .safeAreaPadding(.bottom, 96)
-        .navigationTitle("Лекция")
+
+        .navigationTitle("Материалы")
+        .sheet(isPresented: $showEditor) { MobileLectureEditor(session: session, section: section) }
         .navigationBarTitleDisplayMode(.inline)
-        .animation(.snappy(duration: 0.28), value: section)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: section)
         .fileImporter(
             isPresented: $showPhotoFileImporter,
             allowedContentTypes: [.image],
@@ -360,6 +443,11 @@ struct MobileLectureView: View {
                 .padding(.vertical, 8)
         }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if section != .transcript {
+                    Button("Редактировать", systemImage: "pencil") { showEditor = true }.disabled(model.isRecording || model.isProcessing)
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 ShareLink(item: content, subject: Text(session.title)) {
                     Label("Поделиться", systemImage: "square.and.arrow.up")
@@ -414,7 +502,7 @@ struct MobileLectureView: View {
                     .font(.caption)
             }
             if !session.attachedImagePaths.isEmpty {
-                Text("Добавьте снимки, затем нажмите ✨, чтобы пересобрать конспект с их учётом.")
+                Text("Добавьте снимки, затем выберите «Обновить», чтобы создать конспект с их учётом.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -455,50 +543,87 @@ private struct MobileLectureActionBar: View {
     let session: LectureSession
 
     var body: some View {
-        HStack(spacing: 0) {
-            iconButton("sparkles", accessibilityLabel: "Перегенерировать конспект с фото") {
-                Task { await model.regenerateAnalysis(for: session.id) }
-            } isDisabled: {
-                model.isSyncingWebDAV || model.isProcessing || model.isImporting
-                    || (session.finalTranscript.isEmpty && session.attachedImagePaths.isEmpty)
+        GlassEffectContainer(spacing: 10) {
+            HStack(spacing: 10) {
+                Button { Task { await model.regenerateAnalysis(for: session.id) } } label: {
+                    Label("Обновить", systemImage: "sparkles")
+                }
+                .disabled(model.isProcessing || model.isImporting || (session.finalTranscript.isEmpty && session.attachedImagePaths.isEmpty))
+                Button { Task { await model.sync(session) } } label: {
+                    Label("Синхр.", systemImage: "icloud.and.arrow.up")
+                }.disabled(model.isSyncingWebDAV || model.isProcessing || model.isImporting)
+                Menu {
+                    Button("Добавить задания в Напоминания", systemImage: "checklist") {
+                        Task { await model.createReminders(for: session) }
+                    }.disabled(model.isCreatingReminders || !session.createdReminderIDs.isEmpty || model.isProcessing || model.isImporting)
+                } label: { Label("Ещё", systemImage: "ellipsis") }
             }
-            Divider()
-                .frame(height: 24)
-                .opacity(0.45)
-            iconButton("arrow.triangle.2.circlepath", accessibilityLabel: "Синхронизировать с WebDAV") {
-                Task { await model.sync(session) }
-            } isDisabled: { model.isSyncingWebDAV || model.isProcessing || model.isImporting }
-            Divider()
-                .frame(height: 24)
-                .opacity(0.45)
-            iconButton("checklist", accessibilityLabel: "Добавить задания в Reminders") {
-                Task { await model.createReminders(for: session) }
-            } isDisabled: { model.isCreatingReminders || !session.createdReminderIDs.isEmpty || model.isProcessing || model.isImporting }
+            .font(.callout).buttonStyle(.glass).controlSize(.large)
         }
-        .padding(6)
-        .background(.black.opacity(0.58), in: .capsule)
-        .glassEffect(.regular.interactive(), in: .capsule)
-        .frame(width: 156, height: 56)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(.snappy(duration: 0.25), value: session.id)
+        .frame(maxWidth: .infinity)
+        .disabled(model.isRecording)
+    }
+}
+
+private struct MobileLectureEditor: View {
+    @Environment(MobileAppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let session: LectureSession
+    let section: LectureSection
+    private let originalText: String
+    @State private var text: String
+    @State private var title: String
+    @State private var subject: String
+    @State private var saving = false
+
+    init(session: LectureSession, section: LectureSection) {
+        self.session = session; self.section = section
+        _title = State(initialValue: session.title)
+        _subject = State(initialValue: session.subject)
+        let content: String
+        switch section {
+        case .notebook: content = session.studentNotesMarkdown
+        case .analysis: content = session.notesMarkdown
+        case .transcript: content = session.finalMarkdown.isEmpty ? session.rawMarkdown : session.finalMarkdown
+        case .quiz: content = session.quizMarkdown
+        }
+        originalText = content
+        _text = State(initialValue: content)
     }
 
-    private func iconButton(
-        _ icon: String,
-        accessibilityLabel: String,
-        action: @escaping () -> Void,
-        isDisabled: @escaping () -> Bool = { false }
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.body.weight(.semibold))
-                .frame(width: 42, height: 42)
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Сведения") {
+                    TextField("Название", text: $title)
+                    TextField("Предмет", text: $subject)
+                }
+                Section(section.title) {
+                    TextEditor(text: $text).frame(minHeight: 340).font(.body)
+                }
+            }
+            .navigationTitle("Редактирование")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() }.disabled(saving) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Сохранить") {
+                        saving = true
+                        Task {
+                            if title != session.title || subject != session.subject {
+                                await model.updateMetadata(sessionID: session.id, title: title, subject: subject)
+                            }
+                            if text != originalText {
+                                await model.updateContent(sessionID: session.id, section: section, content: text)
+                            }
+                            saving = false
+                            dismiss()
+                        }
+                    }.disabled(saving)
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .contentShape(.circle)
-        .accessibilityLabel(accessibilityLabel)
-        .disabled(isDisabled())
-        .contentTransition(.symbolEffect(.replace))
+        .interactiveDismissDisabled(saving)
     }
 }
 
@@ -508,8 +633,8 @@ enum LectureSection: String, CaseIterable, Identifiable {
     var id: Self { self }
     var title: String {
         switch self {
-        case .notebook: "Тетрадь"
-        case .analysis: "Разбор"
+        case .notebook: "Конспект"
+        case .analysis: "Подробно"
         case .transcript: "Текст"
         case .quiz: "К зачёту"
         }
@@ -762,48 +887,83 @@ struct MobileSettingsView: View {
 
 struct MobileTodayView: View {
     @Environment(MobileAppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
+    var onOpenSession: (UUID) -> Void = { _ in }
+
+    private var taskSessions: [LectureSession] {
+        model.sessions.filter { !upcomingTasks(in: $0).isEmpty }
+    }
+
+    private func upcomingTasks(in session: LectureSession) -> [ReminderDraft] {
+        (session.analysis?.reminders ?? []).filter { draft in
+            guard !draft.isInClassAssessmentInstruction, !session.completedReminderIDs.contains(draft.id) else { return false }
+            return ReminderService().resolvedDueDate(for: draft, subject: session.subject,
+                after: session.startedAt ?? session.createdAt, schedule: model.settingsStore.settings.lessonSchedule)
+                .map { $0 >= Calendar.current.startOfDay(for: Date()) } ?? false
+        }
+    }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section("Ближайшие занятия") {
-                    let lessons = StudyDashboardPlanner.upcomingLessons(from: model.settingsStore.settings.lessonSchedule)
-                    if lessons.isEmpty {
-                        Text("Расписание пока не задано.").foregroundStyle(.secondary)
-                    } else {
-                        ForEach(lessons) { lesson in
-                            VStack(alignment: .leading) {
-                                Text(lesson.entry.subject).font(.headline)
-                                Text(lesson.date, style: .date)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(lesson.date, style: .time)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+        List {
+            Section {
+                Text(Date().formatted(Date.FormatStyle().weekday(.wide).day().month(.wide).locale(Locale(identifier: "ru_RU"))))
+                    .font(.callout).foregroundStyle(.secondary)
+                    .listRowBackground(Color.clear)
+            }
+            if !model.sessions.isEmpty {
+                Section("Продолжить изучение") {
+                    ForEach(model.sessions.prefix(2)) { session in
+                        Button { onOpenSession(session.id) } label: { LectureRow(session: session) }
+                            .tint(.primary)
+                    }
+                }
+            }
+            Section("Задания из лекций") {
+                if taskSessions.isEmpty {
+                    Label("Нет невыполненных заданий", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                } else {
+                    ForEach(taskSessions) { session in
+                        ForEach(upcomingTasks(in: session)) { task in
+                            Button { onOpenSession(session.id) } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(task.title).font(.headline).foregroundStyle(.primary)
+                                    Text(session.subject).font(.caption).foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
                 }
-                Section("Повторение") {
-                    let due = StudyDashboardPlanner.reviewSessions(from: model.sessions)
-                    if due.isEmpty {
-                        Label("Сегодня всё повторено", systemImage: "checkmark.circle")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(due) { session in
-                            Label(session.title, systemImage: "rectangle.and.pencil.and.ellipsis")
-                        }
+            }
+            Section("Ближайшие занятия") {
+                let lessons = StudyDashboardPlanner.upcomingLessons(from: model.settingsStore.settings.lessonSchedule)
+                if lessons.isEmpty {
+                    Text("Добавьте расписание в настройках.").foregroundStyle(.secondary)
+                } else {
+                    ForEach(lessons.prefix(5)) { lesson in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(lesson.entry.subject).font(.headline)
+                                Text(lesson.date, style: .date).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(lesson.date, style: .time).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                        }.padding(.vertical, 4)
                     }
                 }
             }
-            .navigationTitle("Сегодня")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") { dismiss() }
+            Section("Пора повторить") {
+                let due = StudyDashboardPlanner.reviewSessions(from: model.sessions)
+                if due.isEmpty {
+                    Label("На сегодня всё", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                } else {
+                    ForEach(due) { session in
+                        Button { onOpenSession(session.id) } label: {
+                            Label(WhispFormatting.displayTitle(session.title), systemImage: "rectangle.stack")
+                        }.tint(.primary)
+                    }
                 }
             }
         }
+        .navigationTitle("Сегодня")
     }
 }
 
