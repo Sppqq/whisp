@@ -96,6 +96,11 @@ struct SessionInspectorView: View {
                 icon: model.webDAVState.isAvailable ? "checkmark.icloud" : "icloud"
             )
 
+            if model.cloudUploadSessionID == session.id, let progress = model.cloudUploadProgress {
+                CloudUploadStatusView(progress: progress, error: session.lastError, completedAt: session.status == .synced ? session.syncedAt : nil)
+            }
+            if let path = session.remotePath { inspectorRow("Папка в облаке", value: path) }
+
             if let syncedAt = session.syncedAt {
                 inspectorRow("Последняя синхронизация", value: syncedAt.formatted(date: .abbreviated, time: .shortened))
             }
@@ -180,5 +185,42 @@ struct SessionInspectorView: View {
         case .processing: "gearshape.2.fill"
         default: "circle.fill"
         }
+    }
+}
+
+struct CloudUploadStatusView: View {
+    let progress: CloudUploadProgress
+    var error: String?
+    var completedAt: Date? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(error == nil ? progress.stage : "Загрузка прервана")
+                .font(.callout.weight(.medium))
+            if progress.totalFiles > 0 {
+                ProgressView(value: Double(progress.completedFiles), total: Double(progress.totalFiles))
+                Text("Отправлено файлов: \(progress.completedFiles) из \(progress.totalFiles)")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if error == nil && !progress.isComplete {
+                ProgressView().controlSize(.small)
+            }
+            if let fileName = progress.fileName {
+                Text(fileName).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle).help(fileName)
+            }
+            if let completedAt {
+                Text("Завершено: \(completedAt.formatted(date: .numeric, time: .shortened))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.secondary)
+                Text("Локальные файлы сохранены. При ошибке загрузка повторится автоматически, пока эта лекция открыта.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
+        .accessibilityElement(children: .combine)
     }
 }

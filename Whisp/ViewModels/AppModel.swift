@@ -51,6 +51,8 @@ final class AppModel {
     var currentSession: LectureSession?
     var selectedSessionID: UUID?
     var statusMessage = "Готово к записи"
+    private(set) var cloudUploadSessionID: UUID?
+    private(set) var cloudUploadProgress: CloudUploadProgress?
     var processingProgress = 0.0
     var processingLogs: [ProcessingLogEntry] = []
     var processingCurrentChunk = 0
@@ -987,6 +989,9 @@ final class AppModel {
         guard !settingsStore.webDAV.baseURL.isEmpty else { lastError = "Настройте WebDAV"; return }
         guard session.subject != "Не определено" else { lastError = "Выберите предмет"; return }
         session.status = .uploading
+        session.lastError = nil
+        cloudUploadSessionID = session.id
+        cloudUploadProgress = CloudUploadProgress(stage: "Проверяем удалённую версию")
         currentSession = session
         statusMessage = "Загрузка в WebDAV"
         webDAVState = .checking
@@ -1002,11 +1007,17 @@ final class AppModel {
                 statusMessage = "Нужна проверка WebDAV"
                 webDAVState = .unavailable("Удалённая версия новее локальной")
                 showSyncConflict = true
+                cloudUploadProgress = CloudUploadProgress(stage: "Нужна проверка: версия в облаке изменилась", isComplete: true)
                 try? await persistSessionSnapshot(session)
                 return
             }
 
-            session.remotePath = try await client.upload(session: session, localDirectory: directory)
+            session.remotePath = try await client.upload(session: session, localDirectory: directory) { [weak self] progress in
+                await MainActor.run {
+                    self?.cloudUploadProgress = progress
+                    self?.statusMessage = progress.stage
+                }
+            }
             session.remoteETag = try? await client.remoteETag(path: session.remotePath ?? "")
             session.status = .synced
             session.syncedAt = Date()

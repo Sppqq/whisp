@@ -1,5 +1,13 @@
 import Foundation
 
+struct CloudUploadProgress: Sendable {
+    var stage: String
+    var fileName: String? = nil
+    var completedFiles = 0
+    var totalFiles = 0
+    var isComplete = false
+}
+
 actor WebDAVClient {
     enum WebDAVError: LocalizedError {
         case invalidURL, unexpectedStatus(Int, String), verificationFailed(String)
@@ -33,7 +41,9 @@ actor WebDAVClient {
         try validate(response, data: data, accepted: [200, 207], request: request)
     }
 
-    func upload(session lecture: LectureSession, localDirectory: URL) async throws -> String {
+    func upload(session lecture: LectureSession, localDirectory: URL,
+                onProgress: (@Sendable (CloudUploadProgress) async -> Void)? = nil) async throws -> String {
+        await onProgress?(CloudUploadProgress(stage: "Проверяем подключение к облаку"))
         try await checkConnection()
         var remotePath = lecture.remotePath ?? WhispFormatting.lecturePath(for: lecture, root: configuration.rootFolder)
         if remotePath.split(separator: "/").contains(where: { $0.utf8.count > 180 }) {
@@ -50,6 +60,7 @@ actor WebDAVClient {
             formatter.dateFormat = "HH-mm"
             remotePath += " — " + formatter.string(from: lecture.startedAt ?? lecture.createdAt)
         }
+        await onProgress?(CloudUploadProgress(stage: "Подготавливаем папку лекции"))
         try await ensureDirectories(remotePath)
         let lessonName = WhispFormatting.safePathComponent(lecture.title)
         let availableAudio = Set(["Микрофон.m4a", "Системный звук.m4a"].filter {
@@ -68,9 +79,18 @@ actor WebDAVClient {
             let quizData = markdown.quiz.isEmpty ? lecture.quizMarkdown : markdown.quiz
             files.append(("\(lessonName) — Вопросы к зачёту.md", Data(quizData.utf8)))
         }
+        let mediaFiles = (["Микрофон.m4a", "Системный звук.m4a"] + lecture.attachedImagePaths)
+            .filter { URL(fileURLWithPath: $0).lastPathComponent == $0 }
+            .filter { FileManager.default.fileExists(atPath: localDirectory.appending(path: $0).path) }
+        let totalFiles = files.count + mediaFiles.count + 1
+        var completedFiles = 0
         for (name, data) in files {
+            await onProgress?(CloudUploadProgress(stage: "Загружаем заметки", fileName: name, completedFiles: completedFiles, totalFiles: totalFiles))
             try await atomicUpload(data: data, remotePath: remotePath + "/" + name)
+            completedFiles += 1
+            await onProgress?(CloudUploadProgress(stage: "Загружаем заметки", completedFiles: completedFiles, totalFiles: totalFiles))
         }
+        await onProgress?(CloudUploadProgress(stage: "Обновляем папку лекции", completedFiles: completedFiles, totalFiles: totalFiles))
 
         for legacy in [
             "Тетрадь (под запись).md",
@@ -89,24 +109,20 @@ actor WebDAVClient {
             _ = try? await delete(path: "\(configuration.rootFolder)/\(subjectName).md")
         }
 
-        for name in ["Микрофон.m4a", "Системный звук.m4a"] {
-            let url = localDirectory.appending(path: name)
-            if FileManager.default.fileExists(atPath: url.path) {
-                try await atomicUpload(fileURL: url, remotePath: remotePath + "/" + name)
-            }
-        }
-        for name in lecture.attachedImagePaths where URL(fileURLWithPath: name).lastPathComponent == name {
-            let url = localDirectory.appending(path: name)
-            if FileManager.default.fileExists(atPath: url.path) {
-                try await atomicUpload(fileURL: url, remotePath: remotePath + "/" + name)
-            }
+        for name in mediaFiles {
+            await onProgress?(CloudUploadProgress(stage: "Загружаем аудио и фото", fileName: name, completedFiles: completedFiles, totalFiles: totalFiles))
+            try await atomicUpload(fileURL: localDirectory.appending(path: name), remotePath: remotePath + "/" + name)
+            completedFiles += 1
+            await onProgress?(CloudUploadProgress(stage: "Загружаем аудио и фото", completedFiles: completedFiles, totalFiles: totalFiles))
         }
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let sessionData = try encoder.encode(lecture)
+        await onProgress?(CloudUploadProgress(stage: "Сохраняем данные лекции", fileName: "session.json", completedFiles: completedFiles, totalFiles: totalFiles))
         try await atomicUpload(data: sessionData, remotePath: remotePath + "/session.json", expectedETag: lecture.remoteETag)
+        await onProgress?(CloudUploadProgress(stage: "Загрузка завершена", completedFiles: totalFiles, totalFiles: totalFiles, isComplete: true))
         return remotePath
     }
 

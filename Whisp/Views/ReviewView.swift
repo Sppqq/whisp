@@ -314,6 +314,14 @@ struct ReviewView: View {
                 .accessibilityLabel("Свойства лекции")
                 .popover(isPresented: $showLectureDetails) { lectureDetails }
             }
+            if let session = model.currentSession,
+               model.cloudUploadSessionID == session.id,
+               let progress = model.cloudUploadProgress {
+                CloudUploadStatusView(progress: progress, error: session.status == .uploading ? session.lastError : nil, completedAt: session.status == .synced ? session.syncedAt : nil)
+            } else if let session = model.currentSession, let date = session.syncedAt {
+                Text("Последняя загрузка в облако: \(date.formatted(date: .numeric, time: .shortened))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             WhispGlassSegment(selection: animatedTabSelection, options: [
                 ("student", "Конспект", "book.closed"),
                 ("notes", "Подробно", "doc.text"),
