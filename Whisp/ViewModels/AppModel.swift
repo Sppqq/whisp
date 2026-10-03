@@ -561,6 +561,60 @@ final class AppModel {
             await retryProcessing()
         }
     }
+    func attachMaterialsToCurrentSession(media: [URL], images: [URL], pastedText: String, textURLs: [URL]) async {
+        guard !isBusy, var session = currentSession else { return }
+        guard session.attachedImagePaths.count + images.count <= 10 else {
+            lastError = "К одной лекции можно добавить не более 10 фото."
+            return
+        }
+        isWorking = true
+        defer { isWorking = false }
+        statusMessage = "Добавляем материалы…"
+        let accessed = (media + images + textURLs).map { ($0, $0.startAccessingSecurityScopedResource()) }
+        defer { accessed.forEach { url, active in if active { url.stopAccessingSecurityScopedResource() } } }
+        do {
+            let directory = try await store.directory(for: session.id)
+            let folder = "Материалы-" + UUID().uuidString
+            let additions = directory.appending(path: folder)
+            try FileManager.default.createDirectory(at: additions, withIntermediateDirectories: true)
+            let text = try await Task.detached { try LectureImportContent.prepareText(files: textURLs, pasted: pastedText, directory: additions) }.value
+            var added = LectureImportContent.segments(text)
+            for (index, source) in media.enumerated() {
+                statusMessage = "Расшифровываем файл \(index + 1) из \(media.count)…"
+                let work = additions.appending(path: "Аудио-\(index + 1)")
+                try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+                let originals = work.appending(path: "Оригиналы")
+                try FileManager.default.createDirectory(at: originals, withIntermediateDirectories: true)
+                let original = originals.appending(path: source.lastPathComponent)
+                try FileManager.default.copyItem(at: source, to: original)
+                let audio = try await processor.prepareImportedAudio(source: original, directory: work)
+                let service = FinalTranscriptionService(client: try providerClient(for: .transcription), processor: processor,
+                    model: settingsStore.transcriptionProviderModel, providerName: settingsStore.transcriptionProviderName,
+                    vocabulary: settingsStore.settings.customVocabulary)
+                let transcript = try await service.transcribe(mixURL: audio, directory: work)
+                let offset = added.map(\.end).max() ?? 0
+                added.append(contentsOf: transcript.map { segment in
+                    var shifted = segment
+                    shifted.start += offset
+                    shifted.end += offset
+                    return shifted
+                })
+            }
+            for (index, source) in images.enumerated() {
+                let name = folder + "-Фото-\(index + 1)." + source.pathExtension
+                try FileManager.default.copyItem(at: source, to: directory.appending(path: name))
+                session.attachedImagePaths.append(name)
+            }
+            let offset = session.finalTranscript.map(\.end).max() ?? 0
+            for index in added.indices { added[index].start += offset; added[index].end += offset }
+            LectureImportContent.append(added, to: &session)
+            try await persistSessionSnapshot(session)
+            if currentSession?.id == session.id { currentSession = session }
+            statusMessage = "Материалы добавлены. Нажмите «Перегенерировать», чтобы обновить конспект."
+            lastError = nil
+        } catch { lastError = "Не удалось добавить материалы: \(error.localizedDescription)" }
+    }
+
     func attachPhotosToCurrentSession(_ sourceURLs: [URL]) async {
         guard !isBusy, var session = currentSession else { return }
         let imageURLs = sourceURLs.filter {
@@ -602,6 +656,7 @@ final class AppModel {
                 addedNames.append(name)
             }
             session.attachedImagePaths.append(contentsOf: addedNames)
+            session.status = .review
             currentSession = session
             if let index = sessions.firstIndex(where: { $0.id == session.id }) {
                 sessions[index] = session

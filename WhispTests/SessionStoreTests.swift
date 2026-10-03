@@ -18,6 +18,29 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(LectureImportContent.segments(text).first?.source, .importedText)
     }
 
+    func testAppendingMaterialsPreservesEditedNotesAndMarksCloudChanges() {
+        var session = LectureSession()
+        session.status = .synced
+        session.syncedAt = Date()
+        session.studentNotesMarkdown = "Мой конспект"
+        session.notesMarkdown = "Мой разбор"
+        session.userEditedStudentNotes = true
+        session.finalMarkdown = "Существующая стенограмма"
+        session.finalTranscript = LectureImportContent.segments("Исходная лекция")
+        let originalID = session.finalTranscript[0].id
+        LectureImportContent.append(LectureImportContent.segments("Новый материал"), to: &session)
+        XCTAssertEqual(session.finalTranscript.count, 2)
+        XCTAssertEqual(session.finalTranscript[0].id, originalID)
+        XCTAssertTrue(session.finalMarkdown.contains("Существующая стенограмма"))
+        XCTAssertTrue(session.finalMarkdown.contains("Новый материал"))
+        XCTAssertEqual(session.studentNotesMarkdown, "Мой конспект")
+        XCTAssertEqual(session.notesMarkdown, "Мой разбор")
+        XCTAssertTrue(session.userEditedStudentNotes)
+        XCTAssertEqual(session.cloudSyncTitle, "Есть изменения на Mac")
+        LectureImportContent.append(LectureImportContent.segments("Ещё одно дополнение"), to: &session)
+        XCTAssertEqual(session.finalTranscript.count, 3)
+    }
+
     func testUTF16TextAndVideoClassification() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

@@ -322,7 +322,7 @@ struct MobileLectureView: View {
     @Environment(MobileAppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var section: LectureSection = .notebook
-    @State private var showPhotoFileImporter = false
+    @State private var showMaterialImporter = false
     @State private var selectedGalleryPhotos: [PhotosPickerItem] = []
     @State private var isLoadingGalleryPhotos = false
     @State private var showAttachments = false
@@ -427,17 +427,13 @@ struct MobileLectureView: View {
         .sheet(isPresented: $showEditor) { MobileLectureEditor(session: session, section: section) }
         .navigationBarTitleDisplayMode(.inline)
         .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: section)
-        .fileImporter(
-            isPresented: $showPhotoFileImporter,
-            allowedContentTypes: [.image],
-            allowsMultipleSelection: true
-        ) { result in
-            switch result {
-            case .success(let urls):
-                guard !urls.isEmpty else { return }
-                Task { await model.attachPhotos(urls, to: session.id) }
-            case .failure(let error):
-                model.errorMessage = error.localizedDescription
+        .sheet(isPresented: $showMaterialImporter) {
+            LectureImportSetupView(initialAudioURLs: [], isAttachment: true,
+                                   existingImageCount: session.attachedImagePaths.count) { media, photos, _, text, files in
+                Task {
+                    await model.attachMaterials(media: media, images: photos, pastedText: text, textURLs: files, to: session.id)
+                    LectureImportStaging.cleanup(photos)
+                }
             }
         }
         .onChange(of: selectedGalleryPhotos) { _, items in
@@ -483,11 +479,11 @@ struct MobileLectureView: View {
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 Button {
-                    showPhotoFileImporter = true
+                    showMaterialImporter = true
                 } label: {
-                    Label("Файлы", systemImage: "folder")
+                    Label("Материалы", systemImage: "plus")
                 }
-                .disabled(session.attachedImagePaths.count >= 10 || isLoadingGalleryPhotos || model.isProcessing || model.isImporting)
+                .disabled(isLoadingGalleryPhotos || model.isProcessing || model.isImporting)
 
                 PhotosPicker(
                     selection: $selectedGalleryPhotos,

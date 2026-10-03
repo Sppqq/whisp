@@ -257,6 +257,62 @@ final class MobileAppModel {
         }
     }
 
+    func attachMaterials(media: [URL], images: [URL], pastedText: String, textURLs: [URL], to sessionID: UUID) async {
+        guard !isProcessing, !isImporting, var session = sessions.first(where: { $0.id == sessionID }) else { return }
+        guard session.attachedImagePaths.count + images.count <= 10 else {
+            errorMessage = "К одной лекции можно добавить не более 10 фото."
+            return
+        }
+        isImporting = true
+        defer { isImporting = false }
+        processingProgress = "Добавляем материалы…"
+        let accessed = (media + images + textURLs).map { ($0, $0.startAccessingSecurityScopedResource()) }
+        defer { accessed.forEach { url, active in if active { url.stopAccessingSecurityScopedResource() } } }
+        do {
+            let directory = try await store.directory(for: session.id)
+            let folder = "Материалы-" + UUID().uuidString
+            let additions = directory.appending(path: folder)
+            try FileManager.default.createDirectory(at: additions, withIntermediateDirectories: true)
+            let text = try await Task.detached { try LectureImportContent.prepareText(files: textURLs, pasted: pastedText, directory: additions) }.value
+            var added = LectureImportContent.segments(text)
+            for (index, source) in media.enumerated() {
+                processingProgress = "Расшифровываем файл \(index + 1) из \(media.count)…"
+                let work = additions.appending(path: "Аудио-\(index + 1)")
+                try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+                let originals = work.appending(path: "Оригиналы")
+                try FileManager.default.createDirectory(at: originals, withIntermediateDirectories: true)
+                let original = originals.appending(path: source.lastPathComponent)
+                try FileManager.default.copyItem(at: source, to: original)
+                let audio = try await MobileAudioCompressor().compress(source: original, destination: work.appending(path: "audio.m4a"))
+                let transcript: [TranscriptSegment]
+                if transcriptionMode == .local {
+                    transcript = try await MobileLocalTranscriptionService().transcribe(audioURL: audio)
+                } else {
+                    transcript = try await makeClient().transcribe(audioURL: audio, model: settingsStore.activeTranscriptionModel, vocabulary: settingsStore.settings.customVocabulary)
+                }
+                let offset = added.map(\.end).max() ?? 0
+                added.append(contentsOf: transcript.map { segment in
+                    var shifted = segment
+                    shifted.start += offset
+                    shifted.end += offset
+                    return shifted
+                })
+            }
+            for (index, source) in images.enumerated() {
+                let name = folder + "-Фото-\(index + 1)." + source.pathExtension
+                try FileManager.default.copyItem(at: source, to: directory.appending(path: name))
+                session.attachedImagePaths.append(name)
+            }
+            let offset = session.finalTranscript.map(\.end).max() ?? 0
+            for index in added.indices { added[index].start += offset; added[index].end += offset }
+            LectureImportContent.append(added, to: &session)
+            try await store.save(session)
+            replace(session)
+            processingProgress = "Материалы добавлены. Нажмите «Перегенерировать», чтобы обновить конспект."
+            errorMessage = nil
+        } catch { errorMessage = "Не удалось добавить материалы: \(error.localizedDescription)" }
+    }
+
     func attachPhotos(_ sources: [URL], to sessionID: UUID) async {
         guard !isProcessing, !isImporting, var session = sessions.first(where: { $0.id == sessionID }) else { return }
         let imageURLs = sources.filter {
@@ -299,6 +355,7 @@ final class MobileAppModel {
                 addedNames.append(name)
             }
             session.attachedImagePaths.append(contentsOf: addedNames)
+            session.status = .review
             await update(session)
             processingProgress = "Фото добавлены. Нажмите «Перегенерировать», чтобы учесть их в конспекте."
         } catch {

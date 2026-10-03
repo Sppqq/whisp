@@ -11,7 +11,7 @@ struct ReviewView: View {
     @State private var transcriptFilter = ""
     @State private var editingSegment: TranscriptSegment?
     @State private var editingSegmentIsRaw = false
-    @State private var showPhotoImporter = false
+    @State private var showMaterialImporter = false
     @State private var showLectureDetails = false
     @State private var showStudyDetails = false
     var body: some View {
@@ -183,17 +183,13 @@ struct ReviewView: View {
         .task(id: model.currentSession?.id) { await model.loadPlayback(source: audioSource) }
         .onChange(of: audioSource) { Task { await model.loadPlayback(source: audioSource) } }
         .background(WhispPalette.canvas)
-        .fileImporter(
-            isPresented: $showPhotoImporter,
-            allowedContentTypes: [.image],
-            allowsMultipleSelection: true
-        ) { result in
-            switch result {
-            case .success(let urls):
-                guard !urls.isEmpty else { return }
-                Task { await model.attachPhotosToCurrentSession(urls) }
-            case .failure(let error):
-                model.lastError = error.localizedDescription
+        .sheet(isPresented: $showMaterialImporter) {
+            LectureImportSetupView(initialAudioURLs: [], isAttachment: true,
+                                   existingImageCount: model.currentSession?.attachedImagePaths.count ?? 0) { media, photos, _, text, files in
+                Task {
+                    await model.attachMaterialsToCurrentSession(media: media, images: photos, pastedText: text, textURLs: files)
+                    LectureImportStaging.cleanup(photos)
+                }
             }
         }
         .sheet(item: $editingSegment) { segment in
@@ -345,8 +341,8 @@ struct ReviewView: View {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(currentContent, forType: .string)
                     }
-                    Button("Добавить фото…", systemImage: "photo.badge.plus") { showPhotoImporter = true }
-                        .disabled(model.isBusy || (model.currentSession?.attachedImagePaths.count ?? 0) >= 10)
+                    Button("Добавить материалы…", systemImage: "plus") { showMaterialImporter = true }
+                        .disabled(model.isBusy)
                     Divider()
                     Button("Создать конспект заново", systemImage: "sparkles") {
                         Task { await model.regenerateAnalysis(forceOverwriteNotes: true) }

@@ -16,17 +16,25 @@ struct LectureImportSetupView: View {
     @State private var errorMessage: String?
     @State private var isLoadingPhotos = false
 
+    let isAttachment: Bool
+    let existingImageCount: Int
+    private var photoLimit: Int { max(0, 10 - existingImageCount) }
+
     let onImport: ([URL], [URL], Bool, String, [URL]) -> Void
 
     init(
         initialAudioURLs: [URL],
         initialImageURLs: [URL] = [],
         initialTextURLs: [URL] = [],
+        isAttachment: Bool = false,
+        existingImageCount: Int = 0,
         onImport: @escaping ([URL], [URL], Bool, String, [URL]) -> Void
     ) {
         _audioURLs = State(initialValue: initialAudioURLs)
         _imageURLs = State(initialValue: initialImageURLs)
         _textURLs = State(initialValue: initialTextURLs)
+        self.isAttachment = isAttachment
+        self.existingImageCount = existingImageCount
         self.onImport = onImport
     }
 
@@ -34,7 +42,7 @@ struct LectureImportSetupView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Материалы лекции")
+                    Text(isAttachment ? "Добавить материалы" : "Материалы лекции")
                         .font(.title2.weight(.semibold))
                     Text("Добавьте аудио, видео, фото и текст — вместе или по отдельности. Из видео используется звуковая дорожка.")
                         .font(.subheadline)
@@ -61,7 +69,7 @@ struct LectureImportSetupView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                GroupBox("Фото · \(imageURLs.count) из 10") {
+                GroupBox("Фото · \(imageURLs.count) из \(photoLimit)") {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(Array(imageURLs.enumerated()), id: \.offset) { _, url in
                             HStack {
@@ -88,24 +96,24 @@ struct LectureImportSetupView: View {
                                 Label("Из файлов", systemImage: "folder")
                             }
                             .buttonStyle(.borderless)
-                            .disabled(imageURLs.count >= 10 || isLoadingPhotos)
+                            .disabled(imageURLs.count >= photoLimit || isLoadingPhotos)
 
                             PhotosPicker(
                                 selection: $selectedPhotos,
-                                maxSelectionCount: max(1, 10 - imageURLs.count),
+                                maxSelectionCount: max(1, photoLimit - imageURLs.count),
                                 matching: .images
                             ) {
                                 Label("Из галереи", systemImage: "photo.on.rectangle")
                             }
                             .buttonStyle(.borderless)
-                            .disabled(imageURLs.count >= 10 || isLoadingPhotos)
+                            .disabled(imageURLs.count >= photoLimit || isLoadingPhotos)
                         }
                         if imageURLs.isEmpty {
                             Text("Фото можно не добавлять.")
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                         }
-                        if imageURLs.count > 10 {
+                        if imageURLs.count > photoLimit {
                             Text("Уберите лишние фото — максимум 10 на урок.")
                                 .font(.caption)
                                 .foregroundStyle(.red)
@@ -142,10 +150,10 @@ struct LectureImportSetupView: View {
                 }
 
                 if audioURLs.isEmpty {
-                    Text("Аудио и видео не выбраны — конспект будет составлен по тексту и фото.")
+                    Text("Материалы будут использованы при создании конспекта.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else if audioURLs.count > 1 {
+                } else if audioURLs.count > 1 && !isAttachment {
                     Picker("Аудио и видео", selection: $combinesAudio) {
                         Text("Один общий урок").tag(true)
                         Text("Отдельные уроки").tag(false)
@@ -175,7 +183,7 @@ struct LectureImportSetupView: View {
                         dismiss()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled((audioURLs.isEmpty && imageURLs.isEmpty && textURLs.isEmpty && pastedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) || imageURLs.count > 10 || isLoadingPhotos)
+                    .disabled((audioURLs.isEmpty && imageURLs.isEmpty && textURLs.isEmpty && pastedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) || imageURLs.count > photoLimit || isLoadingPhotos)
                 }
             }
             .padding(24)
@@ -216,7 +224,7 @@ struct LectureImportSetupView: View {
                     UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true
                         && !imageURLs.contains(where: { $0.standardizedFileURL == url.standardizedFileURL })
                 }
-                guard imageURLs.count + unique.count <= 10 else {
+                guard imageURLs.count + unique.count <= photoLimit else {
                     errorMessage = "К одной лекции можно добавить не более 10 фото."
                     return
                 }
@@ -240,6 +248,7 @@ struct LectureImportSetupView: View {
     }
 
     private var createButtonTitle: String {
+        if isAttachment { return "Добавить в лекцию" }
         if audioURLs.isEmpty { return "Создать конспект" }
         return audioURLs.count > 1 && !combinesAudio ? "Создать уроки" : "Создать конспект"
     }
@@ -251,7 +260,7 @@ struct LectureImportSetupView: View {
         defer { isLoadingPhotos = false }
         defer { selectedPhotos = [] }
         for item in items {
-            guard imageURLs.count < 10 else {
+            guard imageURLs.count < photoLimit else {
                 errorMessage = "К одной лекции можно добавить не более 10 фото."
                 return
             }

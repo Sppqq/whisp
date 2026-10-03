@@ -75,6 +75,19 @@ enum LectureImportContent {
         }
         return parts.joined(separator: "\n\n")
     }
+    /// Append sources without rebuilding or replacing the user's edited notes.
+    static func append(_ segments: [TranscriptSegment], to session: inout LectureSession) {
+        session.rawTranscript.append(contentsOf: segments)
+        session.finalTranscript.append(contentsOf: segments)
+        if !segments.isEmpty {
+            let text = segments.map(\.text).joined(separator: "\n\n")
+            session.rawMarkdown += "\n\n" + text
+            session.finalMarkdown += "\n\n" + text
+        }
+        session.status = .review
+        session.lastError = nil
+    }
+
     static func segments(_ text: String) -> [TranscriptSegment] {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
         return [TranscriptSegment(start: 0, end: 0, text: text, source: .importedText, model: "Импорт текста", confidence: 1, manuallyEdited: true)]
