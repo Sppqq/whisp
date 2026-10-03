@@ -11,11 +11,16 @@ DEVELOPMENT_TEAM="${WHISP_DEVELOPMENT_TEAM:-}"
 DMG="dist/Whisp-${VERSION}.dmg"
 mkdir -p "$DERIVED_DATA"
 xcodegen generate
+PACKAGE_ARGS=()
+if [[ -n "${WHISP_SOURCE_PACKAGES:-}" ]]; then
+  PACKAGE_ARGS=(-clonedSourcePackagesDirPath "$WHISP_SOURCE_PACKAGES")
+fi
 xcodebuild \
   -project Whisp.xcodeproj \
   -scheme Whisp \
   -configuration Release \
   -derivedDataPath "$DERIVED_DATA" \
+  "${PACKAGE_ARGS[@]}" \
   ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
   MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \

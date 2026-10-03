@@ -153,12 +153,32 @@ jobs:
           fi
 
       - name: Verify Xcode and install XcodeGen
+        id: toolchain
         shell: bash
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          brew install xcodegen
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
           xcodebuild -version
           xcrun --sdk macosx --show-sdk-version
           xcodegen --version
+          TOOLCHAIN_KEY="$( { xcodebuild -version; xcodegen --version; } | shasum -a 256 | cut -d ' ' -f 1)"
+          echo "cache-key=$TOOLCHAIN_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Swift packages and compiled builds
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ runner.temp }}/WhispSourcePackages
+            ${{ runner.temp }}/WhispTests/Build
+            ${{ runner.temp }}/WhispTests/ModuleCache.noindex
+            ${{ runner.temp }}/WhispRelease/Build
+            ${{ runner.temp }}/WhispRelease/ModuleCache.noindex
+          key: whisp-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cache-key }}-${{ hashFiles('project.yml', '**/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            whisp-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.cache-key }}-${{ hashFiles('project.yml', '**/Package.resolved') }}-
 
       - name: Import Developer ID certificate
         if: env.SIGNED_RELEASE == 'true'
@@ -188,6 +208,7 @@ jobs:
             -configuration Debug \
             -destination "platform=macOS,arch=arm64" \
             -derivedDataPath "$RUNNER_TEMP/WhispTests" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/WhispSourcePackages" \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
             test
@@ -200,6 +221,7 @@ jobs:
           WHISP_SIGNING_IDENTITY: ${{ env.WHISP_SIGNING_IDENTITY }}
           WHISP_DEVELOPMENT_TEAM: ${{ env.WHISP_DEVELOPMENT_TEAM }}
           WHISP_DERIVED_DATA: ${{ runner.temp }}/WhispRelease
+          WHISP_SOURCE_PACKAGES: ${{ runner.temp }}/WhispSourcePackages
         run: bash scripts/build_dmg.sh
 
       - name: Notarize and staple DMG
