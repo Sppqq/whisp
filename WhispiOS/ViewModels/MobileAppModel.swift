@@ -132,16 +132,16 @@ final class MobileAppModel {
         }
     }
 
-    func importAudio(_ sources: [URL], images: [URL] = []) async {
+    func importAudio(_ sources: [URL], images: [URL] = [], pastedText: String = "", textURLs: [URL] = []) async {
         guard !isRecording, !isProcessing else { return }
-        guard !sources.isEmpty || !images.isEmpty else { return }
+        guard !sources.isEmpty || !images.isEmpty || !textURLs.isEmpty || !pastedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         guard images.count <= 10 else {
             errorMessage = "К одной лекции можно добавить не более 10 фото."
             return
         }
         isImporting = true
         processingProgress = sources.isEmpty
-            ? "Подготавливаем фото…"
+            ? "Подготавливаем текст и фото…"
             : sources.count > 1 ? "Объединяем аудио…" : "Сжимаем аудио…"
         let scopedSources = sources.map { ($0, $0.startAccessingSecurityScopedResource()) }
         let scopedImages = images.map { ($0, $0.startAccessingSecurityScopedResource()) }
@@ -156,6 +156,12 @@ final class MobileAppModel {
         session.endedAt = Date()
         do {
             let directory = try await store.directory(for: session.id)
+            let text = try await Task.detached(priority: .userInitiated) {
+                try LectureImportContent.prepareText(files: textURLs, pasted: pastedText, directory: directory)
+            }.value
+            guard !sources.isEmpty || !images.isEmpty || !text.isEmpty else { throw LectureImportContent.ImportError.empty }
+            session.rawTranscript = LectureImportContent.segments(text)
+            session.finalTranscript = session.rawTranscript
             for (index, imageURL) in images.enumerated() {
                 let extensionName = imageURL.pathExtension.isEmpty ? "jpg" : imageURL.pathExtension.lowercased()
                 let baseName = WhispFormatting.safePathComponent(imageURL.deletingPathExtension().lastPathComponent)
@@ -164,7 +170,7 @@ final class MobileAppModel {
                 session.attachedImagePaths.append(imageName)
             }
             if sources.isEmpty {
-                session.title = "Конспект по фото"
+                session.title = text.isEmpty ? "Конспект по фото" : "Конспект по тексту"
                 session.startedAt = Date()
                 session.endedAt = session.startedAt
                 try await store.save(session)
@@ -214,7 +220,7 @@ final class MobileAppModel {
         guard var session = sessions.first(where: { $0.id == sessionID }) else { return }
         isProcessing = true
         defer { isProcessing = false }
-        processingProgress = "Создаём конспект по фото…"
+        processingProgress = "Создаём конспект по материалам…"
         do {
             guard !settingsStore.activeProviderRequiresAPIKey || !settingsStore.activeProviderAPIKeys.isEmpty else {
                 throw MobileError.missingAPIKey
@@ -228,7 +234,7 @@ final class MobileAppModel {
             let directory = try await store.directory(for: sessionID)
             let imageNames = Array(session.attachedImagePaths.prefix(10))
             let analysis = try await service.analyze(
-                segments: [],
+                segments: session.finalTranscript,
                 subjects: settingsStore.settings.subjects.filter(\.isEnabled).sorted { $0.order < $1.order }.map(\.name),
                 images: try Self.loadAnalysisImages(names: imageNames, directory: directory),
                 imageNames: imageNames,
@@ -631,8 +637,9 @@ final class MobileAppModel {
                 }
             )
             guard var session = sessions.first(where: { $0.id == sessionID }) else { return }
-            session.rawTranscript = segments
-            session.finalTranscript = segments
+            let textSegments = session.finalTranscript.filter { $0.source == .importedText }
+            session.rawTranscript = segments + textSegments
+            session.finalTranscript = session.rawTranscript
             session.status = .processing
             try await store.save(session)
             replace(session)
@@ -646,7 +653,7 @@ final class MobileAppModel {
             let directory = try await store.directory(for: session.id)
             let imageNames = Array(session.attachedImagePaths.prefix(10))
             let analysis = try await analysisService.analyze(
-                segments: segments,
+                segments: session.finalTranscript,
                 subjects: settingsStore.settings.subjects.filter(\.isEnabled).sorted { $0.order < $1.order }.map(\.name),
                 images: try Self.loadAnalysisImages(names: imageNames, directory: directory),
                 imageNames: imageNames,
@@ -680,8 +687,9 @@ final class MobileAppModel {
             processingProgress = "Локальный Whisper: первая загрузка модели может занять время…"
             let segments = try await MobileLocalTranscriptionService().transcribe(audioURL: audioURL)
             guard var session = sessions.first(where: { $0.id == sessionID }) else { return }
-            session.rawTranscript = segments
-            session.finalTranscript = segments
+            let textSegments = session.finalTranscript.filter { $0.source == .importedText }
+            session.rawTranscript = segments + textSegments
+            session.finalTranscript = session.rawTranscript
             session.fallbackIntervals = []
             session.lastError = transcriptionMode == .automatic
                 ? "Обработано локальным Whisper после ошибки сети: \(originalError.localizedDescription)"
@@ -707,7 +715,7 @@ final class MobileAppModel {
             let directory = try await store.directory(for: session.id)
             let imageNames = Array(session.attachedImagePaths.prefix(10))
             let analysis = try await service.analyze(
-                segments: segments,
+                segments: session.finalTranscript,
                 subjects: settingsStore.settings.subjects.filter(\.isEnabled).map(\.name),
                 images: try Self.loadAnalysisImages(names: imageNames, directory: directory),
                 imageNames: imageNames

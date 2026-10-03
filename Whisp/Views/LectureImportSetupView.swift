@@ -6,6 +6,9 @@ struct LectureImportSetupView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var audioURLs: [URL]
     @State private var imageURLs: [URL] = []
+    @State private var textURLs: [URL] = []
+    @State private var pastedText = ""
+    @State private var showTextFilePicker = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var showMoreAudioPicker = false
     @State private var showImageFilePicker = false
@@ -13,15 +16,17 @@ struct LectureImportSetupView: View {
     @State private var errorMessage: String?
     @State private var isLoadingPhotos = false
 
-    let onImport: ([URL], [URL], Bool) -> Void
+    let onImport: ([URL], [URL], Bool, String, [URL]) -> Void
 
     init(
         initialAudioURLs: [URL],
         initialImageURLs: [URL] = [],
-        onImport: @escaping ([URL], [URL], Bool) -> Void
+        initialTextURLs: [URL] = [],
+        onImport: @escaping ([URL], [URL], Bool, String, [URL]) -> Void
     ) {
         _audioURLs = State(initialValue: initialAudioURLs)
         _imageURLs = State(initialValue: initialImageURLs)
+        _textURLs = State(initialValue: initialTextURLs)
         self.onImport = onImport
     }
 
@@ -31,22 +36,25 @@ struct LectureImportSetupView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Материалы лекции")
                         .font(.title2.weight(.semibold))
-                    Text("Выберите несколько аудио и фото вместе или добавьте конспект только по фотографиям.")
+                    Text("Добавьте аудио, видео, фото и текст — вместе или по отдельности. Из видео используется звуковая дорожка.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
 
-                GroupBox("Аудио · \(audioURLs.count)") {
+                GroupBox("Аудио и видео · \(audioURLs.count)") {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(Array(audioURLs.enumerated()), id: \.offset) { _, url in
-                            Label(url.lastPathComponent, systemImage: "waveform")
-                                .lineLimit(1)
-                                .font(.callout)
+                            HStack {
+                                Label(url.lastPathComponent, systemImage: "waveform").lineLimit(1)
+                                Spacer()
+                                Button { audioURLs.removeAll { $0 == url } } label: { Image(systemName: "xmark.circle.fill") }
+                                    .buttonStyle(.plain).accessibilityLabel("Убрать файл \(url.lastPathComponent)")
+                            }.font(.callout)
                         }
                         Button {
                             showMoreAudioPicker = true
                         } label: {
-                            Label("Добавить ещё аудио", systemImage: "plus")
+                            Label("Добавить аудио или видео", systemImage: "plus")
                         }
                         .buttonStyle(.borderless)
                     }
@@ -110,12 +118,35 @@ struct LectureImportSetupView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                GroupBox("Текст") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(textURLs.enumerated()), id: \.offset) { _, url in
+                            HStack {
+                                Label(url.lastPathComponent, systemImage: "doc.text").lineLimit(1)
+                                Spacer()
+                                Button { textURLs.removeAll { $0 == url } } label: { Image(systemName: "xmark.circle.fill") }
+                                    .buttonStyle(.plain).accessibilityLabel("Убрать файл \(url.lastPathComponent)")
+                            }.font(.callout)
+                        }
+                        Button { showTextFilePicker = true } label: { Label("Добавить TXT или Markdown", systemImage: "plus") }
+                            .buttonStyle(.borderless)
+                        Text("Вставьте текст лекции, заметки или расшифровку.").font(.caption).foregroundStyle(.secondary)
+                        TextEditor(text: $pastedText)
+                            .font(.body)
+                            .frame(minHeight: 130, maxHeight: 180)
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                            .background(.quaternary, in: .rect(cornerRadius: 8))
+                            .accessibilityLabel("Текст лекции")
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 if audioURLs.isEmpty {
-                    Text("Аудио не выбрано — конспект будет составлен только по фото.")
+                    Text("Аудио и видео не выбраны — конспект будет составлен по тексту и фото.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if audioURLs.count > 1 {
-                    Picker("Аудио", selection: $combinesAudio) {
+                    Picker("Аудио и видео", selection: $combinesAudio) {
                         Text("Один общий урок").tag(true)
                         Text("Отдельные уроки").tag(false)
                     }
@@ -140,11 +171,11 @@ struct LectureImportSetupView: View {
                     }
                     Spacer()
                     Button(createButtonTitle) {
-                        onImport(audioURLs, imageURLs, combinesAudio)
+                        onImport(audioURLs, imageURLs, combinesAudio, pastedText, textURLs)
                         dismiss()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled((audioURLs.isEmpty && imageURLs.isEmpty) || imageURLs.count > 10 || isLoadingPhotos)
+                    .disabled((audioURLs.isEmpty && imageURLs.isEmpty && textURLs.isEmpty && pastedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) || imageURLs.count > 10 || isLoadingPhotos)
                 }
             }
             .padding(24)
@@ -159,13 +190,13 @@ struct LectureImportSetupView: View {
         #endif
         .fileImporter(
             isPresented: $showMoreAudioPicker,
-            allowedContentTypes: [.audio],
+            allowedContentTypes: [.audio, .movie],
             allowsMultipleSelection: true
         ) { result in
             switch result {
             case .success(let urls):
                 let unique = urls.filter { url in
-                    UTType(filenameExtension: url.pathExtension)?.conforms(to: .audio) == true
+                    LectureImportContent.isMedia(url)
                         && !audioURLs.contains(where: { $0.standardizedFileURL == url.standardizedFileURL })
                 }
                 audioURLs.append(contentsOf: unique)
@@ -195,6 +226,13 @@ struct LectureImportSetupView: View {
                 errorMessage = error.localizedDescription
             }
         }
+        .fileImporter(isPresented: $showTextFilePicker, allowedContentTypes: [.plainText, UTType(filenameExtension: "md") ?? .plainText], allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls):
+                textURLs.append(contentsOf: urls.filter { LectureImportContent.isText($0) && !textURLs.contains($0) })
+            case .failure(let error): errorMessage = error.localizedDescription
+            }
+        }
         .onChange(of: selectedPhotos) { _, items in
             guard !items.isEmpty else { return }
             Task { await addGalleryPhotos(items) }
@@ -202,7 +240,7 @@ struct LectureImportSetupView: View {
     }
 
     private var createButtonTitle: String {
-        if audioURLs.isEmpty { return "Создать конспект по фото" }
+        if audioURLs.isEmpty { return "Создать конспект" }
         return audioURLs.count > 1 && !combinesAudio ? "Создать уроки" : "Создать конспект"
     }
 

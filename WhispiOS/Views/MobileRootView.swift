@@ -9,6 +9,7 @@ struct MobileRootView: View {
     @State private var showImportSetup = false
     @State private var importSetupAudioURLs: [URL] = []
     @State private var importSetupImageURLs: [URL] = []
+    @State private var importSetupTextURLs: [URL] = []
     @State private var showSettings = false
     @State private var selectedTab = 0
     @State private var libraryPath: [UUID] = []
@@ -93,19 +94,20 @@ struct MobileRootView: View {
         }
         .fileImporter(
             isPresented: $showImporter,
-            allowedContentTypes: [.audio, .image],
+            allowedContentTypes: LectureImportContent.allowedTypes,
             allowsMultipleSelection: true
         ) { result in
             switch result {
             case .success(let urls):
                 importSetupAudioURLs = urls.filter {
-                    UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) == true
+                    LectureImportContent.isMedia($0)
                 }
                 importSetupImageURLs = urls.filter {
                     UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
                 }
-                if importSetupAudioURLs.isEmpty && importSetupImageURLs.isEmpty {
-                    model.errorMessage = "Выберите хотя бы одно аудио или фото."
+                importSetupTextURLs = urls.filter { LectureImportContent.isText($0) }
+                if importSetupAudioURLs.isEmpty && importSetupImageURLs.isEmpty && importSetupTextURLs.isEmpty {
+                    model.errorMessage = "Выберите аудио, видео, фото или текстовый файл."
                 } else {
                     showImportSetup = true
                 }
@@ -116,17 +118,19 @@ struct MobileRootView: View {
         .sheet(isPresented: $showImportSetup, onDismiss: {
             importSetupAudioURLs = []
             importSetupImageURLs = []
+            importSetupTextURLs = []
         }) {
             LectureImportSetupView(
                 initialAudioURLs: importSetupAudioURLs,
-                initialImageURLs: importSetupImageURLs
-            ) { audioURLs, images, combineAudio in
+                initialImageURLs: importSetupImageURLs,
+                initialTextURLs: importSetupTextURLs
+            ) { audioURLs, images, combineAudio, text, textURLs in
                 Task {
                     if audioURLs.isEmpty || combineAudio {
-                        await model.importAudio(audioURLs, images: images)
+                        await model.importAudio(audioURLs, images: images, pastedText: text, textURLs: textURLs)
                     } else {
                         for audioURL in audioURLs {
-                            await model.importAudio([audioURL], images: images)
+                            await model.importAudio([audioURL], images: images, pastedText: text, textURLs: textURLs)
                         }
                     }
                     LectureImportStaging.cleanup(images)
@@ -210,10 +214,13 @@ struct MobileRootView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         Image(systemName: "square.and.arrow.down").font(.largeTitle).foregroundStyle(.blue)
                         Text("Добавить файлы").font(.title2.bold())
-                        Text("Аудиозаписи и до 10 фотографий. Можно добавить только фото.")
+                        Text("Аудио, видео, до 10 фото, TXT и Markdown. Можно вставить текст без файлов.")
                             .font(.callout).foregroundStyle(.secondary)
                         Button { showImporter = true } label: {
-                            Label("Выбрать аудио и фото", systemImage: "folder").frame(maxWidth: .infinity)
+                            Label("Выбрать файлы", systemImage: "folder").frame(maxWidth: .infinity)
+                        }.buttonStyle(.glass).controlSize(.large)
+                        Button { showImportSetup = true } label: {
+                            Label("Вставить текст", systemImage: "text.alignleft").frame(maxWidth: .infinity)
                         }.buttonStyle(.glass).controlSize(.large)
                     }
                     .padding(24).frame(maxWidth: .infinity, alignment: .leading)

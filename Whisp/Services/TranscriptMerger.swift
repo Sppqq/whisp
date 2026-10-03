@@ -61,6 +61,7 @@ enum TranscriptMerger {
         case .whisperFallback: 0
         case .geminiLive: 1
         case .geminiBackfill: 2
+        case .importedText: 3
         }
     }
 

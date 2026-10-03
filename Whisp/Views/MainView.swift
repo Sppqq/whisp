@@ -562,6 +562,7 @@ private struct StartView: View {
     @State private var showImportSetup = false
     @State private var importSetupAudioURLs: [URL] = []
     @State private var importSetupImageURLs: [URL] = []
+    @State private var importSetupTextURLs: [URL] = []
 
     var body: some View {
         ScrollView {
@@ -597,30 +598,32 @@ private struct StartView: View {
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .dropDestination(for: URL.self) { urls, _ in
-            let audio = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) == true }
+            let audio = urls.filter { LectureImportContent.isMedia($0) }
             let images = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true }
-            guard !audio.isEmpty || !images.isEmpty else { return false }
+            let texts = urls.filter { LectureImportContent.isText($0) }
+            guard !audio.isEmpty || !images.isEmpty || !texts.isEmpty else { return false }
             guard images.count <= 10 else { model.lastError = "К одной лекции можно добавить не более 10 фото."; return false }
-            importSetupAudioURLs = audio; importSetupImageURLs = images; showImportSetup = true
+            importSetupAudioURLs = audio; importSetupImageURLs = images; importSetupTextURLs = texts; showImportSetup = true
             return true
         }
         .fileImporter(
             isPresented: $showAudioImporter,
-            allowedContentTypes: [.audio, .image],
+            allowedContentTypes: LectureImportContent.allowedTypes,
             allowsMultipleSelection: true
         ) { result in
             switch result {
             case .success(let urls):
                 importSetupAudioURLs = urls.filter {
-                    UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) == true
+                    LectureImportContent.isMedia($0)
                 }
                 importSetupImageURLs = urls.filter {
                     UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
                 }
-                if !importSetupAudioURLs.isEmpty || !importSetupImageURLs.isEmpty {
+                importSetupTextURLs = urls.filter { LectureImportContent.isText($0) }
+                if !importSetupAudioURLs.isEmpty || !importSetupImageURLs.isEmpty || !importSetupTextURLs.isEmpty {
                     showImportSetup = true
                 } else {
-                    model.lastError = "Выберите хотя бы одно аудио или фото."
+                    model.lastError = "Выберите аудио, видео, фото или текстовый файл."
                 }
             case .failure(let error):
                 model.lastError = error.localizedDescription
@@ -629,15 +632,19 @@ private struct StartView: View {
         .sheet(isPresented: $showImportSetup, onDismiss: {
             importSetupAudioURLs = []
             importSetupImageURLs = []
+            importSetupTextURLs = []
         }) {
             LectureImportSetupView(
                 initialAudioURLs: importSetupAudioURLs,
-                initialImageURLs: importSetupImageURLs
-            ) { audioURLs, imageURLs, combineAudio in
+                initialImageURLs: importSetupImageURLs,
+                initialTextURLs: importSetupTextURLs
+            ) { audioURLs, imageURLs, combineAudio, text, textURLs in
                 model.enqueueLectureImports(
                     audioURLs: audioURLs,
                     imageURLs: imageURLs,
-                    combineAudio: combineAudio
+                    combineAudio: combineAudio,
+                    pastedText: text,
+                    textURLs: textURLs
                 )
             }
         }
@@ -681,10 +688,10 @@ private struct StartView: View {
                 .frame(width: 64, height: 64).background(WhispPalette.accent.opacity(0.08), in: .rect(cornerRadius: 18))
             VStack(alignment: .leading, spacing: 6) {
                 Text("Импортировать").font(.title2.weight(.semibold))
-                Text("Аудиозаписи, фото доски и страниц.").font(.callout).foregroundStyle(.secondary)
+                Text("Аудио, видео, фото и текст.").font(.callout).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 12) {
-                Label("Несколько файлов за один раз", systemImage: "doc.on.doc")
+                Label("TXT, Markdown и вставка текста", systemImage: "doc.on.doc")
                 Label("До 10 фото к лекции", systemImage: "photo.on.rectangle")
                 Label("Можно перетащить прямо сюда", systemImage: "cursorarrow.and.square.on.square.dashed")
             }.font(.caption).foregroundStyle(.secondary).frame(height: 98, alignment: .top)
@@ -692,6 +699,9 @@ private struct StartView: View {
             Button { showAudioImporter = true } label: {
                 Label(model.isBusy ? "Добавить файлы в очередь…" : "Выбрать файлы…", systemImage: "folder").frame(maxWidth: .infinity)
             }.buttonStyle(WhispActionStyle()).tint(.primary).controlSize(.large)
+            Button { showImportSetup = true } label: {
+                Label("Вставить текст", systemImage: "text.alignleft").frame(maxWidth: .infinity)
+            }.buttonStyle(WhispActionStyle()).controlSize(.large)
         }
         .frame(height: 400, alignment: .top)
         .padding(24).frame(maxWidth: .infinity, alignment: .leading).whispContentCard()

@@ -19,7 +19,7 @@ enum LectureStatus: String, Codable, CaseIterable, Sendable {
 }
 
 enum TranscriptSource: String, Codable, Sendable {
-    case geminiLive, whisperFallback, geminiBackfill
+    case geminiLive, whisperFallback, geminiBackfill, importedText
 }
 
 enum FallbackReason: String, Codable, Sendable {

@@ -3,6 +3,19 @@ import XCTest
 @testable import Whisp
 
 final class AudioImportTests: XCTestCase {
+    func testVideoAudioExtraction() async throws {
+        guard let path = ProcessInfo.processInfo.environment["WHISP_TEST_VIDEO"] else { throw XCTSkip("Synthetic video fixture not configured") }
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let result = try await AudioPostProcessor().prepareImportedAudio(source: URL(fileURLWithPath: path), directory: directory)
+        let asset = AVURLAsset(url: result)
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertFalse(tracks.isEmpty)
+        let duration = try await asset.load(.duration).seconds
+        XCTAssertGreaterThan(duration, 0.5)
+    }
+
     func testExampleRecordingSlicesAndImport() async throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let source = root.appending(path: "ex.m4a")

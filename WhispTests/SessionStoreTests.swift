@@ -2,6 +2,36 @@ import XCTest
 @testable import Whisp
 
 final class SessionStoreTests: XCTestCase {
+    func testTextImportCombinesPastedTextAndFilesAndPreservesOriginals() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let destination = root.appending(path: "lecture")
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(path: "Лекция.md")
+        let data = Data("# Тема\nИсходные заметки".utf8)
+        try data.write(to: source)
+        let text = try LectureImportContent.prepareText(files: [source], pasted: "Дополнение", directory: destination)
+        XCTAssertTrue(text.contains("Дополнение"))
+        XCTAssertTrue(text.contains("Исходные заметки"))
+        XCTAssertEqual(try Data(contentsOf: source), data)
+        XCTAssertEqual(try Data(contentsOf: destination.appending(path: "Текст-1-Лекция.md")), data)
+        XCTAssertEqual(LectureImportContent.segments(text).first?.source, .importedText)
+    }
+
+    func testUTF16TextAndVideoClassification() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(path: "Запись.txt")
+        try XCTUnwrap("Русский текст".data(using: .utf16)).write(to: source)
+        let decoded = try LectureImportContent.prepareText(files: [source], pasted: "", directory: root)
+        XCTAssertTrue(decoded.contains("Русский текст"))
+        XCTAssertTrue(LectureImportContent.isMedia(URL(fileURLWithPath: "/clip.mp4")))
+        XCTAssertTrue(LectureImportContent.isMedia(URL(fileURLWithPath: "/clip.mov")))
+        XCTAssertFalse(LectureImportContent.isMedia(URL(fileURLWithPath: "/notes.md")))
+        XCTAssertThrowsError(try LectureImportContent.prepareText(files: [], pasted: String(repeating: "a", count: 5_000_001), directory: root))
+    }
+
     @MainActor
     func testSyncReportsBusyOperationInsteadOfSilentlyIgnoringClick() async {
         let model = AppModel()
