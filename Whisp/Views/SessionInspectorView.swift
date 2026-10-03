@@ -96,7 +96,7 @@ struct SessionInspectorView: View {
                 icon: model.webDAVState.isAvailable ? "checkmark.icloud" : "icloud"
             )
 
-            if model.cloudUploadSessionID == session.id, let progress = model.cloudUploadProgress {
+            if session.status != .synced, model.cloudUploadSessionID == session.id, let progress = model.cloudUploadProgress {
                 CloudUploadStatusView(progress: progress, error: session.lastError, completedAt: session.status == .synced ? session.syncedAt : nil)
             }
             if let path = session.remotePath { inspectorRow("Папка в облаке", value: path) }

@@ -311,6 +311,7 @@ struct ReviewView: View {
                 .popover(isPresented: $showLectureDetails) { lectureDetails }
             }
             if let session = model.currentSession,
+               session.status != .synced,
                model.cloudUploadSessionID == session.id,
                let progress = model.cloudUploadProgress {
                 CloudUploadStatusView(progress: progress, error: session.status == .uploading ? session.lastError : nil, completedAt: session.status == .synced ? session.syncedAt : nil)

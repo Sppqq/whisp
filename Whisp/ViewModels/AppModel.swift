@@ -1092,6 +1092,8 @@ final class AppModel {
             syncRetryTask?.cancel()
             syncRetryTask = nil
             try await persistSessionSnapshot(session)
+            cloudUploadProgress = nil
+            cloudUploadSessionID = nil
         } catch {
             session.status = .uploading
             session.lastError = error.localizedDescription
