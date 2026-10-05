@@ -156,14 +156,32 @@ struct WhispStatusMark: View {
 struct WhispGlassActionLabel: View {
     let title: String
     let systemImage: String
+    var isBusy = false
 
     var body: some View {
-        Label(title, systemImage: systemImage)
+        HStack(spacing: 7) {
+            if isBusy {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: systemImage)
+            }
+            Text(title)
+        }
             .font(.callout.weight(.medium))
             .foregroundStyle(.primary)
             .padding(.horizontal, 14)
             .frame(height: 34)
             .glassEffect(.regular.interactive(), in: .capsule)
+    }
+}
+
+struct WhispGlassPressStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(isEnabled ? (configuration.isPressed ? 0.65 : 1) : 0.4)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
     }
 }
 

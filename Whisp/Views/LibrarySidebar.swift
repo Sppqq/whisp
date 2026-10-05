@@ -35,6 +35,27 @@ struct LibrarySidebar: View {
 
             LibraryBrowser(model: model, selectedSubject: $selectedSubject)
                 .disabled(model.isRecording)
+            if model.activeAnalysisSessionID != nil || !model.queuedAnalysisSessionIDs.isEmpty {
+                Button { showNoteQueue = true } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Очередь конспектов · \(model.queuedAnalysisSessionIDs.count)", systemImage: "text.badge.plus")
+                            .font(.callout.weight(.semibold))
+                        if let id = model.activeAnalysisSessionID,
+                           let session = model.sessions.first(where: { $0.id == id }) {
+                            Text("Генерируется: \(WhispFormatting.displayTitle(session.title))")
+                                .font(.caption).lineLimit(2)
+                        }
+                        Text(model.queuedAnalysisSessionIDs.isEmpty ? "Нет ожидающих лекций" : "Ожидают генерации: \(model.queuedAnalysisSessionIDs.count)")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(WhispPalette.quietFill, in: .rect(cornerRadius: 10))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
             if model.isRestoringFromWebDAV {
                 ProgressView(model.statusMessage).font(.caption).padding(12)
             }
@@ -44,11 +65,10 @@ struct LibrarySidebar: View {
                     .buttonStyle(.plain)
                 Spacer()
                 Button { showNoteQueue = true } label: {
-                    Label("Очередь", systemImage: "text.badge.plus")
+                    Label(model.queuedAnalysisSessionIDs.isEmpty ? "Очередь" : "Очередь · \(model.queuedAnalysisSessionIDs.count)", systemImage: "text.badge.plus")
                 }
                 .buttonStyle(.plain)
                 .popover(isPresented: $showNoteQueue) { noteQueuePanel }
-                .disabled(model.isRecording)
             }
             .font(.callout).foregroundStyle(.secondary).padding(16)
         }

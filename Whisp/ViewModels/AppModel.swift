@@ -54,6 +54,7 @@ final class AppModel {
     var selectedSessionID: UUID?
     var statusMessage = "Готово к записи"
     private(set) var cloudUploadSessionID: UUID?
+    private(set) var syncingSessionID: UUID?
     private(set) var cloudUploadProgress: CloudUploadProgress?
     var processingProgress = 0.0
     var processingLogs: [ProcessingLogEntry] = []
@@ -1050,6 +1051,8 @@ final class AppModel {
         }
         isWorking = true
         defer { isWorking = false }
+        syncingSessionID = session.id
+        defer { syncingSessionID = nil }
         guard !settingsStore.webDAV.baseURL.isEmpty else { lastError = "Настройте WebDAV"; return }
         guard session.subject != "Не определено" else { lastError = "Выберите предмет"; return }
         session.status = .uploading

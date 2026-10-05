@@ -270,8 +270,15 @@ struct ReviewView: View {
                         .controlSize(.regular)
                         .help("Экспорт конспекта, аудиозаписи или печать")
 
-                        Button { Task { await model.syncCurrent() } } label: { WhispGlassActionLabel(title: "Синхронизировать", systemImage: "icloud.and.arrow.up") }
-                            .buttonStyle(.plain)
+                        Button { Task { await model.syncCurrent() } } label: {
+                            WhispGlassActionLabel(
+                                title: isSyncingCurrent ? "Синхронизация…" : (model.currentSession?.status == .synced ? "Синхронизировано" : "Синхронизировать"),
+                                systemImage: model.currentSession?.status == .synced ? "checkmark.icloud" : "icloud.and.arrow.up",
+                                isBusy: isSyncingCurrent
+                            )
+                        }
+                        .buttonStyle(WhispGlassPressStyle())
+                        .disabled(model.isRecording || model.isWorking || model.isRestoringFromWebDAV || model.isBatchRegenerating || (model.currentSession.map { model.isAnalysisQueued(for: $0.id) || $0.status == .processing } ?? true))
 
                     }
                 }
@@ -286,6 +293,11 @@ struct ReviewView: View {
                 }
             }
         )
+    }
+
+    private var isSyncingCurrent: Bool {
+        guard let id = model.currentSession?.id else { return false }
+        return model.syncingSessionID == id
     }
 
     private var readingChrome: some View {
@@ -345,7 +357,7 @@ struct ReviewView: View {
                     Button("Добавить материалы…", systemImage: "plus") { showMaterialImporter = true }
                         .disabled(model.isBusy)
                     Divider()
-                    Button("Создать конспект заново", systemImage: "sparkles") {
+                    Button(model.currentSession.map { model.activeAnalysisSessionID == $0.id ? "Конспект создаётся…" : (model.isAnalysisQueued(for: $0.id) ? "Конспект в очереди" : "Создать конспект заново") } ?? "Создать конспект заново", systemImage: "sparkles") {
                         Task { await model.regenerateAnalysis(forceOverwriteNotes: true) }
                     }
                     .disabled(model.currentSession.map { model.isAnalysisQueued(for: $0.id) } ?? true)
