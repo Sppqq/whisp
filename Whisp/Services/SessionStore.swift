@@ -36,13 +36,8 @@ actor SessionStore {
     func save(_ session: LectureSession) throws {
         let dir = try directory(for: session.id)
         let url = dir.appending(path: "session.json")
+        let previousSession = try? load(session.id)
         let temporary = url.appendingPathExtension("tmp")
-        try encoder.encode(session).write(to: temporary, options: .atomic)
-        if FileManager.default.fileExists(atPath: url.path) {
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
-        } else {
-            try FileManager.default.moveItem(at: temporary, to: url)
-        }
 
         // Save local .md files so they are easily accessible in Finder / Obsidian
         let lessonName = WhispFormatting.safePathComponent(session.title)
@@ -58,20 +53,38 @@ actor SessionStore {
         let rawContent = session.rawMarkdown.isEmpty ? markdown.raw : session.rawMarkdown
 
         if !mainContent.isEmpty {
-            try? Data(mainContent.utf8).write(to: dir.appending(path: "\(lessonName).md"), options: .atomic)
+            try Data(mainContent.utf8).write(to: dir.appending(path: "\(lessonName).md"), options: .atomic)
         }
         if !notesContent.isEmpty {
-            try? Data(notesContent.utf8).write(to: dir.appending(path: "\(lessonName) — Разбор нейросетью.md"), options: .atomic)
+            try Data(notesContent.utf8).write(to: dir.appending(path: "\(lessonName) — Разбор нейросетью.md"), options: .atomic)
         }
         if !finalContent.isEmpty {
-            try? Data(finalContent.utf8).write(to: dir.appending(path: "\(lessonName) — Стенограмма.md"), options: .atomic)
+            try Data(finalContent.utf8).write(to: dir.appending(path: "\(lessonName) — Стенограмма.md"), options: .atomic)
         }
         if !rawContent.isEmpty {
-            try? Data(rawContent.utf8).write(to: dir.appending(path: "\(lessonName) — Сырой звук.md"), options: .atomic)
+            try Data(rawContent.utf8).write(to: dir.appending(path: "\(lessonName) — Сырой звук.md"), options: .atomic)
         }
         if !session.quizMarkdown.isEmpty {
             let quizData = markdown.quiz.isEmpty ? session.quizMarkdown : markdown.quiz
-            try? Data(quizData.utf8).write(to: dir.appending(path: "\(lessonName) — Вопросы к зачёту.md"), options: .atomic)
+            try Data(quizData.utf8).write(to: dir.appending(path: "\(lessonName) — Вопросы к зачёту.md"), options: .atomic)
+        }
+        try encoder.encode(session).write(to: temporary, options: .atomic)
+        if FileManager.default.fileExists(atPath: url.path) {
+            _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
+        } else {
+            try FileManager.default.moveItem(at: temporary, to: url)
+        }
+        // Remove only exports owned by the previous metadata, after replacements succeed.
+        if let previousSession, previousSession.title != session.title {
+            let oldName = WhispFormatting.safePathComponent(previousSession.title)
+            if oldName != lessonName {
+                for suffix in ["", " — Разбор нейросетью", " — Стенограмма", " — Сырой звук", " — Вопросы к зачёту"] {
+                    let oldURL = dir.appending(path: oldName + suffix + ".md")
+                    if FileManager.default.fileExists(atPath: oldURL.path) {
+                        try FileManager.default.removeItem(at: oldURL)
+                    }
+                }
+            }
         }
     }
 

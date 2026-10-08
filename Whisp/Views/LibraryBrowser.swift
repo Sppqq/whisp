@@ -34,7 +34,9 @@ struct LibraryBrowser: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel("Фильтр по предмету")
                     Spacer(minLength: 8)
-                    Text("\(sessions.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    if selectedSubject != "Все" {
+                        Text("\(sessions.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
                 }
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -45,10 +47,10 @@ struct LibraryBrowser: View {
                             .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Очистить поиск")
                     }
                 }
-                .font(.callout).padding(.horizontal, 10).frame(height: 32)
-                .background(WhispPalette.quietFill, in: .rect(cornerRadius: 8))
+                .font(.callout).padding(.horizontal, 12).frame(height: 34)
+                .glassEffect(.regular, in: .capsule)
             }
-            .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 12)
+            .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 10)
             List(selection: Binding(get: { model.showsLibrary ? model.selectedSessionID : nil }, set: { model.selectSession($0) })) {
                 ForEach(sessions) { session in
                     LectureRow(session: session, query: searchText, isSelected: model.showsLibrary && model.selectedSessionID == session.id)

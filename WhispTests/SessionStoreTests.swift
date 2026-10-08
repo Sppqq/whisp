@@ -2,6 +2,55 @@ import XCTest
 @testable import Whisp
 
 final class SessionStoreTests: XCTestCase {
+    func testChangingDatedTitleReplacesExportsAndPreservesUserFiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = SessionStore(baseDirectory: root)
+        var session = LectureSession()
+        session.title = "01.10.2026 — Лекция"
+        session.studentNotesMarkdown = "Мой конспект"
+        session.notesMarkdown = "Подробный разбор"
+        session.finalMarkdown = "Расшифровка"
+        session.rawMarkdown = "Исходный текст"
+        session.quizMarkdown = "Вопросы"
+        try await store.save(session)
+        let directory = try await store.directory(for: session.id)
+        let userFile = directory.appending(path: "Мои заметки.md")
+        try Data("Не удалять".utf8).write(to: userFile)
+        session.title = "05.10.2026 — Лекция"
+        try await store.save(session)
+        session.title = "05.10.2026 — Новое название"
+        try await store.save(session)
+        let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        XCTAssertFalse(files.contains { $0.hasPrefix("01.10.2026 — Лекция") || $0.hasPrefix("05.10.2026 — Лекция") })
+        XCTAssertEqual(files.filter { $0.hasPrefix(session.title) && $0.hasSuffix(".md") }.count, 5)
+        XCTAssertEqual(try String(contentsOf: userFile, encoding: .utf8), "Не удалять")
+        let loaded = try await store.load(session.id)
+        XCTAssertEqual(loaded.id, session.id)
+        XCTAssertEqual(loaded.studentNotesMarkdown, "Мой конспект")
+    }
+
+    func testFailedRenameKeepsPreviousMetadataAndExport() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = SessionStore(baseDirectory: root)
+        var session = LectureSession()
+        session.title = "Старая лекция"
+        session.studentNotesMarkdown = "Сохранить конспект"
+        try await store.save(session)
+        let directory = try await store.directory(for: session.id)
+        try FileManager.default.createDirectory(at: directory.appending(path: "Новое название.md"), withIntermediateDirectories: true)
+        session.title = "Новое название"
+        do {
+            try await store.save(session)
+            XCTFail("Expected export write failure")
+        } catch {
+            let saved = try await store.load(session.id)
+            XCTAssertEqual(saved.title, "Старая лекция")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appending(path: "Старая лекция.md").path))
+        }
+    }
+
     func testTextImportCombinesPastedTextAndFilesAndPreservesOriginals() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         let destination = root.appending(path: "lecture")

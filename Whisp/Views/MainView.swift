@@ -566,35 +566,31 @@ private struct StartView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Новая лекция").font(.largeTitle.weight(.semibold))
-                    Text("Начните запись или добавьте готовые материалы.")
-                        .font(.title3).foregroundStyle(.secondary)
-                }
+            VStack(alignment: .leading, spacing: WhispMetrics.sectionSpacing) {
+                WhispPageHeader(
+                    eyebrow: "Захват",
+                    title: "Новая лекция",
+                    subtitle: "Запишите занятие или добавьте готовые материалы."
+                )
                 if model.isBusy {
                     Label(model.statusMessage, systemImage: "hourglass")
                         .font(.callout).foregroundStyle(.secondary)
                 }
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 20) {
-                        recordingCard.frame(minWidth: 320, maxWidth: .infinity)
-                        importCard.frame(minWidth: 320, maxWidth: .infinity)
-                    }
-                    VStack(spacing: 20) { recordingCard; importCard }
-                }
-                HStack(spacing: 24) {
+                recordingCard
+                importCard
+                HStack(spacing: 10) {
                     Label("Запись", systemImage: "waveform")
-                    Image(systemName: "chevron.right").font(.caption)
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
                     Label("Конспект", systemImage: "doc.text")
-                    Image(systemName: "chevron.right").font(.caption)
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
                     Label("Повторение", systemImage: "graduationcap")
+                    Spacer()
+                    Text("Материалы хранятся на этом Mac")
+                        .font(.caption).foregroundStyle(.tertiary)
                 }
                 .font(.callout).foregroundStyle(.secondary)
-                Text("Материалы сохраняются на Mac. Конспект можно проверить и исправить перед синхронизацией.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
-            .frame(maxWidth: WhispMetrics.contentWidth, alignment: .leading).padding(32)
+            .frame(maxWidth: WhispMetrics.contentWidth, alignment: .leading).padding(WhispMetrics.pagePadding)
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .dropDestination(for: URL.self) { urls, _ in
@@ -650,61 +646,78 @@ private struct StartView: View {
         }
     }
     private var recordingCard: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Image(systemName: "mic.fill").font(.system(size: 32)).foregroundStyle(WhispPalette.recording)
-                .frame(width: 64, height: 64).background(WhispPalette.recording.opacity(0.08), in: .rect(cornerRadius: 18))
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Записать лекцию").font(.title2.weight(.semibold))
-                Text("Для занятия в аудитории или онлайн.").font(.callout).foregroundStyle(.secondary)
+        HStack(alignment: .center, spacing: 28) {
+            VStack(alignment: .leading, spacing: 16) {
+                WhispIconTile(systemImage: "mic.fill", tint: WhispPalette.recording, size: 48)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Записать лекцию").font(WhispFont.pageTitle(22))
+                    Text("Для занятия в аудитории или онлайн.").font(.callout).foregroundStyle(.secondary)
+                }
+                Picker("Микрофон", selection: $model.selectedMicrophoneID) {
+                    Text("Системный по умолчанию").tag(UInt32?.none)
+                    ForEach(model.inputDevices) { Text($0.name).tag(Optional($0.id)) }
+                }
+                .frame(maxWidth: 320, alignment: .leading)
+                WhispGlassSegment(
+                    selection: $captureMode,
+                    options: CaptureMode.allCases.map { (value: $0, title: $0.rawValue, icon: Optional($0.icon)) }
+                )
+                .frame(maxWidth: 320)
+                Text(captureMode == .microphone ? "Записывается звук с микрофона." : "Микрофон и звук приложений сохранятся отдельно.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let reason = model.recordingUnavailableReason {
+                    Text(reason).font(.caption).foregroundStyle(.secondary)
+                }
             }
-            Picker("Микрофон", selection: $model.selectedMicrophoneID) {
-                Text("Системный по умолчанию").tag(UInt32?.none)
-                ForEach(model.inputDevices) { Text($0.name).tag(Optional($0.id)) }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Text("Что записывать").font(.caption).foregroundStyle(.secondary)
-            Picker("Источник", selection: $captureMode) {
-                ForEach(CaptureMode.allCases) { Text($0.rawValue).tag($0) }
-            }.pickerStyle(.segmented).labelsHidden()
-            Text(captureMode == .microphone ? "Записывается звук с микрофона." : "Микрофон и звук приложений сохранятся отдельно.")
-                .font(.caption).foregroundStyle(.secondary).frame(height: 32, alignment: .topLeading)
             Spacer(minLength: 0)
             Button { Task { await model.startRecording(captureSystemAudio: captureMode == .microphoneAndSystem) } } label: {
-                Label("Начать запись", systemImage: "record.circle").frame(maxWidth: .infinity)
-            }.buttonStyle(WhispActionStyle(prominent: true, tint: WhispPalette.recording))
-            .disabled(!model.canStartRecording)
-            if let reason = model.recordingUnavailableReason {
-                Text(reason).font(.caption).foregroundStyle(.secondary)
+                VStack(spacing: 8) {
+                    Image(systemName: "record.circle").font(.system(size: 34, weight: .light))
+                    Text("Начать запись").font(.callout.weight(.semibold))
+                }
+                .foregroundStyle(.white)
+                .frame(width: 148, height: 148)
+                .glassEffect(.regular.tint(WhispPalette.recording).interactive(), in: .circle)
             }
+            .buttonStyle(.plain)
+            .disabled(!model.canStartRecording)
+            .opacity(model.canStartRecording ? 1 : 0.4)
+            .accessibilityLabel("Начать запись")
         }
-        .frame(height: 400, alignment: .top)
-        .padding(24).frame(maxWidth: .infinity, alignment: .leading).whispContentCard()
+        .padding(28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .whispContentCard()
         .onAppear { model.refreshInputDevices() }
     }
 
     private var importCard: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Image(systemName: "square.and.arrow.down").font(.system(size: 32)).foregroundStyle(WhispPalette.accent)
-                .frame(width: 64, height: 64).background(WhispPalette.accent.opacity(0.08), in: .rect(cornerRadius: 18))
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Импортировать").font(.title2.weight(.semibold))
-                Text("Аудио, видео, фото и текст.").font(.callout).foregroundStyle(.secondary)
+        HStack(alignment: .center, spacing: 24) {
+            WhispIconTile(systemImage: "square.and.arrow.down", size: 48)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Импортировать").font(WhispFont.pageTitle(22))
+                Text("Аудио, видео, фото и текст. Файлы можно перетащить прямо в окно.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text("TXT, Markdown и вставка текста · до 10 фото к лекции")
+                    .font(.caption).foregroundStyle(.tertiary)
             }
-            VStack(alignment: .leading, spacing: 12) {
-                Label("TXT, Markdown и вставка текста", systemImage: "doc.on.doc")
-                Label("До 10 фото к лекции", systemImage: "photo.on.rectangle")
-                Label("Можно перетащить прямо сюда", systemImage: "cursorarrow.and.square.on.square.dashed")
-            }.font(.caption).foregroundStyle(.secondary).frame(height: 98, alignment: .top)
-            Spacer(minLength: 0)
-            Button { showAudioImporter = true } label: {
-                Label(model.isBusy ? "Добавить файлы в очередь…" : "Выбрать файлы…", systemImage: "folder").frame(maxWidth: .infinity)
-            }.buttonStyle(WhispActionStyle()).tint(.primary).controlSize(.large)
-            Button { showImportSetup = true } label: {
-                Label("Вставить текст", systemImage: "text.alignleft").frame(maxWidth: .infinity)
-            }.buttonStyle(WhispActionStyle()).controlSize(.large)
+            Spacer(minLength: 12)
+            VStack(spacing: 8) {
+                Button { showAudioImporter = true } label: {
+                    Label(model.isBusy ? "Добавить в очередь…" : "Выбрать файлы…", systemImage: "folder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(WhispActionStyle())
+                Button { showImportSetup = true } label: {
+                    Label("Вставить текст", systemImage: "text.alignleft")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(WhispActionStyle())
+            }
+            .frame(width: 190)
         }
-        .frame(height: 400, alignment: .top)
-        .padding(24).frame(maxWidth: .infinity, alignment: .leading).whispContentCard()
+        .padding(28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .whispContentCard()
     }
 
 }
@@ -720,8 +733,8 @@ private struct SessionSummaryView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(WhispPalette.accent)
                     Text(session.title)
-                        .font(.title.weight(.bold))
-                        .tracking(-0.5)
+                        .font(WhispFont.pageTitle(28))
+                        .tracking(-0.4)
                         .lineLimit(2)
                 }
 

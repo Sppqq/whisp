@@ -59,9 +59,21 @@ actor WebDAVClient {
             let formatter = DateFormatter()
             formatter.dateFormat = "HH-mm"
             remotePath += " — " + formatter.string(from: lecture.startedAt ?? lecture.createdAt)
+            if try await exists(path: remotePath) {
+                remotePath += " — " + lecture.id.uuidString
+            }
         }
         await onProgress?(CloudUploadProgress(stage: "Подготавливаем папку лекции"))
         try await ensureDirectories(remotePath)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let previousSession: LectureSession?
+        if let data = try? await downloadData(remotePath: remotePath + "/session.json"),
+           let saved = try? decoder.decode(LectureSession.self, from: data), saved.id == lecture.id {
+            previousSession = saved
+        } else {
+            previousSession = nil
+        }
         let lessonName = WhispFormatting.safePathComponent(lecture.title)
         let availableAudio = Set(["Микрофон.m4a", "Системный звук.m4a"].filter {
             FileManager.default.fileExists(atPath: localDirectory.appending(path: $0).path)
@@ -119,10 +131,20 @@ actor WebDAVClient {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let sessionData = try encoder.encode(lecture)
+        var remoteSession = lecture
+        remoteSession.remotePath = remotePath
+        let sessionData = try encoder.encode(remoteSession)
         await onProgress?(CloudUploadProgress(stage: "Сохраняем данные лекции", fileName: "session.json", completedFiles: completedFiles, totalFiles: totalFiles))
         try await atomicUpload(data: sessionData, remotePath: remotePath + "/session.json", expectedETag: lecture.remoteETag)
         await onProgress?(CloudUploadProgress(stage: "Загрузка завершена", completedFiles: totalFiles, totalFiles: totalFiles, isComplete: true))
+        if let previousSession {
+            let oldName = WhispFormatting.safePathComponent(previousSession.title)
+            if oldName != lessonName {
+                for suffix in ["", " — Разбор нейросетью", " — Стенограмма", " — Сырой звук", " — Вопросы к зачёту"] {
+                    _ = try? await delete(path: remotePath + "/" + oldName + suffix + ".md")
+                }
+            }
+        }
         return remotePath
     }
 
@@ -266,6 +288,7 @@ actor WebDAVClient {
 
         var restoredCount = 0
         let existingSessions = try await store.loadAll()
+        var knownSessionIDs = Set(existingSessions.map(\.id))
 
         for folder in lectureFolders {
             let files = filesByFolder[folder] ?? []
@@ -274,7 +297,7 @@ actor WebDAVClient {
             // Check if existing session matches this remote lecture
             let alreadyExists = existingSessions.contains { session in
                 if let remote = session.remotePath, remote == folder { return true }
-                if session.title == folderName { return true }
+                if !files.contains("session.json"), session.title == folderName { return true }
                 return false
             }
 
@@ -289,6 +312,7 @@ actor WebDAVClient {
                     let decoder = JSONDecoder()
                     decoder.dateDecodingStrategy = .iso8601
                     var session = try decoder.decode(LectureSession.self, from: sessionData)
+                    guard !knownSessionIDs.contains(session.id) else { continue }
                     session.remotePath = folder
                     session.remoteETag = try? await remoteETag(path: folder)
                     session.status = .synced
@@ -317,6 +341,7 @@ actor WebDAVClient {
                     }
 
                     try await store.save(session)
+                    knownSessionIDs.insert(session.id)
                     restoredCount += 1
                 } catch {
                     print("Error restoring session.json from \(folder): \(error)")
@@ -408,6 +433,7 @@ actor WebDAVClient {
                     }
 
                     try await store.save(session)
+                    knownSessionIDs.insert(session.id)
                     restoredCount += 1
                 } catch {
                     print("Error reconstructing lecture from \(folder): \(error)")

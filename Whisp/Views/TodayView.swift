@@ -48,7 +48,7 @@ struct TodayView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: WhispMetrics.sectionSpacing) {
                 header
                 summary
                 recentSection
@@ -57,30 +57,25 @@ struct TodayView: View {
                 reviewSection
             }
             .frame(maxWidth: WhispMetrics.contentWidth, alignment: .leading)
-            .padding(.horizontal, 32)
-            .padding(.vertical, 30)
+            .padding(.horizontal, WhispMetrics.pagePadding)
+            .padding(.vertical, WhispMetrics.pagePadding)
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .background(WhispPalette.canvas)
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Сегодня")
-                    .font(.largeTitle.weight(.semibold))
-                Text(Date().formatted(
-                    Date.FormatStyle()
-                        .weekday(.wide)
-                        .day()
-                        .month(.wide)
-                        .locale(Locale(identifier: "ru_RU"))
-                ))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
+        WhispPageHeader(
+            eyebrow: Date().formatted(
+                Date.FormatStyle()
+                    .weekday(.wide)
+                    .day()
+                    .month(.wide)
+                    .locale(Locale(identifier: "ru_RU"))
+            ),
+            title: "Сегодня",
+            subtitle: "Занятия, задания и то, что пора повторить."
+        )
     }
 
     private var summary: some View {
@@ -89,7 +84,7 @@ struct TodayView: View {
             Divider().frame(height: 38)
             summaryCard(value: tasks.filter { !$0.isCompleted }.count, title: "Задания", icon: "checklist", color: WhispPalette.warning)
             Divider().frame(height: 38)
-            summaryCard(value: reviewSessions.count, title: "Повторение", icon: "clock.arrow.circlepath", color: .purple)
+            summaryCard(value: reviewSessions.count, title: "Повторение", icon: "clock.arrow.circlepath", color: WhispPalette.brand)
         }
         .padding(.vertical, 8).whispContentCard()
     }
@@ -331,7 +326,7 @@ struct TodayView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 11) {
-            Text(title).font(.headline)
+            WhispSectionLabel(title: title, systemImage: icon)
             VStack(spacing: 8) {
                 content()
             }
