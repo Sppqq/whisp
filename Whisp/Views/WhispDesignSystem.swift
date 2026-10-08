@@ -1,27 +1,18 @@
 import SwiftUI
 import AppKit
 
-/// Native macOS visual language for Whisp (macOS 27 direction).
-///
-/// Whisp is a study companion, not a recorder: the interface is a quiet
-/// reading surface with a floating Liquid Glass layer for navigation and
-/// actions. Long-form lecture text stays on a calm content layer so the
-/// material remains legible instead of becoming a wall of reflections.
+/// Native macOS visual language for Whisp, following Apple's Human Interface
+/// Guidelines for macOS 26/27 (Liquid Glass).
 ///
 /// Rules of the system:
-/// - one brand accent (`brand`), used for selection, the primary action and
-///   emphasis; state colors (recording, warning, success) stay separate;
-/// - glass is for navigation and controls, flat quiet fills are for content;
-/// - radii are concentric: an inner shape uses its container radius minus padding;
-/// - page titles use the editorial serif, everything functional uses SF.
+/// - prefer standard components (sidebar `List`, toolbar, `.searchable`,
+///   `.glass` / `.glassProminent` buttons) so the system draws Liquid Glass;
+/// - glass belongs to navigation and controls, never to lecture text;
+/// - the accent is the user's system accent color; state colors (recording,
+///   warning, success) are separate and used only for state;
+/// - all text uses SF; no custom fonts, eyebrows or decorative tints.
 enum WhispPalette {
-    /// Warm coral from the Whisp identity; adapts to the appearance.
-    static let brand = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 1.00, green: 0.43, blue: 0.36, alpha: 1)
-            : NSColor(srgbRed: 0.90, green: 0.36, blue: 0.30, alpha: 1)
-    })
-    static let accent = brand
+    static let accent = Color.accentColor
     static let recording = Color.red
     static let warning = Color.orange
     static let success = Color.green
@@ -37,25 +28,17 @@ enum WhispPalette {
 }
 
 enum WhispMetrics {
-    static let compactCornerRadius: CGFloat = 12
-    static let controlCornerRadius: CGFloat = 16
-    static let surfaceCornerRadius: CGFloat = 22
-    static let contentWidth: CGFloat = 780
-    static let pagePadding: CGFloat = 36
-    static let sectionSpacing: CGFloat = 28
+    static let compactCornerRadius: CGFloat = 10
+    static let controlCornerRadius: CGFloat = 14
+    static let surfaceCornerRadius: CGFloat = 18
+    static let contentWidth: CGFloat = 760
+    static let pagePadding: CGFloat = 32
+    static let sectionSpacing: CGFloat = 24
     static let glassFieldHeight: CGFloat = 34
-    static let windowMinWidth: CGFloat = 960
+    static let windowMinWidth: CGFloat = 1_080
     static let windowMinHeight: CGFloat = 720
     static let settingsMinWidth: CGFloat = 980
     static let settingsMinHeight: CGFloat = 700
-}
-
-enum WhispFont {
-    /// Editorial serif for page and lecture titles.
-    static func pageTitle(_ size: CGFloat = 32) -> Font {
-        .system(size: size, weight: .semibold, design: .serif)
-    }
-    static let sectionLabel = Font.system(size: 12, weight: .semibold)
 }
 
 enum WhispMotion {
@@ -284,6 +267,8 @@ struct WhispActionStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(prominent ? Color.white : Color.primary)
             .padding(.horizontal, 14)
             .frame(height: 34)
@@ -293,127 +278,34 @@ struct WhispActionStyle: ButtonStyle {
 }
 
 
-/// Large editorial page header: optional eyebrow, serif title, subtitle and trailing actions.
-struct WhispPageHeader<Trailing: View>: View {
-    var eyebrow: String?
+/// Page header for dashboard-style screens: SF large title and a secondary line.
+struct WhispPageHeader: View {
     let title: String
     var subtitle: String?
-    private let trailing: Trailing
-
-    init(
-        eyebrow: String? = nil,
-        title: String,
-        subtitle: String? = nil,
-        @ViewBuilder trailing: () -> Trailing
-    ) {
-        self.eyebrow = eyebrow
-        self.title = title
-        self.subtitle = subtitle
-        self.trailing = trailing()
-    }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                if let eyebrow {
-                    Text(eyebrow.uppercased())
-                        .font(WhispFont.sectionLabel)
-                        .tracking(0.8)
-                        .foregroundStyle(WhispPalette.brand)
-                }
-                Text(title)
-                    .font(WhispFont.pageTitle())
-                    .tracking(-0.4)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.largeTitle.weight(.bold))
+            if let subtitle {
+                Text(subtitle)
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 12)
-            trailing
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 
-extension WhispPageHeader where Trailing == EmptyView {
-    init(eyebrow: String? = nil, title: String, subtitle: String? = nil) {
-        self.init(eyebrow: eyebrow, title: title, subtitle: subtitle) { EmptyView() }
-    }
-}
-
-/// Small caps-style label above a group of content.
+/// Section title in the style of System Settings and Reminders.
 struct WhispSectionLabel: View {
     let title: String
-    var systemImage: String?
-    var trailing: String?
 
     var body: some View {
-        HStack(spacing: 6) {
-            if let systemImage {
-                Image(systemName: systemImage).foregroundStyle(.secondary)
-            }
-            Text(title)
-            Spacer(minLength: 8)
-            if let trailing {
-                Text(trailing).monospacedDigit().foregroundStyle(.tertiary)
-            }
-        }
-        .font(WhispFont.sectionLabel)
-        .foregroundStyle(.secondary)
-        .textCase(.uppercase)
-        .tracking(0.6)
-    }
-}
-
-/// Rounded-square icon tile used for entry points and list leading icons.
-struct WhispIconTile: View {
-    let systemImage: String
-    var tint: Color = WhispPalette.brand
-    var size: CGFloat = 44
-
-    var body: some View {
-        Image(systemName: systemImage)
-            .font(.system(size: size * 0.42, weight: .medium))
-            .foregroundStyle(tint)
-            .frame(width: size, height: size)
-            .background(tint.opacity(0.12), in: .rect(cornerRadius: size * 0.32, style: .continuous))
-    }
-}
-
-/// Sidebar destination row (Today, New lecture). Selection uses the brand tint.
-struct WhispDestinationRow: View {
-    let title: String
-    let systemImage: String
-    var badge: Int?
-    var isSelected: Bool
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .medium))
-                .frame(width: 20)
-                .foregroundStyle(isSelected ? WhispPalette.brand : .secondary)
-            Text(title)
-                .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
-            Spacer(minLength: 4)
-            if let badge, badge > 0 {
-                Text("\(badge)")
-                    .font(.caption2.monospacedDigit().weight(.semibold))
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(WhispPalette.brand.opacity(0.15), in: .capsule)
-                    .foregroundStyle(WhispPalette.brand)
-            }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 38)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            if isSelected {
-                RoundedRectangle(cornerRadius: WhispMetrics.compactCornerRadius, style: .continuous)
-                    .fill(WhispPalette.brand.opacity(0.12))
-            }
-        }
-        .contentShape(.rect(cornerRadius: WhispMetrics.compactCornerRadius))
+        Text(title)
+            .font(.title3.weight(.semibold))
+            .accessibilityAddTraits(.isHeader)
     }
 }

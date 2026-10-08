@@ -5,60 +5,76 @@ struct MainView: View {
     @Bindable var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isInspectorPresented = false
-    @State private var selectedSubject = "Все"
+    @State private var scope: LibraryScope? = .all
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     private var navigationContent: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            LibrarySidebar(model: model, selectedSubject: $selectedSubject)
-                .navigationSplitViewColumnWidth(min: 280, ideal: 310, max: 360)
+            LibrarySidebar(model: model, scope: $scope)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
+        } content: {
+            LibraryBrowser(model: model, scope: $scope)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 310, max: 420)
         } detail: {
             ZStack {
-                WhispPalette.canvas.ignoresSafeArea()
                 detail
-                    .frame(minWidth: 600, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
                     .id(detailAnimationID)
                     .transition(.opacity)
                 updateProgressOverlay
             }
             .animation(reduceMotion ? nil : WhispMotion.navigation, value: detailAnimationID)
-            .navigationTitle("Whisp")
+            .navigationTitle(detailTitle)
+            .toolbar {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if model.activeAnalysisSessionID != nil || !model.queuedAnalysisSessionIDs.isEmpty {
+                        NoteQueueToolbarButton(model: model)
+                    }
+                    Button {
+                        model.showStartScreen()
+                    } label: {
+                        Label("Новая лекция", systemImage: "plus")
+                    }
+                    .help("Новая лекция или импорт (⌘N)")
+                    .keyboardShortcut("n", modifiers: .command)
+                    .disabled(model.isRecording)
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        withAnimation(reduceMotion ? nil : WhispMotion.control) {
+                            isInspectorPresented.toggle()
+                        }
+                    } label: {
+                        Label(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор", systemImage: "sidebar.trailing")
+                    }
+                    .help(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
+                    .disabled(model.displayedSession == nil)
+                }
+            }
         }
-        .navigationSplitViewStyle(.balanced)
-        .tint(WhispPalette.accent)
         .inspector(isPresented: $isInspectorPresented) {
             SessionInspectorView(model: model)
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 340)
         }
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    model.showStartScreen()
-                } label: {
-                    Label("Новая лекция", systemImage: "plus")
-                }
-                .help("Новая лекция или импорт")
-                .accessibilityLabel("Новая лекция или импорт")
-                .keyboardShortcut("n", modifiers: .command)
-                .disabled(model.isRecording)
-
-                Button {
-                    withAnimation(reduceMotion ? nil : WhispMotion.control) {
-                        isInspectorPresented.toggle()
-                    }
-                } label: {
-                    Image(systemName: "sidebar.trailing")
-                }
-                .labelStyle(.iconOnly)
-                .foregroundStyle(isInspectorPresented ? WhispPalette.accent : .secondary)
-                .help(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
-                .accessibilityLabel(isInspectorPresented ? "Скрыть инспектор" : "Показать инспектор")
-                .disabled(model.displayedSession == nil)
+        .onAppear { if model.showsToday { scope = .today } }
+        .onChange(of: scope) { _, scope in
+            switch scope {
+            case .today:
+                if !model.showsToday { model.showTodayDashboard() }
+            case .all, .subject:
+                if model.showsToday { model.selectSession(nil) }
+            case nil:
+                break
             }
         }
+        .onChange(of: model.showsToday) { _, showsToday in
+            if showsToday { scope = .today } else if scope == .today { scope = .all }
+        }
         .onChange(of: model.selectedSessionID) { _, id in
-            if let id, let session = model.sessions.first(where: { $0.id == id }), selectedSubject != "Все", session.subject != selectedSubject {
-                selectedSubject = "Все"
+            if case .subject(let subject) = scope,
+               let id, let session = model.sessions.first(where: { $0.id == id }),
+               session.subject != subject {
+                scope = .all
             }
         }
         .onChange(of: model.currentSession?.status) { _, status in
@@ -66,6 +82,15 @@ struct MainView: View {
                 model.showsLibrary = true
             }
         }
+    }
+
+    private var detailTitle: String {
+        if model.showsToday { return "Сегодня" }
+        if model.isRecording { return "Запись" }
+        if let session = model.currentSession ?? model.displayedSession {
+            return WhispFormatting.displayTitle(session.title)
+        }
+        return model.showsLibrary ? "Whisp" : "Новая лекция"
     }
 
     private var recordingAlerts: some View {
@@ -566,33 +591,16 @@ private struct StartView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: WhispMetrics.sectionSpacing) {
-                WhispPageHeader(
-                    eyebrow: "Захват",
-                    title: "Новая лекция",
-                    subtitle: "Запишите занятие или добавьте готовые материалы."
-                )
-                if model.isBusy {
-                    Label(model.statusMessage, systemImage: "hourglass")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
+            VStack(spacing: 36) {
                 recordingCard
                 importCard
-                HStack(spacing: 10) {
-                    Label("Запись", systemImage: "waveform")
-                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-                    Label("Конспект", systemImage: "doc.text")
-                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-                    Label("Повторение", systemImage: "graduationcap")
-                    Spacer()
-                    Text("Материалы хранятся на этом Mac")
-                        .font(.caption).foregroundStyle(.tertiary)
-                }
-                .font(.callout).foregroundStyle(.secondary)
             }
-            .frame(maxWidth: WhispMetrics.contentWidth, alignment: .leading).padding(WhispMetrics.pagePadding)
-            .frame(maxWidth: .infinity, alignment: .top)
+            .frame(maxWidth: 520)
+            .padding(.horizontal, WhispMetrics.pagePadding)
+            .padding(.vertical, 56)
+            .frame(maxWidth: .infinity)
         }
+        .scrollBounceBehavior(.basedOnSize)
         .dropDestination(for: URL.self) { urls, _ in
             let audio = urls.filter { LectureImportContent.isMedia($0) }
             let images = urls.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true }
@@ -646,78 +654,85 @@ private struct StartView: View {
         }
     }
     private var recordingCard: some View {
-        HStack(alignment: .center, spacing: 28) {
-            VStack(alignment: .leading, spacing: 16) {
-                WhispIconTile(systemImage: "mic.fill", tint: WhispPalette.recording, size: 48)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Записать лекцию").font(WhispFont.pageTitle(22))
-                    Text("Для занятия в аудитории или онлайн.").font(.callout).foregroundStyle(.secondary)
-                }
-                Picker("Микрофон", selection: $model.selectedMicrophoneID) {
-                    Text("Системный по умолчанию").tag(UInt32?.none)
-                    ForEach(model.inputDevices) { Text($0.name).tag(Optional($0.id)) }
-                }
-                .frame(maxWidth: 320, alignment: .leading)
-                WhispGlassSegment(
-                    selection: $captureMode,
-                    options: CaptureMode.allCases.map { (value: $0, title: $0.rawValue, icon: Optional($0.icon)) }
-                )
-                .frame(maxWidth: 320)
-                Text(captureMode == .microphone ? "Записывается звук с микрофона." : "Микрофон и звук приложений сохранятся отдельно.")
-                    .font(.caption).foregroundStyle(.secondary)
-                if let reason = model.recordingUnavailableReason {
-                    Text(reason).font(.caption).foregroundStyle(.secondary)
-                }
+        VStack(spacing: 18) {
+            Button {
+                Task { await model.startRecording(captureSystemAudio: captureMode == .microphoneAndSystem) }
+            } label: {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 30, weight: .semibold))
+                    .frame(width: 76, height: 76)
             }
-            Spacer(minLength: 0)
-            Button { Task { await model.startRecording(captureSystemAudio: captureMode == .microphoneAndSystem) } } label: {
-                VStack(spacing: 8) {
-                    Image(systemName: "record.circle").font(.system(size: 34, weight: .light))
-                    Text("Начать запись").font(.callout.weight(.semibold))
-                }
-                .foregroundStyle(.white)
-                .frame(width: 148, height: 148)
-                .glassEffect(.regular.tint(WhispPalette.recording).interactive(), in: .circle)
-            }
-            .buttonStyle(.plain)
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.circle)
+            .tint(WhispPalette.recording)
             .disabled(!model.canStartRecording)
-            .opacity(model.canStartRecording ? 1 : 0.4)
+            .help("Начать запись")
             .accessibilityLabel("Начать запись")
+
+            VStack(spacing: 4) {
+                Text("Записать лекцию")
+                    .font(.title2.weight(.semibold))
+                Text(model.recordingUnavailableReason ?? "Для занятия в аудитории или онлайн.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                GridRow {
+                    Text("Микрофон:")
+                        .gridColumnAlignment(.trailing)
+                    Picker("Микрофон", selection: $model.selectedMicrophoneID) {
+                        Text("Системный по умолчанию").tag(UInt32?.none)
+                        ForEach(model.inputDevices) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 260)
+                }
+                GridRow {
+                    Text("Источник:")
+                    Picker("Источник", selection: $captureMode) {
+                        ForEach(CaptureMode.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                GridRow {
+                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                    Text(captureMode == .microphone ? "Записывается только микрофон." : "Микрофон и звук приложений сохранятся отдельно.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 6)
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .whispContentCard()
+        .frame(maxWidth: .infinity)
         .onAppear { model.refreshInputDevices() }
     }
 
     private var importCard: some View {
-        HStack(alignment: .center, spacing: 24) {
-            WhispIconTile(systemImage: "square.and.arrow.down", size: 48)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Импортировать").font(WhispFont.pageTitle(22))
-                Text("Аудио, видео, фото и текст. Файлы можно перетащить прямо в окно.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Text("TXT, Markdown и вставка текста · до 10 фото к лекции")
-                    .font(.caption).foregroundStyle(.tertiary)
-            }
-            Spacer(minLength: 12)
-            VStack(spacing: 8) {
+        VStack(spacing: 14) {
+            Divider()
+                .padding(.bottom, 14)
+            Text("Импортировать материалы")
+                .font(.headline)
+            Text("Аудио, видео, до 10 фото, TXT или Markdown. Файлы можно перетащить прямо в окно.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 10) {
                 Button { showAudioImporter = true } label: {
                     Label(model.isBusy ? "Добавить в очередь…" : "Выбрать файлы…", systemImage: "folder")
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(WhispActionStyle())
                 Button { showImportSetup = true } label: {
-                    Label("Вставить текст", systemImage: "text.alignleft")
-                        .frame(maxWidth: .infinity)
+                    Label("Вставить текст…", systemImage: "text.alignleft")
                 }
-                .buttonStyle(WhispActionStyle())
             }
-            .frame(width: 190)
+            .buttonStyle(.glass)
+            .controlSize(.large)
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .whispContentCard()
+        .frame(maxWidth: .infinity)
     }
 
 }
@@ -733,8 +748,7 @@ private struct SessionSummaryView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(WhispPalette.accent)
                     Text(session.title)
-                        .font(WhispFont.pageTitle(28))
-                        .tracking(-0.4)
+                        .font(.title.weight(.bold))
                         .lineLimit(2)
                 }
 
@@ -750,11 +764,10 @@ private struct SessionSummaryView: View {
                 .padding(.vertical, 7)
                 .whispQuietSurface(cornerRadius: WhispMetrics.compactCornerRadius)
             }
-            .padding(24)
+            .padding(.horizontal, 28)
+            .padding(.top, 24)
+            .padding(.bottom, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.surfaceCornerRadius))
-            .padding(.horizontal, 18)
-            .padding(.top, 18)
 
             if session.notesMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ContentUnavailableView(

@@ -66,15 +66,14 @@ struct TodayView: View {
 
     private var header: some View {
         WhispPageHeader(
-            eyebrow: Date().formatted(
+            title: "Сегодня",
+            subtitle: Date().formatted(
                 Date.FormatStyle()
                     .weekday(.wide)
                     .day()
                     .month(.wide)
                     .locale(Locale(identifier: "ru_RU"))
-            ),
-            title: "Сегодня",
-            subtitle: "Занятия, задания и то, что пора повторить."
+            )
         )
     }
 
@@ -84,7 +83,7 @@ struct TodayView: View {
             Divider().frame(height: 38)
             summaryCard(value: tasks.filter { !$0.isCompleted }.count, title: "Задания", icon: "checklist", color: WhispPalette.warning)
             Divider().frame(height: 38)
-            summaryCard(value: reviewSessions.count, title: "Повторение", icon: "clock.arrow.circlepath", color: WhispPalette.brand)
+            summaryCard(value: reviewSessions.count, title: "Повторение", icon: "clock.arrow.circlepath", color: .purple)
         }
         .padding(.vertical, 8).whispContentCard()
     }
@@ -326,7 +325,7 @@ struct TodayView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 11) {
-            WhispSectionLabel(title: title, systemImage: icon)
+            WhispSectionLabel(title: title)
             VStack(spacing: 8) {
                 content()
             }

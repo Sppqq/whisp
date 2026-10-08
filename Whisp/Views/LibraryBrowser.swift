@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Search, subject filtering and lectures share one sidebar.
+/// Content column: the lectures of the selected sidebar scope, searchable from the toolbar.
 struct LibraryBrowser: View {
     @Bindable var model: AppModel
-    @Binding var selectedSubject: String
+    @Binding var scope: LibraryScope?
     @State private var searchText = ""
     @State private var matchingIDs: Set<UUID> = []
     @State private var showDeleteConfirmation = false
@@ -11,46 +11,23 @@ struct LibraryBrowser: View {
 
     private var sessions: [LectureSession] {
         model.sessions.filter {
-            (selectedSubject == "Все" || $0.subject == selectedSubject)
+            (selectedSubject == nil || $0.subject == selectedSubject)
             && (searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || matchingIDs.contains($0.id))
         }
     }
 
+    private var selectedSubject: String? {
+        if case .subject(let subject) = scope { return subject }
+        return nil
+    }
+
+    private var title: String {
+        if case .today = scope { return "Недавние" }
+        return selectedSubject ?? "Все лекции"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Menu {
-                        Button("Все предметы") { selectedSubject = "Все" }
-                        Divider()
-                        ForEach(Array(Set(model.sessions.map(\.subject))).sorted(), id: \.self) { subject in
-                            Button(subject) { selectedSubject = subject }
-                        }
-                    } label: {
-                        Text(selectedSubject == "Все" ? "Все лекции" : selectedSubject)
-                            .font(.headline).lineLimit(1)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel("Фильтр по предмету")
-                    Spacer(minLength: 8)
-                    if selectedSubject != "Все" {
-                        Text("\(sessions.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                    }
-                }
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Поиск по лекциям", text: $searchText).textFieldStyle(.plain)
-                        .accessibilityLabel("Поиск по лекциям")
-                    if !searchText.isEmpty {
-                        Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
-                            .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Очистить поиск")
-                    }
-                }
-                .font(.callout).padding(.horizontal, 12).frame(height: 34)
-                .glassEffect(.regular, in: .capsule)
-            }
-            .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 10)
             List(selection: Binding(get: { model.showsLibrary ? model.selectedSessionID : nil }, set: { model.selectSession($0) })) {
                 ForEach(sessions) { session in
                     LectureRow(session: session, query: searchText, isSelected: model.showsLibrary && model.selectedSessionID == session.id)
@@ -69,7 +46,7 @@ struct LibraryBrowser: View {
                         }
                 }
             }
-            .listStyle(.sidebar).scrollContentBackground(.hidden)
+            .listStyle(.inset)
             .overlay {
                 if sessions.isEmpty {
                     ContentUnavailableView {
@@ -79,7 +56,7 @@ struct LibraryBrowser: View {
                     } actions: {
                         Button(searchText.isEmpty ? "Новая лекция" : "Сбросить поиск") {
                             if searchText.isEmpty { model.showStartScreen() }
-                            else { searchText = ""; selectedSubject = "Все" }
+                            else { searchText = ""; scope = .all }
                         }.buttonStyle(WhispActionStyle())
                         if model.sessions.isEmpty {
                             Button("Загрузить из WebDAV") { Task { await model.restoreFromWebDAV() } }
@@ -89,7 +66,10 @@ struct LibraryBrowser: View {
                 }
             }
         }
-        .background(.clear)
+        .navigationTitle(title)
+        .navigationSubtitle("Лекций: \(sessions.count)")
+        .searchable(text: $searchText, placement: .toolbar, prompt: "Поиск по лекциям")
+        .disabled(model.isRecording)
         .task(id: "\(searchText)|\(model.librarySearchVersion)") {
             guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             do { try await Task.sleep(for: .milliseconds(180)) } catch { return }

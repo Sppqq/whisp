@@ -1,113 +1,113 @@
 import SwiftUI
 
+/// What the content column lists. Mirrors the mailbox/folder model of Mail and Notes.
+enum LibraryScope: Hashable {
+    case today
+    case all
+    case subject(String)
+}
+
+/// Native source-list sidebar: destinations on top, subjects as folders below.
 struct LibrarySidebar: View {
     @Bindable var model: AppModel
-    @Binding var selectedSubject: String
-    @State private var showNoteQueue = false
+    @Binding var scope: LibraryScope?
+
+    private var subjects: [(name: String, count: Int)] {
+        Dictionary(grouping: model.sessions, by: \.subject)
+            .map { (name: $0.key, count: $0.value.count) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 2) {
-                Button { model.showTodayDashboard() } label: {
-                    WhispDestinationRow(title: "Сегодня", systemImage: "sun.max", isSelected: model.showsToday)
-                }
-                .buttonStyle(.plain)
-                Button { model.showStartScreen() } label: {
-                    WhispDestinationRow(
-                        title: "Новая лекция",
-                        systemImage: "waveform.badge.plus",
-                        isSelected: !model.showsToday && !model.showsLibrary && !model.isRecording
-                    )
-                }
-                .buttonStyle(.plain)
-                .help("Новая запись или импорт · ⌘N")
+        List(selection: $scope) {
+            Section {
+                Label("Сегодня", systemImage: "sun.max")
+                    .tag(LibraryScope.today)
+                Label("Все лекции", systemImage: "books.vertical")
+                    .badge(model.sessions.count)
+                    .tag(LibraryScope.all)
             }
-            .disabled(model.isRecording)
-            .padding(.horizontal, 10)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
-
-            WhispSectionLabel(title: "Библиотека", systemImage: "books.vertical", trailing: "\(model.sessions.count)")
-                .padding(.horizontal, 22)
-                .padding(.top, 10)
-
-            LibraryBrowser(model: model, selectedSubject: $selectedSubject)
-                .disabled(model.isRecording)
-            if hasNoteQueue {
-                Button { showNoteQueue = true } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label("Очередь конспектов · \(model.queuedAnalysisSessionIDs.count)", systemImage: "text.badge.plus")
-                            .font(.callout.weight(.semibold))
-                        if let id = model.activeAnalysisSessionID,
-                           let session = model.sessions.first(where: { $0.id == id }) {
-                            Text("Генерируется: \(WhispFormatting.displayTitle(session.title))")
-                                .font(.caption).lineLimit(2)
-                        }
-                        Text(model.queuedAnalysisSessionIDs.isEmpty ? "Нет ожидающих лекций" : "Ожидают генерации: \(model.queuedAnalysisSessionIDs.count)")
-                            .font(.caption).foregroundStyle(.secondary)
+            if !subjects.isEmpty {
+                Section("Предметы") {
+                    ForEach(subjects, id: \.name) { subject in
+                        Label(subject.name, systemImage: "folder")
+                            .badge(subject.count)
+                            .tag(LibraryScope.subject(subject.name))
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .whispContentCard(cornerRadius: WhispMetrics.controlCornerRadius)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 12).padding(.vertical, 8)
-            }
-            if model.isRestoringFromWebDAV {
-                ProgressView(model.statusMessage).font(.caption).padding(12)
-            }
-            HStack(spacing: 16) {
-                SettingsLink { Label("Настройки", systemImage: "gearshape") }
-                    .buttonStyle(.plain)
-                Spacer()
-                if hasNoteQueue {
-                    Button { showNoteQueue = true } label: {
-                        Label("Очередь · \(model.queuedAnalysisSessionIDs.count)", systemImage: "text.badge.plus")
-                    }
-                    .buttonStyle(.plain)
-                    .popover(isPresented: $showNoteQueue) { noteQueuePanel }
                 }
             }
-            .font(.callout).foregroundStyle(.secondary)
-            .padding(.horizontal, 16).padding(.vertical, 12)
-            .glassEffect(.regular, in: .rect(cornerRadius: WhispMetrics.controlCornerRadius))
-            .padding(10)
         }
-        .navigationTitle("Whisp")
-        .onChange(of: hasNoteQueue) { _, hasQueue in
-            if !hasQueue { showNoteQueue = false }
+        .listStyle(.sidebar)
+        .disabled(model.isRecording)
+        .safeAreaInset(edge: .bottom) {
+            if model.isRestoringFromWebDAV {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(model.statusMessage).lineLimit(2)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+/// Toolbar item for the note-generation queue. Hidden when the queue is empty.
+struct NoteQueueToolbarButton: View {
+    @Bindable var model: AppModel
+    @State private var isPresented = false
+
+    var body: some View {
+        Button { isPresented.toggle() } label: {
+            Label("Очередь конспектов", systemImage: "text.badge.plus")
+        }
+        .badge(model.queuedAnalysisSessionIDs.count + (model.activeAnalysisSessionID == nil ? 0 : 1))
+        .help("Очередь конспектов")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) { panel }
+        .onChange(of: hasQueue) { _, hasQueue in
+            if !hasQueue { isPresented = false }
         }
     }
 
-    private var hasNoteQueue: Bool {
+    private var hasQueue: Bool {
         model.activeAnalysisSessionID != nil || !model.queuedAnalysisSessionIDs.isEmpty
     }
 
-    private var noteQueuePanel: some View {
+    private var panel: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Очередь конспектов").font(.headline)
             if let id = model.activeAnalysisSessionID,
                let session = model.sessions.first(where: { $0.id == id }) {
-                Label("Генерируется: \(session.title)", systemImage: "sparkles")
-                    .font(.caption)
-                Text(model.statusMessage).font(.caption2).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(WhispFormatting.displayTitle(session.title), systemImage: "sparkles")
+                        .font(.callout.weight(.medium))
+                    Text(model.statusMessage).font(.caption).foregroundStyle(.secondary)
+                }
             }
-            ForEach(model.queuedAnalysisSessionIDs, id: \.self) { id in
-                if let session = model.sessions.first(where: { $0.id == id }) {
-                    HStack {
-                        Text(WhispFormatting.displayTitle(session.title)).font(.caption).lineLimit(2)
-                        Spacer()
-                        Button { model.removeQueuedAnalysis(for: id) } label: { Image(systemName: "xmark.circle") }
-                            .buttonStyle(.plain)
+            if model.queuedAnalysisSessionIDs.isEmpty {
+                Text("Нет ожидающих лекций").font(.callout).foregroundStyle(.secondary)
+            } else {
+                Text("Ожидают генерации").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(model.queuedAnalysisSessionIDs, id: \.self) { id in
+                    if let session = model.sessions.first(where: { $0.id == id }) {
+                        HStack {
+                            Text(WhispFormatting.displayTitle(session.title)).font(.callout).lineLimit(2)
+                            Spacer()
+                            Button { model.removeQueuedAnalysis(for: id) } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
                             .help("Убрать из очереди")
+                            .accessibilityLabel("Убрать из очереди")
+                        }
                     }
                 }
             }
-
         }
-        .padding(18)
-        .frame(width: 390)
+        .padding(16)
+        .frame(width: 340)
     }
-
 }
