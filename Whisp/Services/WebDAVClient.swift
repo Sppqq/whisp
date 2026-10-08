@@ -122,8 +122,13 @@ actor WebDAVClient {
         }
 
         for name in mediaFiles {
+            var fileURL = localDirectory.appending(path: name)
+            if CloudAudioCompressor.compressibleFileNames.contains(name) {
+                await onProgress?(CloudUploadProgress(stage: "Сжимаем аудио для облака", fileName: name, completedFiles: completedFiles, totalFiles: totalFiles))
+                fileURL = await CloudAudioCompressor.shared.cloudCopy(of: fileURL, lectureDirectory: localDirectory)
+            }
             await onProgress?(CloudUploadProgress(stage: "Загружаем аудио и фото", fileName: name, completedFiles: completedFiles, totalFiles: totalFiles))
-            try await atomicUpload(fileURL: localDirectory.appending(path: name), remotePath: remotePath + "/" + name)
+            try await atomicUpload(fileURL: fileURL, remotePath: remotePath + "/" + name)
             completedFiles += 1
             await onProgress?(CloudUploadProgress(stage: "Загружаем аудио и фото", completedFiles: completedFiles, totalFiles: totalFiles))
         }

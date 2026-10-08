@@ -111,3 +111,66 @@ struct NoteQueueToolbarButton: View {
         .frame(width: 340)
     }
 }
+
+/// Toolbar item for the cloud upload queue. Hidden when nothing is queued.
+struct SyncQueueToolbarButton: View {
+    @Bindable var model: AppModel
+    @State private var isPresented = false
+
+    var body: some View {
+        Button { isPresented.toggle() } label: {
+            Label("Очередь синхронизации", systemImage: "icloud.and.arrow.up")
+        }
+        .badge(model.syncQueueSessionIDs.count + (model.syncingSessionID == nil ? 0 : 1))
+        .help("Очередь синхронизации")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) { panel }
+        .onChange(of: model.hasSyncQueue) { _, hasQueue in
+            if !hasQueue { isPresented = false }
+        }
+    }
+
+    private func title(for id: UUID) -> String {
+        model.sessions.first(where: { $0.id == id }).map { WhispFormatting.displayTitle($0.title) } ?? "Лекция"
+    }
+
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Очередь синхронизации").font(.headline)
+            if let id = model.syncingSessionID {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(title(for: id), systemImage: "icloud.and.arrow.up")
+                        .font(.callout.weight(.medium))
+                        .lineLimit(2)
+                    if model.cloudUploadSessionID == id, let progress = model.cloudUploadProgress {
+                        if progress.totalFiles > 0 {
+                            ProgressView(value: Double(progress.completedFiles), total: Double(progress.totalFiles))
+                        } else {
+                            ProgressView().progressViewStyle(.linear)
+                        }
+                        Text(progress.stage).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if model.syncQueueSessionIDs.isEmpty {
+                Text("Других лекций в очереди нет").font(.callout).foregroundStyle(.secondary)
+            } else {
+                Text("Ожидают загрузки").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(model.syncQueueSessionIDs, id: \.self) { id in
+                    HStack {
+                        Text(title(for: id)).font(.callout).lineLimit(2)
+                        Spacer()
+                        Button { model.removeQueuedSync(for: id) } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Убрать из очереди")
+                        .accessibilityLabel("Убрать из очереди")
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+    }
+}

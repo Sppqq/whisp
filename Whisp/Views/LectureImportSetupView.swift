@@ -15,12 +15,21 @@ struct LectureImportSetupView: View {
     @State private var combinesAudio = true
     @State private var errorMessage: String?
     @State private var isLoadingPhotos = false
+    @State private var dateMode: DateMode = .automatic
+    @State private var customDate = Date()
+    @State private var dateSuggestion: LectureDateSuggestion?
+
+    private enum DateMode: Hashable {
+        case automatic, now, custom
+    }
 
     let isAttachment: Bool
     let existingImageCount: Int
     private var photoLimit: Int { max(0, 10 - existingImageCount) }
 
-    let onImport: ([URL], [URL], Bool, String, [URL]) -> Void
+    /// Schedule from Settings; when set, the sheet offers a lecture date.
+    let lessonSchedule: [LessonScheduleEntry]?
+    let onImport: ([URL], [URL], Bool, String, [URL], LectureDateChoice) -> Void
 
     init(
         initialAudioURLs: [URL],
@@ -35,7 +44,118 @@ struct LectureImportSetupView: View {
         _textURLs = State(initialValue: initialTextURLs)
         self.isAttachment = isAttachment
         self.existingImageCount = existingImageCount
+        self.lessonSchedule = nil
+        self.onImport = { audio, images, combine, text, texts, _ in onImport(audio, images, combine, text, texts) }
+    }
+
+    /// New lecture import with a lecture date chosen in the sheet.
+    init(
+        initialAudioURLs: [URL],
+        initialImageURLs: [URL] = [],
+        initialTextURLs: [URL] = [],
+        lessonSchedule: [LessonScheduleEntry],
+        onImport: @escaping ([URL], [URL], Bool, String, [URL], LectureDateChoice) -> Void
+    ) {
+        _audioURLs = State(initialValue: initialAudioURLs)
+        _imageURLs = State(initialValue: initialImageURLs)
+        _textURLs = State(initialValue: initialTextURLs)
+        self.isAttachment = false
+        self.existingImageCount = 0
+        self.lessonSchedule = lessonSchedule
         self.onImport = onImport
+    }
+
+    private var dateChoice: LectureDateChoice {
+        switch dateMode {
+        case .automatic: .automatic
+        case .now: .now
+        case .custom: .custom(customDate)
+        }
+    }
+
+    private var separateLessons: Bool { audioURLs.count > 1 && !combinesAudio }
+
+    @ViewBuilder private var dateSection: some View {
+        if let lessonSchedule, !isAttachment {
+            GroupBox("Дата лекции") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Дата лекции", selection: $dateMode) {
+                        Text("Автоматически").tag(DateMode.automatic)
+                        Text("Сейчас").tag(DateMode.now)
+                        Text("Другая").tag(DateMode.custom)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+
+                    switch dateMode {
+                    case .automatic:
+                        if let dateSuggestion {
+                            Label {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Похоже, лекция была \(Self.describe(dateSuggestion))")
+                                        .font(.callout.weight(.medium))
+                                    Text(dateSuggestion.source == .recordingDate
+                                         ? "Определено по дате записи файла\(dateSuggestion.subject == nil ? "" : " и расписанию")."
+                                         : "Определено по расписанию из настроек: сегодня занятий ещё не было.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } icon: {
+                                Image(systemName: "calendar.badge.clock").foregroundStyle(.tint)
+                            }
+                        } else {
+                            Text(lessonSchedule.isEmpty
+                                 ? "Лекция получит текущую дату. Добавьте расписание в настройках, чтобы Whisp узнавал вчерашние занятия."
+                                 : "Лекция получит текущую дату: запись сделана сегодня или сегодня уже было занятие.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if separateLessons {
+                            Text("Для каждого файла дата определяется отдельно.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    case .now:
+                        Text("Лекция получит текущие дату и время.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    case .custom:
+                        DatePicker("Дата и время", selection: $customDate, in: ...Date())
+                            .datePickerStyle(.compact)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .task(id: audioURLs.first) {
+                let recordingDate: Date?
+                if let first = audioURLs.first {
+                    recordingDate = await LectureDateResolver.recordingDate(of: first)
+                } else {
+                    recordingDate = nil
+                }
+                let suggestion = StudyDashboardPlanner.suggestedLectureDate(
+                    recordingDate: recordingDate,
+                    schedule: lessonSchedule
+                )
+                dateSuggestion = suggestion
+                if let suggestion, dateMode != .custom { customDate = suggestion.date }
+            }
+        }
+    }
+
+    private static func describe(_ suggestion: LectureDateSuggestion) -> String {
+        let calendar = Calendar.current
+        let time = suggestion.date.formatted(Date.FormatStyle().hour().minute().locale(Locale(identifier: "ru_RU")))
+        let day: String
+        if calendar.isDateInYesterday(suggestion.date) {
+            day = "вчера"
+        } else {
+            day = suggestion.date.formatted(
+                Date.FormatStyle().weekday(.wide).day().month(.wide).locale(Locale(identifier: "ru_RU"))
+            )
+        }
+        let subject = suggestion.subject.map { " · \($0)" } ?? ""
+        return "\(day), \(time)\(subject)"
     }
 
     var body: some View {
@@ -166,6 +286,8 @@ struct LectureImportSetupView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                dateSection
+
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.callout)
@@ -179,7 +301,7 @@ struct LectureImportSetupView: View {
                     }
                     Spacer()
                     Button(createButtonTitle) {
-                        onImport(audioURLs, imageURLs, combinesAudio, pastedText, textURLs)
+                        onImport(audioURLs, imageURLs, combinesAudio, pastedText, textURLs, dateChoice)
                         dismiss()
                     }
                     .buttonStyle(.borderedProminent)

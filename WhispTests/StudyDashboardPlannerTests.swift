@@ -95,4 +95,76 @@ final class StudyDashboardPlannerTests: XCTestCase {
 
         XCTAssertEqual(result, date(2026, 9, 21, 19))
     }
+
+    // MARK: - Lecture date suggestions (2026-09-14 is a Monday)
+
+    private var mondaySchedule: [LessonScheduleEntry] {
+        [
+            LessonScheduleEntry(subject: "Математика", weekday: 2, hour: 9, minute: 0, durationMinutes: 90),
+            LessonScheduleEntry(subject: "Физика", weekday: 2, hour: 12, minute: 0, durationMinutes: 90),
+            LessonScheduleEntry(subject: "История", weekday: 3, hour: 9, minute: 30, durationMinutes: 90)
+        ]
+    }
+
+    func testNextMorningImportWithoutRecordingDateSuggestsLatestLessonYesterday() {
+        let suggestion = StudyDashboardPlanner.suggestedLectureDate(
+            recordingDate: nil,
+            schedule: mondaySchedule,
+            now: date(2026, 9, 15, 8),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(suggestion?.date, date(2026, 9, 14, 12))
+        XCTAssertEqual(suggestion?.subject, "Физика")
+        XCTAssertEqual(suggestion?.source, .schedule)
+    }
+
+    func testNoScheduleSuggestionAfterTodaysLessonStarted() {
+        let suggestion = StudyDashboardPlanner.suggestedLectureDate(
+            recordingDate: nil,
+            schedule: mondaySchedule,
+            now: date(2026, 9, 15, 10),
+            calendar: calendar
+        )
+
+        XCTAssertNil(suggestion)
+    }
+
+    func testRecordingDateFromYesterdayIsSnappedToRunningLesson() {
+        let recordedAt = date(2026, 9, 14, 13).addingTimeInterval(10 * 60)
+        let suggestion = StudyDashboardPlanner.suggestedLectureDate(
+            recordingDate: recordedAt,
+            schedule: mondaySchedule,
+            now: date(2026, 9, 15, 11),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(suggestion?.date, date(2026, 9, 14, 12))
+        XCTAssertEqual(suggestion?.subject, "Физика")
+        XCTAssertEqual(suggestion?.source, .recordingDate)
+    }
+
+    func testRecordingDateOutsideLessonsIsKeptAsIs() {
+        let recordedAt = date(2026, 9, 14, 20)
+        let suggestion = StudyDashboardPlanner.suggestedLectureDate(
+            recordingDate: recordedAt,
+            schedule: mondaySchedule,
+            now: date(2026, 9, 15, 8),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(suggestion?.date, recordedAt)
+        XCTAssertNil(suggestion?.subject)
+    }
+
+    func testRecordingFromTodayNeedsNoSuggestion() {
+        let suggestion = StudyDashboardPlanner.suggestedLectureDate(
+            recordingDate: date(2026, 9, 15, 9),
+            schedule: mondaySchedule,
+            now: date(2026, 9, 15, 11),
+            calendar: calendar
+        )
+
+        XCTAssertNil(suggestion)
+    }
 }

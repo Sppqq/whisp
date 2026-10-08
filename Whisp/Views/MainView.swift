@@ -30,6 +30,9 @@ struct MainView: View {
                     if model.activeAnalysisSessionID != nil || !model.queuedAnalysisSessionIDs.isEmpty {
                         NoteQueueToolbarButton(model: model)
                     }
+                    if model.hasSyncQueue {
+                        SyncQueueToolbarButton(model: model)
+                    }
                     Button {
                         model.showStartScreen()
                     } label: {
@@ -641,14 +644,16 @@ private struct StartView: View {
             LectureImportSetupView(
                 initialAudioURLs: importSetupAudioURLs,
                 initialImageURLs: importSetupImageURLs,
-                initialTextURLs: importSetupTextURLs
-            ) { audioURLs, imageURLs, combineAudio, text, textURLs in
+                initialTextURLs: importSetupTextURLs,
+                lessonSchedule: model.settingsStore.settings.lessonSchedule
+            ) { audioURLs, imageURLs, combineAudio, text, textURLs, dateChoice in
                 model.enqueueLectureImports(
                     audioURLs: audioURLs,
                     imageURLs: imageURLs,
                     combineAudio: combineAudio,
                     pastedText: text,
-                    textURLs: textURLs
+                    textURLs: textURLs,
+                    dateChoice: dateChoice
                 )
             }
         }

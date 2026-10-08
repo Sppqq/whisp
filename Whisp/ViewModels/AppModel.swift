@@ -17,6 +17,7 @@ private struct LectureImportJob {
     let imageURLs: [URL]
     var pastedText = ""
     var textURLs: [URL] = []
+    var dateChoice: LectureDateChoice = .automatic
 }
 
 struct ProcessingLogEntry: Identifiable, Sendable {
@@ -98,7 +99,10 @@ final class AppModel {
     private let hotKeys = HotKeyService()
     private var coordinator: TranscriptionCoordinator?
     private var backfillMonitor: Task<Void, Never>?
-    private var syncRetryTask: Task<Void, Never>?
+    private var syncRetryTasks: [UUID: Task<Void, Never>] = [:]
+    private var syncRetryAttempts: [UUID: Int] = [:]
+    private var syncQueueTask: Task<Void, Never>?
+    private var forceOverwriteSyncIDs: Set<UUID> = []
     private var syncConflictSessionID: UUID?
     private var persistTask: Task<Void, Never>?
     private var persistRequested = false
@@ -312,6 +316,9 @@ final class AppModel {
     }
 
     func deleteSession(_ id: UUID) {
+        syncQueueSessionIDs.removeAll { $0 == id }
+        syncRetryTasks[id]?.cancel()
+        syncRetryTasks[id] = nil
         Task { @MainActor in
             if currentSession?.id == id {
                 processingTask?.cancel()
@@ -326,8 +333,6 @@ final class AppModel {
     private func resetSessionTasks() {
         backfillMonitor?.cancel()
         backfillMonitor = nil
-        syncRetryTask?.cancel()
-        syncRetryTask = nil
         currentMixURL = nil
         player.stop()
         showBackfillPrompt = false
@@ -358,11 +363,8 @@ final class AppModel {
             showOnboarding = needsInitialSetup
             showSettings = !needsInitialSetup
                 && !settingsStore.isAnalysisProviderConfigured
-            if let uploading = sessions.first(where: { $0.status == .uploading }) {
-                currentSession = uploading
-                selectedSessionID = uploading.id
-                await syncCurrent()
-            }
+            let interruptedUploads = sessions.filter { $0.status == .uploading }.map(\.id)
+            if !interruptedUploads.isEmpty, !settingsStore.webDAV.baseURL.isEmpty { enqueueSync(interruptedUploads) }
             let recoverable = try await store.recoverableSessions()
             recoverableSession = recoverable.first { $0.status != .uploading }
             showRecoveryPrompt = recoverableSession != nil
@@ -469,7 +471,7 @@ final class AppModel {
         }
     }
 
-    func enqueueLectureImports(audioURLs sourceURLs: [URL], imageURLs: [URL], combineAudio: Bool, pastedText: String = "", textURLs: [URL] = []) {
+    func enqueueLectureImports(audioURLs sourceURLs: [URL], imageURLs: [URL], combineAudio: Bool, pastedText: String = "", textURLs: [URL] = [], dateChoice: LectureDateChoice = .automatic) {
         guard !isRecording, !isBatchRegenerating, !isRestoringFromWebDAV else {
             lastError = "Завершите текущую задачу перед импортом файлов"
             return
@@ -493,12 +495,12 @@ final class AppModel {
             return
         }
         if audioURLs.isEmpty {
-            pendingImportJobs.append(LectureImportJob(audioURLs: [], imageURLs: imageURLs, pastedText: pastedText, textURLs: textURLs))
+            pendingImportJobs.append(LectureImportJob(audioURLs: [], imageURLs: imageURLs, pastedText: pastedText, textURLs: textURLs, dateChoice: dateChoice))
         } else if combineAudio {
-            pendingImportJobs.append(LectureImportJob(audioURLs: audioURLs, imageURLs: imageURLs, pastedText: pastedText, textURLs: textURLs))
+            pendingImportJobs.append(LectureImportJob(audioURLs: audioURLs, imageURLs: imageURLs, pastedText: pastedText, textURLs: textURLs, dateChoice: dateChoice))
         } else {
             pendingImportJobs.append(contentsOf: audioURLs.map {
-                LectureImportJob(audioURLs: [$0], imageURLs: imageURLs, pastedText: pastedText, textURLs: textURLs)
+                LectureImportJob(audioURLs: [$0], imageURLs: imageURLs, pastedText: pastedText, textURLs: textURLs, dateChoice: dateChoice)
             })
         }
         stagedImportURLs.append(contentsOf: imageURLs)
@@ -524,7 +526,7 @@ final class AppModel {
                 }
                 guard !self.pendingImportJobs.isEmpty, !Task.isCancelled else { break }
                 let next = self.pendingImportJobs.removeFirst()
-                await self.importAudio(from: next.audioURLs, images: next.imageURLs, pastedText: next.pastedText, textURLs: next.textURLs)
+                await self.importAudio(from: next.audioURLs, images: next.imageURLs, pastedText: next.pastedText, textURLs: next.textURLs, dateChoice: next.dateChoice)
             }
         }
     }
@@ -672,7 +674,7 @@ final class AppModel {
         }
     }
 
-    func importAudio(from sourceURLs: [URL], images: [URL] = [], pastedText: String = "", textURLs: [URL] = []) async {
+    func importAudio(from sourceURLs: [URL], images: [URL] = [], pastedText: String = "", textURLs: [URL] = [], dateChoice: LectureDateChoice = .automatic) async {
         guard (!sourceURLs.isEmpty || !images.isEmpty || !textURLs.isEmpty || !pastedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty), !isBusy else { return }
         isWorking = true
         defer { isWorking = false }
@@ -680,21 +682,26 @@ final class AppModel {
 
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.executeImportAudio(from: sourceURLs, images: images, pastedText: pastedText, textURLs: textURLs)
+            await self.executeImportAudio(from: sourceURLs, images: images, pastedText: pastedText, textURLs: textURLs, dateChoice: dateChoice)
         }
         processingTask = task
         await task.value
     }
 
-    private func executeImportAudio(from sourceURLs: [URL], images: [URL], pastedText: String, textURLs: [URL]) async {
+    private func executeImportAudio(from sourceURLs: [URL], images: [URL], pastedText: String, textURLs: [URL], dateChoice: LectureDateChoice) async {
         resetSessionTasks()
         lastError = nil
         let accessedSources = sourceURLs.map { ($0, $0.startAccessingSecurityScopedResource()) }
         let accessedImages = images.map { ($0, $0.startAccessingSecurityScopedResource()) }
         let firstAudioURL = sourceURLs.first
+        let lectureDate = await LectureDateResolver.resolve(
+            dateChoice,
+            audioURL: firstAudioURL,
+            schedule: settingsStore.settings.lessonSchedule
+        )
 
         var session = LectureSession()
-        session.startedAt = Date()
+        session.startedAt = lectureDate.date
         session.status = .processing
         session.captureSystemAudio = false
         session.title = WhispFormatting.datedTitle(
@@ -717,6 +724,10 @@ final class AppModel {
         addProcessingLog(sourceURLs.isEmpty
             ? "Импорт фото: \(images.count)"
             : "Импорт аудио: \(sourceURLs.map(\.lastPathComponent).joined(separator: ", "))")
+        if let suggestion = lectureDate.suggestion {
+            let reason = suggestion.source == .recordingDate ? "по дате записи файла" : "по расписанию"
+            addProcessingLog("Дата лекции \(reason): \(suggestion.date.formatted(date: .abbreviated, time: .shortened))")
+        }
 
         defer {
             activeProcessingSessionID = nil
@@ -1039,73 +1050,194 @@ final class AppModel {
         schedulePersistCurrent()
     }
 
+    // MARK: - Cloud sync queue
+
+    /// Lectures waiting for upload, in order. The one being uploaded is `syncingSessionID`.
+    private(set) var syncQueueSessionIDs: [UUID] = []
+
+    var hasSyncQueue: Bool { syncingSessionID != nil || !syncQueueSessionIDs.isEmpty }
+
+    func isSyncQueued(for id: UUID) -> Bool {
+        syncingSessionID == id || syncQueueSessionIDs.contains(id)
+    }
+
+    /// Lectures with local changes that are not in the cloud yet.
+    var unsyncedSessionIDs: [UUID] {
+        sessions.filter { Self.canSync($0) && $0.status != .synced }.map(\.id)
+    }
+
+    /// Every lecture that can be uploaded, including already synced ones.
+    var syncableSessionIDs: [UUID] {
+        sessions.filter(Self.canSync).map(\.id)
+    }
+
+    private static func canSync(_ session: LectureSession) -> Bool {
+        ![.draft, .recording, .paused, .processing, .failed].contains(session.status)
+            && session.subject != "Не определено"
+    }
+
     func syncCurrent(forceOverwriteRemote: Bool = false) async {
-        guard var session = currentSession else {
+        guard let session = currentSession else {
             lastError = "Выберите лекцию для синхронизации."
             return
         }
-        guard !isRecording, !isWorking, !isRestoringFromWebDAV, !isBatchRegenerating,
-              activeAnalysisSessionID != session.id, session.status != .processing else {
-            lastError = "Синхронизация пока недоступна: дождитесь завершения записи, обработки этой лекции или текущей операции."
+        guard session.subject != "Не определено" else {
+            lastError = "Выберите предмет перед синхронизацией."
             return
         }
-        isWorking = true
-        defer { isWorking = false }
-        syncingSessionID = session.id
+        enqueueSync([session.id], forceOverwriteRemote: forceOverwriteRemote)
+    }
+
+    /// Adds lectures to the upload queue. Uploads run one at a time in the
+    /// background and do not block recording or reading other lectures.
+    func enqueueSync(_ ids: [UUID], forceOverwriteRemote: Bool = false) {
+        guard !settingsStore.webDAV.baseURL.isEmpty else {
+            lastError = "Настройте WebDAV"
+            return
+        }
+        for id in ids {
+            guard let session = sessions.first(where: { $0.id == id }) ?? (currentSession?.id == id ? currentSession : nil),
+                  Self.canSync(session) || session.status == .uploading else { continue }
+            syncRetryTasks[id]?.cancel()
+            syncRetryTasks[id] = nil
+            if forceOverwriteRemote { forceOverwriteSyncIDs.insert(id) }
+            guard !isSyncQueued(for: id) else { continue }
+            syncQueueSessionIDs.append(id)
+        }
+        startSyncQueueIfNeeded()
+    }
+
+    func removeQueuedSync(for id: UUID) {
+        syncQueueSessionIDs.removeAll { $0 == id }
+        forceOverwriteSyncIDs.remove(id)
+    }
+
+    private func startSyncQueueIfNeeded() {
+        guard syncQueueTask == nil else { return }
+        syncQueueTask = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled, !self.syncQueueSessionIDs.isEmpty {
+                if self.isRestoringFromWebDAV || self.isBatchRegenerating {
+                    try? await Task.sleep(for: .seconds(2))
+                    continue
+                }
+                let id = self.syncQueueSessionIDs.removeFirst()
+                let force = self.forceOverwriteSyncIDs.remove(id) != nil
+                await self.syncSession(id: id, forceOverwriteRemote: force)
+            }
+            self?.syncQueueTask = nil
+        }
+    }
+
+    /// Writes status fields into the in-memory copies without persisting.
+    private func applySyncFields(_ session: LectureSession) {
+        if currentSession?.id == session.id { currentSession = session }
+        if let index = sessions.firstIndex(where: { $0.id == session.id }) { sessions[index] = session }
+    }
+
+    /// Applies sync results to the latest version of a lecture, so edits made
+    /// while the upload was running are never overwritten.
+    private func updateAfterSync(_ id: UUID, _ change: (inout LectureSession) -> Void) async {
+        guard var latest = currentSession?.id == id ? currentSession : sessions.first(where: { $0.id == id }) else { return }
+        change(&latest)
+        if currentSession?.id == id { currentSession = latest }
+        try? await persistSessionSnapshot(latest)
+    }
+
+    private static func hasSameContent(_ lhs: LectureSession, _ rhs: LectureSession) -> Bool {
+        func normalized(_ session: LectureSession) -> LectureSession {
+            var copy = session
+            copy.status = .uploading
+            copy.lastError = nil
+            copy.remotePath = nil
+            copy.remoteETag = nil
+            copy.syncedAt = nil
+            return copy
+        }
+        return normalized(lhs) == normalized(rhs)
+    }
+
+    private func syncSession(id: UUID, forceOverwriteRemote: Bool) async {
+        guard let snapshot = currentSession?.id == id ? currentSession : sessions.first(where: { $0.id == id }) else { return }
+        guard !settingsStore.webDAV.baseURL.isEmpty else {
+            await updateAfterSync(id) { $0.lastError = "Настройте WebDAV" }
+            return
+        }
+        guard snapshot.subject != "Не определено" else {
+            await updateAfterSync(id) { $0.status = .review; $0.lastError = "Выберите предмет перед синхронизацией." }
+            if currentSession?.id == id { lastError = "Выберите предмет" }
+            return
+        }
+        let isBeingChanged = [.draft, .recording, .paused, .processing].contains(snapshot.status)
+            || activeAnalysisSessionID == id
+            || isAnalysisQueued(for: id)
+        guard !isBeingChanged else {
+            // The lecture is still being recorded or generated: upload it later.
+            scheduleSyncRetry(for: id)
+            return
+        }
+
+        syncingSessionID = id
         defer { syncingSessionID = nil }
-        guard !settingsStore.webDAV.baseURL.isEmpty else { lastError = "Настройте WebDAV"; return }
-        guard session.subject != "Не определено" else { lastError = "Выберите предмет"; return }
+        var session = snapshot
         session.status = .uploading
         session.lastError = nil
-        cloudUploadSessionID = session.id
+        applySyncFields(session)
+        cloudUploadSessionID = id
         cloudUploadProgress = CloudUploadProgress(stage: "Проверяем удалённую версию")
-        currentSession = session
-        statusMessage = "Загрузка в WebDAV"
+        statusMessage = "Загрузка в WebDAV: \(WhispFormatting.displayTitle(session.title))"
         webDAVState = .checking
         do {
-            let directory = try await store.directory(for: session.id)
+            let directory = try await store.directory(for: id)
             let client = WebDAVClient(configuration: settingsStore.webDAV)
             if !forceOverwriteRemote, try await client.hasRemoteConflict(for: session) {
-                syncConflictSessionID = session.id
-                syncConflictPath = session.remotePath ?? "удалённая папка лекции"
-                session.status = .review
-                session.lastError = "На WebDAV уже есть изменения после последней синхронизации."
-                if currentSession?.id == session.id { currentSession = session }
-                statusMessage = "Нужна проверка WebDAV"
-                webDAVState = .unavailable("Удалённая версия новее локальной")
-                showSyncConflict = true
+                let path = session.remotePath ?? "удалённая папка лекции"
+                await updateAfterSync(id) {
+                    $0.status = .review
+                    $0.lastError = "На WebDAV уже есть изменения после последней синхронизации."
+                }
                 cloudUploadProgress = CloudUploadProgress(stage: "Нужна проверка: версия в облаке изменилась", isComplete: true)
-                try? await persistSessionSnapshot(session)
+                webDAVState = .unavailable("Удалённая версия новее локальной")
+                statusMessage = "Нужна проверка WebDAV"
+                if currentSession?.id == id {
+                    syncConflictSessionID = id
+                    syncConflictPath = path
+                    showSyncConflict = true
+                }
                 return
             }
 
-            session.remotePath = try await client.upload(session: session, localDirectory: directory) { [weak self] progress in
+            let remotePath = try await client.upload(session: session, localDirectory: directory) { [weak self] progress in
                 await MainActor.run {
-                    self?.cloudUploadProgress = progress
-                    self?.statusMessage = progress.stage
+                    guard let self, self.cloudUploadSessionID == id else { return }
+                    self.cloudUploadProgress = progress
+                    self.statusMessage = progress.stage
                 }
             }
-            session.remoteETag = try? await client.remoteETag(path: session.remotePath ?? "")
-            session.status = .synced
-            session.syncedAt = Date()
-            session.lastError = nil
-            if currentSession?.id == session.id { currentSession = session }
+            let remoteETag = try? await client.remoteETag(path: remotePath)
+            await updateAfterSync(id) { latest in
+                let changedDuringUpload = !Self.hasSameContent(latest, snapshot)
+                latest.remotePath = remotePath
+                latest.remoteETag = remoteETag
+                latest.syncedAt = Date()
+                latest.lastError = nil
+                latest.status = changedDuringUpload ? .review : .synced
+            }
+            syncRetryAttempts[id] = nil
             statusMessage = "Синхронизировано"
             webDAVState = .available
-            syncRetryTask?.cancel()
-            syncRetryTask = nil
-            try await persistSessionSnapshot(session)
-            cloudUploadProgress = nil
-            cloudUploadSessionID = nil
+            if cloudUploadSessionID == id {
+                cloudUploadProgress = nil
+                cloudUploadSessionID = nil
+            }
         } catch {
-            session.status = .uploading
-            session.lastError = error.localizedDescription
-            if currentSession?.id == session.id { currentSession = session }
-            lastError = error.localizedDescription
+            await updateAfterSync(id) {
+                $0.status = .uploading
+                $0.lastError = error.localizedDescription
+            }
+            if currentSession?.id == id { lastError = error.localizedDescription }
             statusMessage = "Ошибка WebDAV"
             webDAVState = .unavailable(error.localizedDescription)
-            try? await persistSessionSnapshot(session)
-            scheduleSyncRetry()
+            scheduleSyncRetry(for: id)
         }
     }
 
@@ -1115,12 +1247,12 @@ final class AppModel {
     }
 
     func overwriteRemoteAfterConflict() async {
-        guard syncConflictSessionID == currentSession?.id else {
+        guard let id = syncConflictSessionID, id == currentSession?.id else {
             showSyncConflict = false
             return
         }
         showSyncConflict = false
-        await syncCurrent(forceOverwriteRemote: true)
+        enqueueSync([id], forceOverwriteRemote: true)
     }
 
     func updateTranscriptSegment(id: UUID, text: String, speaker: String?, inRawTranscript: Bool) {
@@ -2214,18 +2346,18 @@ final class AppModel {
         }
     }
 
-    private func scheduleSyncRetry() {
-        guard syncRetryTask == nil || syncRetryTask?.isCancelled == true else { return }
-        let sessionID = currentSession?.id
-        syncRetryTask = Task { [weak self] in
-            var delay = 60.0
-            while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-                guard let self, self.currentSession?.id == sessionID, self.currentSession?.status == .uploading else { return }
-                await self.syncCurrent()
-                if self.currentSession?.status == .synced { return }
-                delay = min(3_600, delay * 2)
-            }
+    /// Retries a failed or postponed upload with exponential backoff (1 min … 1 h).
+    private func scheduleSyncRetry(for id: UUID) {
+        guard syncRetryTasks[id] == nil else { return }
+        let attempt = syncRetryAttempts[id] ?? 0
+        let delay = min(3_600, 60 * pow(2, Double(attempt)))
+        syncRetryTasks[id] = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self else { return }
+            self.syncRetryTasks[id] = nil
+            guard let session = self.sessions.first(where: { $0.id == id }), session.status != .synced else { return }
+            self.syncRetryAttempts[id] = attempt + 1
+            self.enqueueSync([id])
         }
     }
 

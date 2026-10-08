@@ -81,8 +81,10 @@ targets:
       - path: Whisp/Services/SessionStore.swift
       - path: Whisp/Services/TranscriptionWindow.swift
       - path: Whisp/Services/WebDAVClient.swift
+      - path: Whisp/Services/CloudAudioCompressor.swift
       - path: Whisp/Services/ReminderService.swift
       - path: Whisp/Services/StudyDashboardPlanner.swift
+      - path: Whisp/Services/LectureDateResolver.swift
       - path: Whisp/Services/LibrarySearchIndex.swift
       - path: Whisp/Resources/Assets.xcassets
       - path: Whisp/Views/LectureImportSetupView.swift

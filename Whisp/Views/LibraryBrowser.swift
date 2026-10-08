@@ -7,7 +7,10 @@ struct LibraryBrowser: View {
     @State private var searchText = ""
     @State private var matchingIDs: Set<UUID> = []
     @State private var showDeleteConfirmation = false
-    @State private var sessionToDelete: LectureSession?
+    @State private var sessionsToDelete: [UUID] = []
+    /// Multiple selection (⌘-click, ⇧-click) for batch actions; a single
+    /// selected lecture opens in the detail column.
+    @State private var selection: Set<UUID> = []
 
     private var sessions: [LectureSession] {
         model.sessions.filter {
@@ -28,23 +31,34 @@ struct LibraryBrowser: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            List(selection: Binding(get: { model.showsLibrary ? model.selectedSessionID : nil }, set: { model.selectSession($0) })) {
+            List(selection: $selection) {
                 ForEach(sessions) { session in
-                    LectureRow(session: session, query: searchText, isSelected: model.showsLibrary && model.selectedSessionID == session.id)
-                        .tag(session.id)
-                        .listRowInsets(EdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10))
-                        .contextMenu {
-                            Button("Добавить конспект в очередь", systemImage: "sparkles") { model.enqueueAnalysis(for: session.id) }
-                                .disabled(model.isAnalysisQueued(for: session.id))
-                            Button("Показать в Finder", systemImage: "folder") { model.revealInFinder(sessionID: session.id) }
-                            Button("Открыть в Obsidian", systemImage: "arrow.up.forward.app") { model.openInObsidian(session: session) }
-                            Divider()
-                            Button("Удалить лекцию…", systemImage: "trash", role: .destructive) {
-                                sessionToDelete = session
-                                showDeleteConfirmation = true
-                            }
-                        }
+                    LectureRow(
+                        session: session,
+                        query: searchText,
+                        isSelected: selection.contains(session.id),
+                        isQueuedForSync: model.isSyncQueued(for: session.id) && model.syncingSessionID != session.id,
+                        isSyncing: model.syncingSessionID == session.id
+                    )
+                    .tag(session.id)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10))
                 }
+            }
+            .contextMenu(forSelectionType: UUID.self) { ids in
+                contextMenu(for: ids)
+            } primaryAction: { ids in
+                if ids.count == 1, let id = ids.first { model.selectSession(id) }
+            }
+            .onChange(of: selection) { _, ids in
+                if ids.count == 1, let id = ids.first, !(model.showsLibrary && model.selectedSessionID == id) {
+                    model.selectSession(id)
+                }
+            }
+            .onChange(of: model.selectedSessionID, initial: true) { _, id in
+                syncSelection(with: id)
+            }
+            .onChange(of: model.showsLibrary) { _, _ in
+                syncSelection(with: model.selectedSessionID)
             }
             .listStyle(.inset)
             .overlay {
@@ -76,13 +90,85 @@ struct LibraryBrowser: View {
             guard !Task.isCancelled else { return }
             matchingIDs = model.matchingSessionIDs(for: searchText)
         }
-        .alert("Удалить лекцию?", isPresented: $showDeleteConfirmation) {
-            Button("Отмена", role: .cancel) { sessionToDelete = nil }
-            Button("Удалить", role: .destructive) {
-                if let session = sessionToDelete { model.deleteSession(session.id) }
-                sessionToDelete = nil
+        .toolbar {
+            ToolbarItem {
+                Menu {
+                    Button("Синхронизировать изменённые (\(model.unsyncedSessionIDs.count))") {
+                        model.enqueueSync(model.unsyncedSessionIDs)
+                    }
+                    .disabled(model.unsyncedSessionIDs.isEmpty)
+                    Button("Синхронизировать все лекции") {
+                        model.enqueueSync(model.syncableSessionIDs)
+                    }
+                    .disabled(model.syncableSessionIDs.isEmpty)
+                    if selection.count > 1 {
+                        Divider()
+                        Button("Синхронизировать выбранные (\(selection.count))") {
+                            model.enqueueSync(orderedIDs(selection))
+                        }
+                    }
+                } label: {
+                    Label("Синхронизация", systemImage: "icloud.and.arrow.up")
+                }
+                .help("Добавить лекции в очередь синхронизации")
             }
-        } message: { Text("Аудиозапись и материалы этой лекции будут удалены с этого Mac.") }
+        }
+        .alert(sessionsToDelete.count > 1 ? "Удалить лекции (\(sessionsToDelete.count))?" : "Удалить лекцию?", isPresented: $showDeleteConfirmation) {
+            Button("Отмена", role: .cancel) { sessionsToDelete = [] }
+            Button("Удалить", role: .destructive) {
+                sessionsToDelete.forEach(model.deleteSession)
+                selection.subtract(sessionsToDelete)
+                sessionsToDelete = []
+            }
+        } message: {
+            Text(sessionsToDelete.count > 1
+                 ? "Аудиозаписи и материалы выбранных лекций будут удалены с этого Mac."
+                 : "Аудиозапись и материалы этой лекции будут удалены с этого Mac.")
+        }
+    }
+
+    /// Selected IDs in the order they appear in the list.
+    private func orderedIDs(_ ids: Set<UUID>) -> [UUID] {
+        sessions.map(\.id).filter(ids.contains)
+    }
+
+    private func syncSelection(with id: UUID?) {
+        guard model.showsLibrary, let id else {
+            if selection.count <= 1 { selection = [] }
+            return
+        }
+        if !selection.contains(id) || selection.count == 1 { selection = [id] }
+    }
+
+    @ViewBuilder
+    private func contextMenu(for ids: Set<UUID>) -> some View {
+        let ordered = orderedIDs(ids)
+        if !ordered.isEmpty {
+            let notQueued = ordered.filter { !model.isSyncQueued(for: $0) }
+            Button(ordered.count > 1 ? "Синхронизировать (\(ordered.count))" : "Синхронизировать", systemImage: "icloud.and.arrow.up") {
+                model.enqueueSync(ordered)
+            }
+            .disabled(notQueued.isEmpty)
+            if ordered.contains(where: model.isSyncQueued(for:)) {
+                Button("Убрать из очереди синхронизации", systemImage: "xmark.icloud") {
+                    ordered.forEach(model.removeQueuedSync(for:))
+                }
+            }
+            Button(ordered.count > 1 ? "Добавить конспекты в очередь (\(ordered.count))" : "Добавить конспект в очередь", systemImage: "sparkles") {
+                ordered.forEach { model.enqueueAnalysis(for: $0) }
+            }
+            .disabled(ordered.allSatisfy(model.isAnalysisQueued(for:)))
+            if ordered.count == 1, let session = model.sessions.first(where: { $0.id == ordered[0] }) {
+                Divider()
+                Button("Показать в Finder", systemImage: "folder") { model.revealInFinder(sessionID: session.id) }
+                Button("Открыть в Obsidian", systemImage: "arrow.up.forward.app") { model.openInObsidian(session: session) }
+            }
+            Divider()
+            Button(ordered.count > 1 ? "Удалить лекции (\(ordered.count))…" : "Удалить лекцию…", systemImage: "trash", role: .destructive) {
+                sessionsToDelete = ordered
+                showDeleteConfirmation = true
+            }
+        }
     }
 }
 
@@ -90,6 +176,8 @@ private struct LectureRow: View {
     let session: LectureSession
     var query = ""
     var isSelected = false
+    var isQueuedForSync = false
+    var isSyncing = false
 
     private var secondaryColor: Color { isSelected ? .white.opacity(0.85) : .secondary }
 
@@ -124,12 +212,18 @@ private struct LectureRow: View {
                         .help("Есть ручные правки")
                 }
                 Spacer(minLength: 4)
-                Image(systemName: session.cloudSyncIcon)
-                    .symbolRenderingMode(.monochrome)
-                    .foregroundStyle(secondaryColor)
-                    .frame(width: 14)
-                    .accessibilityLabel(session.cloudSyncTitle)
-                    .help(cloudSyncDescription)
+                Group {
+                    if isSyncing {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: isQueuedForSync ? "clock.arrow.circlepath" : session.cloudSyncIcon)
+                            .symbolRenderingMode(.monochrome)
+                            .foregroundStyle(secondaryColor)
+                    }
+                }
+                .frame(width: 14)
+                .accessibilityLabel(isSyncing ? "Синхронизируется" : isQueuedForSync ? "В очереди синхронизации" : session.cloudSyncTitle)
+                .help(isSyncing ? "Синхронизируется" : isQueuedForSync ? "В очереди синхронизации" : cloudSyncDescription)
                 Text(WhispFormatting.lectureDate(session.startedAt ?? session.createdAt))
                     .foregroundStyle(secondaryColor)
                     .fixedSize()

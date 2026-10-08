@@ -272,13 +272,13 @@ struct ReviewView: View {
 
                         Button { Task { await model.syncCurrent() } } label: {
                             WhispGlassActionLabel(
-                                title: isSyncingCurrent ? "Синхронизация…" : (model.currentSession?.status == .synced ? "Синхронизировано" : "Синхронизировать"),
-                                systemImage: model.currentSession?.status == .synced ? "checkmark.icloud" : "icloud.and.arrow.up",
+                                title: isSyncingCurrent ? "Синхронизация…" : isQueuedForSync ? "В очереди…" : (model.currentSession?.status == .synced ? "Синхронизировано" : "Синхронизировать"),
+                                systemImage: isQueuedForSync ? "clock.arrow.circlepath" : model.currentSession?.status == .synced ? "checkmark.icloud" : "icloud.and.arrow.up",
                                 isBusy: isSyncingCurrent
                             )
                         }
                         .buttonStyle(WhispGlassPressStyle())
-                        .disabled(model.isRecording || model.isWorking || model.isRestoringFromWebDAV || model.isBatchRegenerating || (model.currentSession.map { model.isAnalysisQueued(for: $0.id) || $0.status == .processing } ?? true))
+                        .disabled(isSyncingCurrent || isQueuedForSync || (model.currentSession.map { model.isAnalysisQueued(for: $0.id) || [.recording, .paused, .processing].contains($0.status) } ?? true))
 
                     }
                 }
@@ -293,6 +293,11 @@ struct ReviewView: View {
                 }
             }
         )
+    }
+
+    private var isQueuedForSync: Bool {
+        guard let id = model.currentSession?.id else { return false }
+        return model.isSyncQueued(for: id) && model.syncingSessionID != id
     }
 
     private var isSyncingCurrent: Bool {
